@@ -1,0 +1,605 @@
+{
+  "version": "1.0",
+  "generated": "2025-01-29",
+  "description": "Dialog variable reference for ExtendSim blocks. Auto-discovered using DIGetName and GetDialogItemInfo.",
+  "typeCodeReference": {
+    "1": "button",
+    "2": "checkbox",
+    "3": "radiobutton",
+    "4": "meter",
+    "5": "parameter",
+    "6": "slider",
+    "7": "datatable",
+    "8": "edittext",
+    "9": "statictext",
+    "12": "switch",
+    "13": "stringtable",
+    "16": "popupmenu",
+    "18": "dynamictext",
+    "19": "textframe",
+    "20": "calendar",
+    "21": "edittext31"
+  },
+  "libraries": {
+    "Item.lbr": {
+      "name": "Item Library",
+      "blocks": {
+        "Activity": {
+          "description": "Holds one or more items and passes them out based on process time and arrival time.",
+          "help": {
+            "summary": "Process items with configurable delay, shutdown, preemption, and shift control.",
+            "tabs": ["Process", "Cost", "Shutdown", "Preempt", "Advanced Status", "Results", "Contents", "Item Animation", "Block Animation"]
+          },
+          "connectors": {
+            "itemIn": {
+              "ItemIn": "Items to be delayed/processed (array connector)"
+            },
+            "itemOut": {
+              "ItemOut": "Items after full processing time",
+              "PE_ItemOut": "Preempted items (if preemption enabled)"
+            },
+            "valueIn": {
+              "D": "Delay time - overrides dialog value",
+              "C": "Capacity - overrides Maximum items in activity",
+              "SD": "Shutdown control",
+              "PE": "Preemption control"
+            },
+            "valueOut": {
+              "F": "Full status (1=full, 0=not full)",
+              "U": "Utilization rate",
+              "L": "Length - number of items in block",
+              "P": "Lowest priority item being processed",
+              "CB": "Currently blocked items count",
+              "Sd": "Shutdown status",
+              "SS": "Shift status",
+              "Delay": "Delay time of last item to leave",
+              "BT": "Blocked time of last item",
+              "DT": "Down time of last item",
+              "AS": "Advanced status (bit encoded)",
+              "TD": "Total departed items",
+              "TE": "Total entered items",
+              "%Busy": "Percent time busy",
+              "%Idle": "Percent time idle",
+              "%Blocked": "Percent time blocked",
+              "%Shutdown": "Percent time shutdown",
+              "%Offshift": "Percent time off-shift"
+            }
+          },
+          "variables": {
+            "inputs": [
+              {"dialogId": 13, "name": "MaxLength_prm", "type": "parameter", "description": "Maximum items in activity"},
+              {"dialogId": 15, "name": "WaitDelta_prm", "type": "parameter", "description": "Delay/wait time"},
+              {"dialogId": 66, "name": "Delay_Options_pop", "type": "popupmenu", "description": "Delay source options"},
+              {"dialogId": 68, "name": "Delay_Attrib_pop", "type": "popupmenu", "description": "Delay attribute selection"},
+              {"dialogId": 69, "name": "Delay_Distributions_pop", "type": "popupmenu", "description": "Distribution type"},
+              {"dialogId": 74, "name": "Delay_Arg1_prm", "type": "parameter", "description": "Distribution argument 1"},
+              {"dialogId": 75, "name": "Delay_Arg2_prm", "type": "parameter", "description": "Distribution argument 2"},
+              {"dialogId": 76, "name": "Delay_Arg3_prm", "type": "parameter", "description": "Distribution argument 3"},
+              {"dialogId": 28, "name": "Delay_TimeUnits_pop", "type": "popupmenu", "description": "Time units for delay"},
+              {"dialogId": 34, "name": "Shift_pop", "type": "popupmenu", "description": "Shift schedule selection"},
+              {"dialogId": 23, "name": "CostPerTime_prm", "type": "parameter", "description": "Cost per time unit"},
+              {"dialogId": 24, "name": "CostPerItem_prm", "type": "parameter", "description": "Cost per item"},
+              {"dialogId": 146, "name": "CostEnable_chk", "type": "checkbox", "description": "Enable costing"},
+              {"dialogId": 119, "name": "SD_Enable_chk", "type": "checkbox", "description": "Enable shutdown"},
+              {"dialogId": 120, "name": "PE_Enable_chk", "type": "checkbox", "description": "Enable preemption"},
+              {"dialogId": 150, "name": "UseBlockSeed_chk", "type": "checkbox", "description": "Use block random seed"},
+              {"dialogId": 151, "name": "RandomSeed_prm", "type": "parameter", "description": "Random seed value"}
+            ],
+            "outputs": [
+              {"dialogId": 3, "name": "AverageLength_prm", "type": "parameter", "description": "Average queue length"},
+              {"dialogId": 4, "name": "AverageWait_prm", "type": "parameter", "description": "Average wait time"},
+              {"dialogId": 5, "name": "Utilization_prm", "type": "parameter", "description": "Utilization rate"},
+              {"dialogId": 9, "name": "TotalItemsEntered_prm", "type": "parameter", "description": "Total items entered"},
+              {"dialogId": 10, "name": "TotalItemsExited_prm", "type": "parameter", "description": "Total items exited"},
+              {"dialogId": 142, "name": "Length_prm", "type": "parameter", "description": "Current queue length"},
+              {"dialogId": 143, "name": "MaxLengthObserved_prm", "type": "parameter", "description": "Maximum observed length"},
+              {"dialogId": 144, "name": "Wait_prm", "type": "parameter", "description": "Last item wait time"},
+              {"dialogId": 145, "name": "MaxWait_prm", "type": "parameter", "description": "Maximum wait time"},
+              {"dialogId": 25, "name": "TotalBlockCosts_prm", "type": "parameter", "description": "Total block costs"},
+              {"dialogId": 18, "name": "PE_TotalItemsPreempted_prm", "type": "parameter", "description": "Total preempted items"},
+              {"dialogId": 181, "name": "SD_TotalItemsShutdown_prm", "type": "parameter", "description": "Total shutdown items"},
+              {"dialogId": 189, "name": "ASS_PercentDown_prm", "type": "parameter", "description": "Percent time down"},
+              {"dialogId": 191, "name": "ASS_PercentBlocked_prm", "type": "parameter", "description": "Percent time blocked"},
+              {"dialogId": 193, "name": "ASS_PercentBusy_prm", "type": "parameter", "description": "Percent time busy"},
+              {"dialogId": 195, "name": "ASS_PercentIdle_prm", "type": "parameter", "description": "Percent time idle"},
+              {"dialogId": 197, "name": "ASS_PercentOffshift_prm", "type": "parameter", "description": "Percent time off-shift"}
+            ]
+          }
+        },
+        "Create": {
+          "description": "Creates items or values and introduces them into the model.",
+          "help": {
+            "summary": "Provides items or values for discrete event models with random, scheduled, or infinite creation modes.",
+            "tabs": ["Create", "Options", "Item Animation", "Block Animation"],
+            "behaviors": [
+              "Create items randomly - using distribution for interarrival time",
+              "Create items by schedule - using time table",
+              "Create items infinitely - on-demand items when downstream has capacity",
+              "Create values randomly - output values instead of items",
+              "Create values by schedule - scheduled value outputs"
+            ],
+            "distributions": ["Beta", "Binomial", "Cauchy", "Chi Squared", "Constant", "Empirical (discrete/stepped/interpolated)", "Erlang", "Exponential", "Extreme Value Type 1A/1B", "Gamma", "Geometric", "HyperExponential", "Hypergeometric", "Inverse Gaussian", "Inverse Weibull", "Johnson SB/SU", "Laplace", "Logarithmic", "Logistic", "Log-Logistic", "LogNormal", "Negative Binomial", "Normal", "Pareto", "Pearson type V/VI", "Poisson", "Power function", "Rayleigh", "Triangular", "Uniform integer", "Uniform Real", "Weibull"]
+          },
+          "connectors": {
+            "itemOut": {
+              "ItemOut": "Created items (or value output if in value mode)"
+            },
+            "valueIn": {
+              "Q": "Item quantity - overrides Quantity dialog item",
+              "V": "Value to output (in Create Values mode)",
+              "Start": "Trigger to start schedule (value > 0.5 starts)",
+              "Match": "Filter for multiple distributions table",
+              "Arg1": "Distribution argument 1 (varies by distribution)",
+              "Arg2": "Distribution argument 2 (varies by distribution)"
+            },
+            "valueOut": {
+              "Q": "Quantity value of last released item",
+              "NE": "Next event time - time of next item creation"
+            }
+          },
+          "variables": {
+            "inputs": [
+              {"dialogId": 37, "name": "CreateOptions_pop", "type": "popupmenu", "description": "Block behavior selection"},
+              {"dialogId": 14, "name": "Rnd_Distributions_pop", "type": "popupmenu", "description": "Distribution type"},
+              {"dialogId": 4, "name": "Rnd_Arg1_prm", "type": "parameter", "description": "Distribution argument 1"},
+              {"dialogId": 5, "name": "Rnd_Arg2_prm", "type": "parameter", "description": "Distribution argument 2"},
+              {"dialogId": 11, "name": "Rnd_Arg3_prm", "type": "parameter", "description": "Distribution argument 3"},
+              {"dialogId": 7, "name": "RndI_ItemQty2_prm", "type": "parameter", "description": "Item quantity"},
+              {"dialogId": 25, "name": "TimeUnits_pop", "type": "popupmenu", "description": "Time units"},
+              {"dialogId": 30, "name": "RndI_MaxItems_chk", "type": "checkbox", "description": "Enable maximum items"},
+              {"dialogId": 31, "name": "RndI_MaxItems_prm", "type": "parameter", "description": "Maximum items generated"},
+              {"dialogId": 10, "name": "RndI_NoItemAtStartTime_chk", "type": "checkbox", "description": "No item at start time"},
+              {"dialogId": 32, "name": "Shift_pop", "type": "popupmenu", "description": "Shift schedule"},
+              {"dialogId": 13, "name": "Rnd_BlockSeed_chk", "type": "checkbox", "description": "Use block seed"},
+              {"dialogId": 12, "name": "Rnd_BlockSeed_prm", "type": "parameter", "description": "Random seed value"},
+              {"dialogId": 20, "name": "Cost_PerTime_prm", "type": "parameter", "description": "Cost per time"},
+              {"dialogId": 21, "name": "Cost_PerItem_prm", "type": "parameter", "description": "Cost per item"},
+              {"dialogId": 151, "name": "Cost_Enable_chk", "type": "checkbox", "description": "Enable costing"},
+              {"dialogId": 128, "name": "CreateTimeAttrib_chk", "type": "checkbox", "description": "Record creation time"},
+              {"dialogId": 127, "name": "CreateTimeAttrib_pop", "type": "popupmenu", "description": "Creation time attribute"}
+            ],
+            "outputs": [
+              {"dialogId": 102, "name": "RndI_ItemQty_prm", "type": "parameter", "description": "Item quantity (output)"},
+              {"dialogId": 108, "name": "RndI_TotalCreationEvents_prm", "type": "parameter", "description": "Total creation events"},
+              {"dialogId": 110, "name": "RndI_TotalQuantity_prm", "type": "parameter", "description": "Total quantity created"},
+              {"dialogId": 105, "name": "RndI_CostTotal_prm", "type": "parameter", "description": "Total cost (random items)"},
+              {"dialogId": 112, "name": "PrgI_CostTotal_prm", "type": "parameter", "description": "Total cost (scheduled items)"},
+              {"dialogId": 23, "name": "Cost_Total1_prm", "type": "parameter", "description": "Total cost"},
+              {"dialogId": 121, "name": "RndV_NumValsCreated_prm", "type": "parameter", "description": "Values created count"},
+              {"dialogId": 122, "name": "RndV_ValueSum_prm", "type": "parameter", "description": "Sum of values created"}
+            ]
+          }
+        },
+        "Queue": {
+          "description": "Queues items and releases them based on user-selected queuing behavior.",
+          "help": {
+            "summary": "Hold items in queue with configurable sorting, resource pool allocation, or advanced resource management.",
+            "tabs": ["Queue", "Options", "Results", "Contents", "Item Animation", "Block Animation"],
+            "behaviors": [
+              "Sorted queue - release by attribute, FIFO, LIFO, or priority",
+              "Resource pool queue - release when resources allocated by Resource Pool blocks",
+              "Advanced resource queue - release when resources allocated by Resource Manager block"
+            ],
+            "sortMethods": [
+              "Attribute value - release based on attribute",
+              "First in, first out (FIFO) - most common",
+              "Last in, first out (LIFO) - reverse order",
+              "Priority - based on priority property"
+            ]
+          },
+          "connectors": {
+            "itemIn": {
+              "ItemIn": "Items to be queued"
+            },
+            "itemOut": {
+              "ItemOut": "Items released from queue",
+              "RenegeOut": "Reneged items (if Renege enabled)"
+            },
+            "valueIn": {
+              "R": "Renege signal (>=0.5 triggers renege if immediate mode)",
+              "L": "Sets Maximum queue length",
+              "ResourceQty": "Resource quantities (if connector option selected)"
+            },
+            "valueOut": {
+              "L": "Length - number of items in queue",
+              "W": "Wait - wait time of last item to exit",
+              "F": "Full - 1 when full, 0 otherwise",
+              "P": "Priority - priority of last item to leave",
+              "Ave L": "Average queue length",
+              "Ave W": "Average wait time"
+            }
+          },
+          "variables": {
+            "inputs": [
+              {"dialogId": 31, "name": "QueueType_pop", "type": "popupmenu", "description": "Queue behavior type"},
+              {"dialogId": 17, "name": "QueueRank_Pop", "type": "popupmenu", "description": "Sort method"},
+              {"dialogId": 26, "name": "SortAttrib_Pop", "type": "popupmenu", "description": "Sort attribute"},
+              {"dialogId": 3, "name": "MaxQueueLength_prm", "type": "parameter", "description": "Maximum queue length"},
+              {"dialogId": 18, "name": "Reneging_chk", "type": "checkbox", "description": "Enable reneging"},
+              {"dialogId": 109, "name": "RenegeType_pop", "type": "popupmenu", "description": "Renege type"},
+              {"dialogId": 29, "name": "RenegeTime_prm", "type": "parameter", "description": "Renege time"},
+              {"dialogId": 36, "name": "MinWait_chk", "type": "checkbox", "description": "Enable minimum wait"},
+              {"dialogId": 37, "name": "MinWait_prm", "type": "parameter", "description": "Minimum wait time"},
+              {"dialogId": 19, "name": "CalcWaitCosts_chk", "type": "checkbox", "description": "Calculate waiting costs"},
+              {"dialogId": 32, "name": "AndOr_pop", "type": "popupmenu", "description": "Resource pool AND/OR logic"},
+              {"dialogId": 105, "name": "RPQuantity_pop", "type": "popupmenu", "description": "Resource quantity source"},
+              {"dialogId": 82, "name": "Shift_pop", "type": "popupmenu", "description": "Shift schedule"}
+            ],
+            "outputs": [
+              {"dialogId": 11, "name": "QueueLength_prm", "type": "parameter", "description": "Current queue length"},
+              {"dialogId": 6, "name": "AveLength_prm", "type": "parameter", "description": "Average queue length"},
+              {"dialogId": 7, "name": "AveWait_prm", "type": "parameter", "description": "Average wait time"},
+              {"dialogId": 8, "name": "MaxLength_prm", "type": "parameter", "description": "Maximum queue length"},
+              {"dialogId": 9, "name": "MaxWait_prm", "type": "parameter", "description": "Maximum wait time"},
+              {"dialogId": 83, "name": "Arrivals_prm", "type": "parameter", "description": "Total arrivals"},
+              {"dialogId": 13, "name": "Departures_prm", "type": "parameter", "description": "Total departures"},
+              {"dialogId": 76, "name": "Reneges_prm", "type": "parameter", "description": "Total reneges"},
+              {"dialogId": 15, "name": "Utilization_prm", "type": "parameter", "description": "Utilization rate"},
+              {"dialogId": 21, "name": "TotalBlockCosts_prm", "type": "parameter", "description": "Total block costs"},
+              {"dialogId": 84, "name": "CurrentWait_prm", "type": "parameter", "description": "Current wait time"}
+            ]
+          }
+        },
+        "Exit": {
+          "description": "Passes items out of the simulation and releases their memory.",
+          "help": {
+            "summary": "Remove items from model. Important for memory management - items not exited remain in memory.",
+            "tabs": ["Report", "Animation"],
+            "notes": [
+              "Always exit items when process is finished",
+              "Items queued but not exited consume memory",
+              "Reports total items absorbed"
+            ]
+          },
+          "connectors": {
+            "itemIn": {
+              "ItemIn": "Items to exit from simulation (array connector - multiple inputs)"
+            },
+            "valueOut": {
+              "Total": "Total number of items exited (top connector)",
+              "Count1-CountN": "Items exited per input stream (right connectors)"
+            }
+          },
+          "variables": {
+            "inputs": [
+              {"dialogId": 5, "name": "UseProof", "type": "checkbox", "description": "Use Proof Animation"},
+              {"dialogId": 7, "name": "Hanim", "type": "checkbox", "description": "Enable H-block animation"},
+              {"dialogId": 8, "name": "HAnimNum", "type": "parameter", "description": "H-block animation number"},
+              {"dialogId": 10, "name": "ShowExitValues_chk", "type": "checkbox", "description": "Show exit values on connectors"},
+              {"dialogId": 12, "name": "Animate3D_chk", "type": "checkbox", "description": "Enable 3D animation"},
+              {"dialogId": 14, "name": "E3DShowBlock_chk", "type": "checkbox", "description": "Show block in 3D"}
+            ],
+            "outputs": [
+              {"dialogId": 3, "name": "TotalExited_prm", "type": "parameter", "description": "Total items exited"}
+            ]
+          }
+        },
+        "Gate": {
+          "description": "Controls the passing of items through a portion of the model based on demand or conditions.",
+          "help": {
+            "summary": "Pass items only when demand conditions are met. Acts as a gate that opens on demand, where demand can accumulate.",
+            "tabs": ["Gate", "Block Animation"],
+            "modes": [
+              "Conditional gating with items - accumulate demand from item values, pass that many items",
+              "Conditional gating with values - pass items while demand value > 0.5",
+              "Area gating - limit items in a section, release when items leave via sensor",
+              "Schedule gating with shift - unlimited when shift on, none when off"
+            ]
+          },
+          "connectors": {
+            "itemIn": {
+              "ItemIn": "Stream of items to be gated"
+            },
+            "itemOut": {
+              "ItemOut": "Items allowed through the gate"
+            },
+            "valueIn": {
+              "Demand": "While > 0.5 or when item pulled in, allows items through. Can accumulate demand if item connector.",
+              "Sensor": "Detects items leaving restricted area (array connector for multiple exit paths)"
+            },
+            "valueOut": {
+              "AD": "Accumulated demand - unsatisfied demand at gate",
+              "#": "Number of items currently in gated area"
+            }
+          },
+          "variables": {
+            "inputs": [
+              {"dialogId": 8, "name": "GateMode_pop", "type": "popupmenu", "description": "Gate mode type"},
+              {"dialogId": 4, "name": "Shift_pop", "type": "popupmenu", "description": "Shift schedule"},
+              {"dialogId": 12, "name": "AG_MaxItemsInArea_prm", "type": "parameter", "description": "Max items in gated area"},
+              {"dialogId": 59, "name": "AG_UseItemQuantity_chk", "type": "checkbox", "description": "Use item quantity for area count"},
+              {"dialogId": 6, "name": "DM_CheckDemandInCon_chk", "type": "checkbox", "description": "Check demand connector at each event"},
+              {"dialogId": 14, "name": "DM_DemandConnectorBehavior_pop", "type": "popupmenu", "description": "Demand connector behavior"}
+            ],
+            "outputs": [
+              {"dialogId": 3, "name": "AccumDemand_prm", "type": "parameter", "description": "Accumulated demand"},
+              {"dialogId": 41, "name": "SM_Demand_prm", "type": "parameter", "description": "Schedule mode demand"},
+              {"dialogId": 43, "name": "AG_CurrItemsInArea_prm", "type": "parameter", "description": "Current items in area"}
+            ]
+          }
+        },
+        "Select Item In": {
+          "description": "Selects one input to be output based on a decision rule.",
+          "help": {
+            "summary": "Choose which input stream to pull item from. Combines multiple streams into one based on priority, random, sequential, merge, or select connector.",
+            "tabs": ["Options"],
+            "selectionMethods": [
+              "Priority - select input with highest priority item",
+              "Random - probabilistic selection per input",
+              "Sequential - toggle through inputs starting from top",
+              "Merge - accept items from all inputs (funnel streams)",
+              "Select connector - external value controls which input"
+            ]
+          },
+          "connectors": {
+            "itemIn": {
+              "ItemIn": "Multiple item inputs (array connector)"
+            },
+            "itemOut": {
+              "ItemOut": "Selected item output"
+            },
+            "valueIn": {
+              "Select": "Controls which input to select (if select connector mode)"
+            }
+          },
+          "variables": {
+            "inputs": [
+              {"dialogId": 6, "name": "SelectType_pop", "type": "popupmenu", "description": "Selection method"},
+              {"dialogId": 4, "name": "TopSelect_prm", "type": "parameter", "description": "Value that selects top input"},
+              {"dialogId": 9, "name": "InvalidSelect_pop", "type": "popupmenu", "description": "Invalid select value handling"},
+              {"dialogId": 11, "name": "SelectFrom_pop", "type": "popupmenu", "description": "Select from all or available inputs"},
+              {"dialogId": 12, "name": "UseBlockSeed_chk", "type": "checkbox", "description": "Use block seed"},
+              {"dialogId": 13, "name": "RandomSeed_prm", "type": "parameter", "description": "Random seed value"},
+              {"dialogId": 17, "name": "ShowThroughput_chk", "type": "checkbox", "description": "Show throughput table"}
+            ],
+            "outputs": []
+          }
+        },
+        "Select Item Out": {
+          "description": "Selects which output the input item is routed to based on a decision rule.",
+          "help": {
+            "summary": "Route items to one of multiple outputs based on property, priority, random, sequential, or select connector.",
+            "tabs": ["Options", "Item Animation"],
+            "selectionMethods": [
+              "Property - output determined by item attribute or priority value",
+              "Connector Priority - try outputs in priority order until accepted",
+              "Random - probabilistic output selection",
+              "Sequential - round robin through outputs",
+              "Select connector - external value controls output"
+            ]
+          },
+          "connectors": {
+            "itemIn": {
+              "ItemIn": "Item input"
+            },
+            "itemOut": {
+              "ItemOut": "Multiple item outputs (array connector)"
+            },
+            "valueIn": {
+              "Select": "Controls which output to use (if select connector mode)",
+              "Priority1-N": "Dynamic priority values per output (if enabled)"
+            }
+          },
+          "variables": {
+            "inputs": [
+              {"dialogId": 5, "name": "SelectType_pop", "type": "popupmenu", "description": "Selection method"},
+              {"dialogId": 3, "name": "TopSelect_prm", "type": "parameter", "description": "Value that selects top output"},
+              {"dialogId": 8, "name": "InvalidSelect_pop", "type": "popupmenu", "description": "Invalid select value handling"},
+              {"dialogId": 10, "name": "SelectTo_pop", "type": "popupmenu", "description": "Blocked output behavior"},
+              {"dialogId": 14, "name": "SelectAttribute_pop", "type": "popupmenu", "description": "Selection attribute"},
+              {"dialogId": 16, "name": "Predict_chk", "type": "checkbox", "description": "Predict path before entry"},
+              {"dialogId": 17, "name": "DynamicPriorities_chk", "type": "checkbox", "description": "Enable dynamic priorities"},
+              {"dialogId": 11, "name": "UseBlockSeed_chk", "type": "checkbox", "description": "Use block seed"},
+              {"dialogId": 12, "name": "RandomSeed_prm", "type": "parameter", "description": "Random seed value"},
+              {"dialogId": 23, "name": "ShowThroughput_chk", "type": "checkbox", "description": "Show throughput table"}
+            ],
+            "outputs": [
+              {"dialogId": 62, "name": "NumInvalid_prm", "type": "parameter", "description": "Count of invalid selections"}
+            ]
+          }
+        },
+        "Batch": {
+          "description": "Combines multiple items from several sources into a single batched item (kitting).",
+          "help": {
+            "summary": "Join items from multiple inputs into one item. Useful for synchronizing resources and combining parts of a job.",
+            "tabs": ["Batch", "Options", "Properties", "Item Animation"],
+            "behaviors": [
+              "Batch items into a single item - combine based on arrival times",
+              "Match items into a single item - match based on attribute values"
+            ]
+          },
+          "connectors": {
+            "itemIn": {
+              "ItemIn": "Items to be batched (array connector - multiple inputs)"
+            },
+            "itemOut": {
+              "ItemOut": "Batched item output"
+            },
+            "valueIn": {
+              "Q1-Qn": "Quantity needed at each connector (if Use quantity input connectors enabled)",
+              "Demand": "Trigger batch creation (>=0.5 = TRUE)"
+            },
+            "valueOut": {
+              "Count1-CountN": "Item counts at each input connector (if enabled)"
+            }
+          },
+          "variables": {
+            "inputs": [
+              {"dialogId": 51, "name": "BatchType_pop", "type": "popupmenu", "description": "Batch behavior type"},
+              {"dialogId": 8, "name": "MatchingAttribute_pop", "type": "popupmenu", "description": "Attribute for matching"},
+              {"dialogId": 10, "name": "BatchSizeAttribute_pop", "type": "popupmenu", "description": "Batch size attribute"},
+              {"dialogId": 35, "name": "TotalBatchSizeAttribute_pop", "type": "popupmenu", "description": "Total batch size attribute"},
+              {"dialogId": 3, "name": "Preserve_chk", "type": "checkbox", "description": "Preserve uniqueness"},
+              {"dialogId": 4, "name": "QtyCon_chk", "type": "checkbox", "description": "Use quantity connectors"},
+              {"dialogId": 11, "name": "ShowNumItems_chk", "type": "checkbox", "description": "Show number of items"},
+              {"dialogId": 24, "name": "ShowDemandCon_chk", "type": "checkbox", "description": "Show demand connector"},
+              {"dialogId": 25, "name": "ValueDemandConnector_pop", "type": "popupmenu", "description": "Demand connector behavior"},
+              {"dialogId": 71, "name": "AllowZeroBatchSize_chk", "type": "checkbox", "description": "Allow zero batch size"},
+              {"dialogId": 72, "name": "BatchSizeWhen_pop", "type": "popupmenu", "description": "Batch size lock timing"}
+            ],
+            "outputs": []
+          }
+        },
+        "Unbatch": {
+          "description": "Produces multiple items from a single input item, restoring original properties if preserve uniqueness was used.",
+          "help": {
+            "summary": "Split batched items back into individual items. Works with Batch block's preserve uniqueness feature to restore original properties.",
+            "tabs": ["Unbatch", "Properties", "Item Animation"],
+            "features": [
+              "Preserve uniqueness - restore original item properties from Batch",
+              "Quantity per output - specify how many items per connector",
+              "Dynamic quantities via connectors",
+              "Property distribution options",
+              "Cost resource release for ABC"
+            ]
+          },
+          "connectors": {
+            "itemIn": {
+              "ItemIn": "Batched item input"
+            },
+            "itemOut": {
+              "ItemOut": "Multiple item outputs (array connector)"
+            },
+            "valueIn": {
+              "Qty1-QtyN": "Unbatch quantities per output (if Use unbatch quantity connectors enabled)"
+            }
+          },
+          "variables": {
+            "inputs": [
+              {"dialogId": 7, "name": "UnbatchCostType_pop", "type": "popupmenu", "description": "Block behavior type"},
+              {"dialogId": 2, "name": "Preserve_chk", "type": "checkbox", "description": "Preserve uniqueness"},
+              {"dialogId": 3, "name": "QtyCon_chk", "type": "checkbox", "description": "Use quantity connectors"},
+              {"dialogId": 10, "name": "UsePreservedQuantity_chk", "type": "checkbox", "description": "Use preserved quantities"},
+              {"dialogId": 47, "name": "DuplicatePreserved_chk", "type": "checkbox", "description": "Duplicate preserved items"},
+              {"dialogId": 9, "name": "Unmount3d_chk", "type": "checkbox", "description": "Unmount 3D objects"},
+              {"dialogId": 60, "name": "UnbatchQtyOut_chk", "type": "checkbox", "description": "Output quantity connectors"}
+            ],
+            "outputs": []
+          }
+        },
+        "Resource Pool": {
+          "description": "Holds resource pool units to constrain capacity of a section of the model.",
+          "help": {
+            "summary": "Manage limited resources (not items) that constrain model capacity. Works with Queue (resource pool mode) and Resource Pool Release blocks.",
+            "tabs": ["Resource Pool", "Costs", "Results", "Block Animation"],
+            "modes": [
+              "Resource Pool - simple pool units allocated via Queue blocks",
+              "Advanced Resource Pool - interface for advanced resource management system"
+            ],
+            "workflow": [
+              "1. Queue block (resource pool mode) requests resources",
+              "2. Resource Pool allocates when available",
+              "3. Item proceeds with resource",
+              "4. Resource Pool Release returns resource to pool"
+            ]
+          },
+          "connectors": {
+            "valueIn": {
+              "c": "Change - sets new number of resource pool units (overrides old value)"
+            },
+            "valueOut": {
+              "U": "Utilization - calculated utilization rate",
+              "L": "Length - number of resources available",
+              "use": "Number of resources currently in use",
+              "#waiting": "Number of items waiting for this pool"
+            }
+          },
+          "variables": {
+            "inputs": [
+              {"dialogId": 65, "name": "ResourcePoolName", "type": "edittext31", "description": "Pool name"},
+              {"dialogId": 3, "name": "NumServ", "type": "parameter", "description": "Initial number of resources"},
+              {"dialogId": 72, "name": "ResourcePoolType_POP", "type": "popupmenu", "description": "Pool type"},
+              {"dialogId": 17, "name": "AllocRule", "type": "popupmenu", "description": "Allocation rule"},
+              {"dialogId": 10, "name": "FirstOnly", "type": "checkbox", "description": "Allocate to best item only"},
+              {"dialogId": 29, "name": "StopExceed", "type": "checkbox", "description": "Stop if releases exceed available"},
+              {"dialogId": 32, "name": "Shift_Pop", "type": "popupmenu", "description": "Shift schedule"},
+              {"dialogId": 70, "name": "CostEnable_chk", "type": "checkbox", "description": "Enable costing"},
+              {"dialogId": 23, "name": "PerTime", "type": "parameter", "description": "Cost per time unit"},
+              {"dialogId": 25, "name": "PerItem", "type": "parameter", "description": "Cost per use"},
+              {"dialogId": 22, "name": "CostUnit", "type": "popupmenu", "description": "Cost time unit"},
+              {"dialogId": 33, "name": "HAnim", "type": "checkbox", "description": "Enable H-block animation"},
+              {"dialogId": 34, "name": "HAnimNum", "type": "parameter", "description": "H-block start number"},
+              {"dialogId": 98, "name": "LogResourcePool_chk", "type": "checkbox", "description": "Log resource pool"},
+              {"dialogId": 100, "name": "LogTimeStart_prm", "type": "parameter", "description": "Log start time"},
+              {"dialogId": 102, "name": "LogTimeEnd_prm", "type": "parameter", "description": "Log end time"}
+            ],
+            "outputs": [
+              {"dialogId": 11, "name": "TotalResources_prm", "type": "parameter", "description": "Total resources"},
+              {"dialogId": 6, "name": "NumAvailable_prm", "type": "parameter", "description": "Available resources"},
+              {"dialogId": 67, "name": "NumInUse_prm", "type": "parameter", "description": "Resources in use"},
+              {"dialogId": 9, "name": "Utilization_prm", "type": "parameter", "description": "Utilization rate"},
+              {"dialogId": 7, "name": "QueueLength_prm", "type": "parameter", "description": "Currently waiting"},
+              {"dialogId": 14, "name": "QueueLengthAve_prm", "type": "parameter", "description": "Average number waiting"},
+              {"dialogId": 19, "name": "AveWait_prm", "type": "parameter", "description": "Average wait time"},
+              {"dialogId": 27, "name": "TotalCost", "type": "parameter", "description": "Total cost"}
+            ]
+          }
+        }
+      }
+    },
+    "Value.lbr": {
+      "name": "Value Library",
+      "blocks": {
+        "Random Number": {
+          "description": "Generates random numbers from various distributions.",
+          "help": {
+            "summary": "Outputs random values from a selected probability distribution each time a value is requested.",
+            "distributions": ["Beta", "Binomial", "Cauchy", "Chi Squared", "Constant", "Empirical", "Erlang", "Exponential", "Gamma", "Geometric", "LogNormal", "Normal", "Pareto", "Poisson", "Triangular", "Uniform Integer", "Uniform Real", "Weibull"]
+          },
+          "connectors": {
+            "valueIn": {
+              "Arg1": "Distribution argument 1 (meaning varies by distribution)",
+              "Arg2": "Distribution argument 2 (meaning varies by distribution)",
+              "Arg3": "Distribution argument 3 (if applicable)",
+              "Arg4": "Distribution argument 4 (if applicable)"
+            },
+            "valueOut": {
+              "Result": "Generated random value"
+            }
+          },
+          "variables": {
+            "inputs": [
+              {"dialogId": 12, "name": "DistType", "type": "popupmenu", "description": "Distribution type"},
+              {"dialogId": 4, "name": "Argument1_prm", "type": "parameter", "description": "Distribution argument 1"},
+              {"dialogId": 5, "name": "Argument2_prm", "type": "parameter", "description": "Distribution argument 2"},
+              {"dialogId": 9, "name": "Argument3_prm", "type": "parameter", "description": "Distribution argument 3"},
+              {"dialogId": 21, "name": "Argument4_prm", "type": "parameter", "description": "Distribution argument 4"},
+              {"dialogId": 15, "name": "GenType", "type": "popupmenu", "description": "Generation type"},
+              {"dialogId": 10, "name": "UseBlockSeed_chk", "type": "checkbox", "description": "Use block seed"},
+              {"dialogId": 11, "name": "RandomSeed_prm", "type": "parameter", "description": "Random seed value"},
+              {"dialogId": 29, "name": "GenerateOnce_chk", "type": "checkbox", "description": "Generate once per simulation"}
+            ],
+            "outputs": [
+              {"dialogId": 27, "name": "RandomResult_prm", "type": "parameter", "description": "Generated random value"}
+            ]
+          }
+        },
+        "Constant": {
+          "description": "Outputs a constant value.",
+          "help": {
+            "summary": "Outputs a fixed constant value. Can retain last input value or output initial value at simulation start."
+          },
+          "connectors": {
+            "valueIn": {
+              "Input": "Optional input value (if Retain is enabled)"
+            },
+            "valueOut": {
+              "Result": "Constant output value"
+            }
+          },
+          "variables": {
+            "inputs": [
+              {"dialogId": 3, "name": "ConstantValue_prm", "type": "parameter", "description": "Constant value to output"},
+              {"dialogId": 4, "name": "Retain", "type": "checkbox", "description": "Retain last input value"},
+              {"dialogId": 11, "name": "InitialValue_prm", "type": "parameter", "description": "Initial value before first input"},
+              {"dialogId": 12, "name": "SendMsgWhenSimuStart_chk", "type": "checkbox", "description": "Send message at simulation start"}
+            ],
+            "outputs": [
+              {"dialogId": 7, "name": "Result_prm", "type": "parameter", "description": "Output result value"}
+            ]
+          }
+        }
+      }
+    }
+  }
+}

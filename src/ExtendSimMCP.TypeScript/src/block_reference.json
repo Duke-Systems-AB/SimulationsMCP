@@ -1,0 +1,2261 @@
+{
+  "version": "2.0",
+  "description": "ExtendSim block reference with connector documentation. Blocks can be either simple strings (description only) or objects with full details.",
+  "libraries": {
+    "Value.lbr": {
+      "name": "Value Library",
+      "description": "Blocks for continuous simulation - values, math, and data flow",
+      "categories": {
+        "Data Access": {
+          "blocks": {
+            "Data Import Export": {
+              "description": "Enables direct exchange of data between internal ExtendSim files (databases or global arrays) and external files (Excel, text files, ADO/ODBC databases, FTP).",
+              "connectors": {
+                "ImportIn": {
+                  "direction": "in",
+                  "usage": "Trigger import/export (non-zero triggers)"
+                }
+              },
+              "dialogVariables": {
+                "ImportExport_pop": "Import or Export mode",
+                "DataSource_pop": "Internal data source (Database or Global Array)",
+                "ExternalDataType_pop": "External type (Excel, Text, ADO/ODBC, FTP)",
+                "XD_DatabaseName_pop": "ExtendSim database name",
+                "XD_TableName_pop": "ExtendSim table name",
+                "XG_List_Pop": "Global array name",
+                "Dlg_FileName_txt": "External file path",
+                "XLStartRow": "Excel start row",
+                "XLEndRow": "Excel end row",
+                "XLStartCol": "Excel start column",
+                "XLEndCol": "Excel end column",
+                "TextFtpDelimiter_pop": "Text file delimiter",
+                "DLG_AutoImportExport_chk": "Auto import/export",
+                "ImportDuring_pop": "When to import during simulation"
+              },
+              "patterns": [
+                "Data Import Export (Import before run, Export after run)",
+                "Pulse → Data Import Export ImportIn (periodic data exchange)"
+              ]
+            },
+            "Data Init": {
+              "description": "Defines values needed to initialize multiple database tables and global arrays before a simulation run starts.",
+              "connectors": {},
+              "patterns": [
+                "Place in model to reset data before each run"
+              ]
+            },
+            "Data Source Create": {
+              "description": "Creates, resizes, deletes, and views global arrays and text files.",
+              "connectors": {},
+              "dialogVariables": {
+                "DataSourceType_pop": "Data source type (Global Array or Text File)",
+                "GA_List_Pop": "Select global array",
+                "GA_Index_prm": "Global array index (read-only)",
+                "TF_Name_etxt": "Text file name/path",
+                "TF_Delimitation_pop": "Text file delimiter (Tab, Comma, Space, etc.)"
+              },
+              "patterns": [
+                "Data Source Create (define global arrays before simulation)",
+                "Use with Read/Write blocks to store intermediate data"
+              ]
+            },
+            "Data Specs": {
+              "description": "Outputs selected specifications on data sources (ExtendSim databases or global arrays).",
+              "connectors": {
+                "ValuesOut": {
+                  "direction": "out",
+                  "usage": "Specifications: row count, column count, etc.",
+                  "connectTo": "Equation iVarsIn for dynamic calculations"
+                }
+              },
+              "patterns": [
+                "Data Specs → Equation (calculate based on data size)"
+              ]
+            },
+            "Read": {
+              "description": "Reads data from a data source (database, global arrays, Excel, Text Files, local tables) to be used in a model.",
+              "connectors": {
+                "ValuesOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Values read from data source",
+                  "connectTo": "Math ValuesIn, Equation iVarsIn, Decision AIn/BIn"
+                },
+                "RowIn": {
+                  "direction": "in",
+                  "usage": "Row to read from (dynamic selection)"
+                },
+                "TriggerIn": {
+                  "direction": "in",
+                  "usage": "Read when signal received"
+                }
+              },
+              "patterns": [
+                "Read → Math → Write (read, calculate, save result)",
+                "Simulation Variable → Read RowIn (read different rows per run)"
+              ]
+            },
+            "Write": {
+              "description": "Writes data from a model to a data destination (databases, global arrays, Excel, Text Files, Local Tables).",
+              "connectors": {
+                "ValuesIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Values to write to data source",
+                  "connectTo": "Math ResultOut, Mean & Variance ValuesOut"
+                },
+                "RowIn": {
+                  "direction": "in",
+                  "usage": "Row to write to (dynamic selection)"
+                },
+                "TriggerIn": {
+                  "direction": "in",
+                  "usage": "Write when signal received"
+                }
+              },
+              "patterns": [
+                "Mean & Variance → Write (save statistics)",
+                "Equation → Write (save calculated results)"
+              ]
+            }
+          }
+        },
+        "Holding": {
+          "blocks": {
+            "Holding Tank": {
+              "description": "Accumulates the total of the input values, allows requesting an amount to be removed. Inputs can be summed or integrated.",
+              "connectors": {
+                "InputIn": {
+                  "direction": "in",
+                  "usage": "Value to add to the tank",
+                  "connectTo": "ResultOut from Math, RandomValueOut from Random Number"
+                },
+                "ContentsOut": {
+                  "direction": "out",
+                  "usage": "Current tank contents",
+                  "connectTo": "TracesIn on Line Chart, ValueIn on Decision"
+                },
+                "GetOut": {
+                  "direction": "out",
+                  "usage": "Amount last withdrawn"
+                },
+                "ValuesIn": {
+                  "direction": "in",
+                  "usage": "Request withdrawal from tank"
+                }
+              },
+              "patterns": [
+                "Math (Add) → Holding Tank → Line Chart (display level)",
+                "Holding Tank + Decision → Feedback for overflow control"
+              ]
+            },
+            "Wait Time": {
+              "description": "Holds inputs for a specified amount of simulation time (delay) before passing to output. Works like a conveyor with slots. Not for discrete event models.",
+              "connectors": {
+                "InputIn": {
+                  "direction": "in",
+                  "usage": "Values to delay"
+                },
+                "DelayedOut": {
+                  "direction": "out",
+                  "usage": "Delayed output values"
+                },
+                "DelayAmountIn": {
+                  "direction": "in",
+                  "usage": "Delay time (overrides dialog value)"
+                },
+                "TotalOut": {
+                  "direction": "out",
+                  "usage": "Sum of values currently in delay"
+                }
+              },
+              "dialogVariables": {
+                "DelayTime": "Default delay time",
+                "TimeUnit": "Time units for delay",
+                "InitVal": "Initial output value"
+              },
+              "patterns": [
+                "Random Number → Wait Time → Math (delayed random values)",
+                "Equation → Wait Time → Holding Tank (delayed feedback)"
+              ]
+            }
+          }
+        },
+        "Inputs": {
+          "blocks": {
+            "Constant": {
+              "description": "Generates a constant value at each step. Typically used for setting input values for other blocks.",
+              "connectors": {
+                "ValueOut": {
+                  "direction": "out",
+                  "usage": "The constant value",
+                  "connectTo": "BIn on Decision (threshold), valuesIn on Activity (process time)"
+                },
+                "ValueIn": {
+                  "direction": "in",
+                  "usage": "Optional: set value dynamically"
+                }
+              },
+              "patterns": [
+                "Constant → Decision (threshold comparison)",
+                "Constant → Activity valuesIn (fixed process time)"
+              ]
+            },
+            "Pulse": {
+              "description": "Outputs true (1) at specified times, false (0) at all other times.",
+              "connectors": {
+                "TrueOut": {
+                  "direction": "out",
+                  "usage": "True (1) at pulse times, false (0) otherwise",
+                  "connectTo": "Gate SensorIn, Decision AIn"
+                },
+                "valuesIn": {
+                  "direction": "in",
+                  "usage": "Pulse interval (overrides dialog value)"
+                }
+              },
+              "dialogVariables": {
+                "WaitTime": "Time between pulses",
+                "TimeUnit": "Time units",
+                "ZeroPulse": "Output pulse at time zero",
+                "NextEvent": "Schedule next event",
+                "TrueFalsePop": "Output true or false",
+                "TimeCount": "Time since last pulse (read-only)"
+              },
+              "patterns": [
+                "Pulse → Gate SensorIn (periodic gate opening)",
+                "Pulse → Mean & Variance ClearIn (periodic statistics reset)"
+              ]
+            },
+            "Random Number": {
+              "description": "Generates random integers or real numbers based on selected distribution.",
+              "connectors": {
+                "RandomValueOut": {
+                  "direction": "out",
+                  "usage": "Randomly generated value",
+                  "connectTo": "ValuesIn on Queue (renege time), iVarsIn on Equation"
+                },
+                "ValuesIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Distribution parameters (min, max, etc.)"
+                }
+              },
+              "patterns": [
+                "Random Number → Queue ValuesIn (random renege time)",
+                "Random Number → Equation → Select Item Out (random routing)",
+                "Lookup Table → Random Number ValuesIn (time-dependent distribution)"
+              ]
+            },
+            "Simulation Variable": {
+              "description": "Outputs the value of a simulation variable (current run number, current step, current time, end time, etc.).",
+              "connectors": {
+                "VariableOut": {
+                  "direction": "out",
+                  "usage": "Selected simulation variable value",
+                  "connectTo": "Lookup Table ValueIn, Read RowIn, Equation iVarsIn"
+                }
+              },
+              "dialogVariables": {
+                "VarType": "Variable to output (CurrentTime, EndTime, RunNumber, StepNumber, etc.)",
+                "AddNumber_prm": "Value to add to the variable",
+                "SendMessageEnd_chk": "Send message at end of simulation",
+                "Result_prm": "Current result value (read-only)"
+              },
+              "patterns": [
+                "Simulation Variable (CurrentTime) → Lookup Table (time-dependent lookup)",
+                "Simulation Variable (RunNumber) → Read RowIn (different data per run)"
+              ]
+            }
+          }
+        },
+        "Math": {
+          "blocks": {
+            "Decision": {
+              "description": "Makes a decision and outputs TRUE or FALSE based on inputs and defined logic.",
+              "connectors": {
+                "AIn": {
+                  "direction": "in",
+                  "usage": "First value to compare"
+                },
+                "BIn": {
+                  "direction": "in",
+                  "usage": "Second value to compare (or threshold)"
+                },
+                "YOut": {
+                  "direction": "out",
+                  "usage": "Output if condition is TRUE",
+                  "connectTo": "SelectIn on Select Item Out/In"
+                },
+                "NOut": {
+                  "direction": "out",
+                  "usage": "Output if condition is FALSE"
+                }
+              },
+              "patterns": [
+                "Holding Tank → Decision AIn, Constant → Decision BIn (overflow check)",
+                "Decision YOut → Select Item Out SelectIn (dynamic routing)"
+              ]
+            },
+            "Equation": {
+              "description": "Outputs results of equations entered in dialog. Any number of inputs and outputs.",
+              "connectors": {
+                "iVarsIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Input variables (i0, i1, i2...)",
+                  "connectTo": "Value outputs from other blocks"
+                },
+                "oVarsOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Result variables (o0, o1, o2...)",
+                  "connectTo": "SelectIn, ValuesIn on other blocks"
+                }
+              },
+              "patterns": [
+                "Random Number → Equation → Select Item Out (calculate routing decision)",
+                "Multiple inputs → Equation → Holding Tank (combine flows)"
+              ]
+            },
+            "Integrate": {
+              "description": "Integrates input values over time using Euler or Trapezoidal methods.",
+              "connectors": {
+                "InputIn": {
+                  "direction": "in",
+                  "usage": "Value to integrate"
+                },
+                "IntegrateOut": {
+                  "direction": "out",
+                  "usage": "Integrated result"
+                },
+                "ValuesIn": {
+                  "direction": "in",
+                  "usage": "Initial value (overrides dialog)"
+                }
+              },
+              "dialogVariables": {
+                "Init": "Initial integration value",
+                "IntegrationType_pop": "Integration method (Euler or Trapezoidal)",
+                "Result_prm": "Current result (read-only)"
+              },
+              "patterns": [
+                "Random Number → Integrate → Line Chart (cumulative value)",
+                "Math → Integrate → Holding Tank (accumulated flow)"
+              ]
+            },
+            "Lookup Table": {
+              "description": "Acts as a lookup table (x in, y out). Output can be discrete, interpolated or stepped.",
+              "connectors": {
+                "ValueIn": {
+                  "direction": "in",
+                  "usage": "X value for lookup (often simulation time)"
+                },
+                "ValuesOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Y value(s) from table",
+                  "connectTo": "Create rnd_ValuesIn (arrival pattern), Random Number ValuesIn"
+                }
+              },
+              "patterns": [
+                "Lookup Table → Create (time-dependent arrival rate)",
+                "Lookup Table → Random Number (time-dependent distribution)"
+              ]
+            },
+            "Math": {
+              "description": "Performs a selected mathematical operation on inputs and outputs a result.",
+              "connectors": {
+                "ValuesIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Values to calculate on",
+                  "connectTo": "Outputs from Random Number, Lookup Table, etc."
+                },
+                "ResultOut": {
+                  "direction": "out",
+                  "usage": "Calculation result",
+                  "connectTo": "InputIn on Holding Tank, TracesIn on Chart"
+                }
+              },
+              "patterns": [
+                "Random Number + Lookup Table → Math (Add) → Holding Tank"
+              ]
+            },
+            "Max & Min": {
+              "description": "Determines maximum and minimum values from inputs. Outputs max/min values and connector numbers.",
+              "connectors": {
+                "ValuesIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Values to compare"
+                },
+                "MaxMinValueOut": {
+                  "direction": "out",
+                  "usage": "Maximum or minimum value found"
+                },
+                "MaxMinValueConnectorOut": {
+                  "direction": "out",
+                  "usage": "Connector index of max/min value"
+                }
+              },
+              "dialogVariables": {
+                "MaxMin_pop": "Find maximum or minimum",
+                "RecordHistorical_chk": "Record historical max/min over time",
+                "HistoricalMaxMin_pop": "Historical max or min",
+                "AtConnectorStart_pop": "Connector numbering start",
+                "MultiRun_chk": "Track across multiple runs",
+                "UseLastValidPoint_chk": "Use last valid point if no input",
+                "Result_prm": "Current result (read-only)",
+                "ResultCon_prm": "Result connector index (read-only)"
+              },
+              "patterns": [
+                "Multiple Queues ValuesOut → Max & Min → Decision (find longest queue)",
+                "Max & Min → Select Value Out (route to shortest queue)"
+              ]
+            },
+            "Query Equation": {
+              "description": "Intelligently searches a database and reports best-ranked record and field values.",
+              "connectors": {
+                "iVarsIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Input variables for equation (i0, i1...)"
+                },
+                "oVarsOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Output variables from query (o0, o1...)"
+                },
+                "goIn": {
+                  "direction": "in",
+                  "usage": "Trigger calculation"
+                },
+                "DBQ_CoordsIn": {
+                  "direction": "in",
+                  "usage": "Coordinates for proximity-based queries"
+                }
+              },
+              "dialogVariables": {
+                "DBQ_Database_pop": "Database to query",
+                "DBQ_Table_pop": "Table to query",
+                "DBQPT_Tolerance_prm": "Tolerance for proximity matching",
+                "DBQPT_RecordRankRule_pop": "How to rank matching records",
+                "CalcBeforeStart_chk": "Calculate before simulation starts",
+                "CalcEveryStep_chk": "Calculate every simulation step",
+                "CalcAtEnd_chk": "Calculate at end of simulation"
+              },
+              "patterns": [
+                "Query Equation → Select Value Out (route based on database lookup)",
+                "Simulation Variable → Query Equation iVarsIn (time-based lookup)"
+              ]
+            },
+            "Time Unit": {
+              "description": "Converts the value at input connector from one time unit to another.",
+              "connectors": {
+                "TimeIn": {
+                  "direction": "in",
+                  "usage": "Time value to convert"
+                },
+                "TimeOut": {
+                  "direction": "out",
+                  "usage": "Converted time value"
+                }
+              },
+              "dialogVariables": {
+                "InTimeUnit": "Input time unit (seconds, minutes, hours, days, etc.)",
+                "OutTimeUnit": "Output time unit",
+                "Result_prm": "Conversion result (read-only)"
+              },
+              "patterns": [
+                "Read → Time Unit → Activity valuesIn (convert stored time to model units)",
+                "Simulation Variable → Time Unit (convert current time to different units)"
+              ]
+            }
+          }
+        },
+        "Outputs": {
+          "blocks": {
+            "Command": {
+              "description": "Sends Excel macro or other commands to a spreadsheet application when triggered.",
+              "connectors": {
+                "SendIn": {
+                  "direction": "in",
+                  "usage": "Trigger to send command (non-zero sends)"
+                }
+              },
+              "dialogVariables": {
+                "Command_txt": "Command or macro name to execute",
+                "File": "Excel file path",
+                "Servertype": "Server type (Excel, etc.)",
+                "Appname": "Application name",
+                "CommandType_pop": "Command type",
+                "MacroNames_POP": "Available macro names",
+                "Before": "Execute before simulation",
+                "After": "Execute after simulation",
+                "ExecutionFrequency_POP": "How often to execute",
+                "XL_SaveWorkbookAfterExec_CBX": "Save workbook after execution",
+                "XL_MinimizeExcel_CBX": "Minimize Excel window",
+                "XL_QuitAfterExec_CBX": "Quit Excel after execution"
+              },
+              "patterns": [
+                "Pulse → Command (periodic Excel macro execution)",
+                "Decision → Command (conditional Excel update)"
+              ]
+            },
+            "Display Value": {
+              "description": "Displays the value at input connector on each simulation step. Useful for debugging.",
+              "connectors": {
+                "ValueIn": {
+                  "direction": "in",
+                  "usage": "Value to display"
+                },
+                "ValueOut": {
+                  "direction": "out",
+                  "usage": "Pass-through of input value"
+                }
+              },
+              "dialogVariables": {
+                "Value_prm": "Current displayed value (read-only)",
+                "Open": "Keep dialog open during simulation",
+                "PrmTicks": "Number of decimal places",
+                "RedNegative": "Show negative values in red",
+                "UpdateFreqPop": "Update frequency",
+                "CheckInputEachEvent_chk": "Check input at each event"
+              },
+              "patterns": [
+                "Equation → Display Value → Math (debug intermediate values)",
+                "Queue ValuesOut → Display Value (monitor queue length)"
+              ]
+            },
+            "Notify": {
+              "description": "Notifies user when an event occurs (play sound, stop simulation, or query user for new input).",
+              "connectors": {
+                "valueIn": {
+                  "direction": "in",
+                  "usage": "Trigger value (non-zero triggers notification)"
+                },
+                "valueOut": {
+                  "direction": "out",
+                  "usage": "User-entered value or pass-through"
+                }
+              },
+              "dialogVariables": {
+                "BlockBehavior_pop": "Behavior: Play sound, Stop simulation, or Prompt user",
+                "SND_Name_etxt": "Sound file name",
+                "SND_AnimOnly_chk": "Only play during animation",
+                "STP_Message_etxt": "Stop message text",
+                "STP_UseBlockNum_chk": "Include block number in message",
+                "STP_UseCurrentTime_chk": "Include current time in message",
+                "PMT_UserPrompt_etxt": "User prompt text",
+                "PMT_DefaultOutput_prm": "Default output value",
+                "PMT_Frequency_prm": "Prompt frequency",
+                "PMT_TimeUnits_pop": "Time units for frequency"
+              },
+              "patterns": [
+                "Decision → Notify (alert when condition met)",
+                "Holding Tank → Decision → Notify (alert on overflow)"
+              ]
+            }
+          }
+        },
+        "Routing": {
+          "blocks": {
+            "Catch Value": {
+              "description": "Outputs values thrown from a Throw Value block without using connectors.",
+              "connectors": {
+                "ValueOut": {
+                  "direction": "out",
+                  "usage": "Received value from matching Throw Value"
+                }
+              },
+              "patterns": [
+                "Throw Value (in H-block A) → Catch Value (in H-block B)"
+              ]
+            },
+            "Select Value In": {
+              "description": "Selects output value from one of its inputs according to select connector. Up to 253 inputs.",
+              "connectors": {
+                "ValuesIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Input values to select from"
+                },
+                "SelectIn": {
+                  "direction": "in",
+                  "usage": "Index (0-based) for which input to select"
+                },
+                "ValueOut": {
+                  "direction": "out",
+                  "usage": "The selected value"
+                }
+              }
+            },
+            "Select Value Out": {
+              "description": "Sends input value to one of its outputs according to select connector. Up to 253 outputs.",
+              "connectors": {
+                "ValuesOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Outputs - value sent to selected one"
+                },
+                "SelectIn": {
+                  "direction": "in",
+                  "usage": "Index (0-based) for which output to use"
+                },
+                "ValueIn": {
+                  "direction": "in",
+                  "usage": "Value to route"
+                }
+              }
+            },
+            "Throw Value": {
+              "description": "Throws a value to one or more catch blocks without using connectors.",
+              "connectors": {
+                "ValueIn": {
+                  "direction": "in",
+                  "usage": "Value to send to Catch Value blocks"
+                }
+              },
+              "patterns": [
+                "Queue ValuesOut → Throw Value (send queue length between H-blocks)"
+              ]
+            }
+          }
+        },
+        "Statistics": {
+          "blocks": {
+            "Clear Statistics": {
+              "description": "Clears statistics in various blocks at a specific time or event. Useful for reducing warm-up effects.",
+              "connectors": {
+                "ClearIn": {
+                  "direction": "in",
+                  "usage": "Trigger to clear statistics (non-zero clears)"
+                },
+                "clearOut": {
+                  "direction": "out",
+                  "usage": "Signal when clear occurs"
+                }
+              },
+              "dialogVariables": {
+                "SetClear": "Time to clear statistics",
+                "TimeUnits_pop": "Time units",
+                "ClearAct_chk": "Clear Activity statistics",
+                "ClearRes_chk": "Clear Resource statistics",
+                "ClearQue_chk": "Clear Queue statistics",
+                "ClearExit_chk": "Clear Exit statistics",
+                "ClearMV_chk": "Clear Mean & Variance statistics",
+                "ClearInformation_chk": "Clear Information block statistics",
+                "ClearRate_chk": "Clear Rate library statistics",
+                "ClearMaxMin_chk": "Clear Max & Min statistics",
+                "ClearTime": "Last clear time (read-only)"
+              },
+              "patterns": [
+                "Clear Statistics at time 100 (remove warm-up bias)",
+                "Pulse → Clear Statistics ClearIn (periodic reset)"
+              ]
+            },
+            "Mean & Variance": {
+              "description": "Calculates mean, variance, and standard deviation of values input during simulation.",
+              "connectors": {
+                "ValueIn": {
+                  "direction": "in",
+                  "usage": "Values to calculate statistics on"
+                },
+                "ClearIn": {
+                  "direction": "in",
+                  "usage": "Reset statistics when signal received"
+                },
+                "ValuesOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Mean, variance, std dev, count"
+                }
+              },
+              "patterns": [
+                "Information valuesOut → Mean & Variance (average cycle time)"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "Item.lbr": {
+      "name": "Item Library",
+      "description": "Blocks for discrete event simulation - items, queues, activities, resources",
+      "categories": {
+        "Activities": {
+          "blocks": {
+            "Activity": {
+              "description": "Holds one or more items and passes them out based on process time and arrival time.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Items to be processed",
+                  "connectTo": "ItemOut from Queue, Select Item Out, or Create"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Processed items",
+                  "connectTo": "ItemIn on Resource Pool Release, Queue, Exit, or next Activity"
+                },
+                "PE_ItemOut": {
+                  "direction": "out",
+                  "usage": "Preempted items (interrupted)"
+                },
+                "valuesIn": {
+                  "direction": "in",
+                  "usage": "Process time (overrides dialog value)",
+                  "connectTo": "Random Number, Constant"
+                },
+                "valuesOut": {
+                  "direction": "out",
+                  "usage": "Statistics: utilization, count processed"
+                }
+              },
+              "patterns": [
+                "Queue → Activity → Exit (simple process)",
+                "Queue → Activity → Resource Pool Release → Exit (with resources)",
+                "Random Number → Activity valuesIn (random process time)"
+              ]
+            },
+            "Convey Item": {
+              "description": "Behaves as a conveyor (accumulating or non-accumulating) that moves items between locations.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Items to transport on conveyor"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Items leaving conveyor"
+                },
+                "SpeedIn": {
+                  "direction": "in",
+                  "usage": "Conveyor speed (dynamic)"
+                },
+                "ValuesOut": {
+                  "direction": "out",
+                  "usage": "Statistics: count on conveyor, throughput time"
+                }
+              },
+              "patterns": [
+                "Activity → Convey Item → Exit (transport between stations)",
+                "Multiple Convey Items in series for longer transport distances"
+              ]
+            },
+            "Transport": {
+              "description": "Transports items from one point to another based on distance and speed information.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Items to transport"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Items arriving at destination"
+                },
+                "DistanceIn": {
+                  "direction": "in",
+                  "usage": "Transport distance"
+                },
+                "SpeedIn": {
+                  "direction": "in",
+                  "usage": "Transport speed"
+                },
+                "ValuesOut": {
+                  "direction": "out",
+                  "usage": "Statistics: count in transit"
+                }
+              },
+              "patterns": [
+                "Batch → Transport → Unbatch (move batches between locations)",
+                "Resource Item (AGV) + Transport (material handling)"
+              ]
+            },
+            "Workstation": {
+              "description": "Behaves as a workstation with both processing and queueing aspects. Combines Queue and Activity functionality in one block with built-in resource handling.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Items entering workstation"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Processed items"
+                },
+                "ValuesIn": {
+                  "direction": "in",
+                  "usage": "External control values"
+                },
+                "ValuesOut": {
+                  "direction": "out",
+                  "usage": "Statistics outputs"
+                }
+              },
+              "dialogVariables": {
+                "MaxLength_prm": "Number of parallel servers",
+                "MaxQueueLength_prm": "Maximum queue capacity",
+                "Delay_Distributions_pop": "Process time distribution",
+                "Delay_Arg1_prm": "Distribution parameter 1",
+                "Delay_Arg2_prm": "Distribution parameter 2",
+                "Delay_Attrib_pop": "Get delay from attribute",
+                "Shift_Pop": "Shift schedule",
+                "TimeUnits_pop": "Time units",
+                "CalcCosts": "Calculate costs",
+                "CostPerTime_prm": "Cost per time unit",
+                "CostPerItem_prm": "Cost per item"
+              },
+              "statistics": {
+                "Utilization_Prm": "Server utilization",
+                "NumInService_Prm": "Items currently in service",
+                "QueueLength_Prm": "Current queue length",
+                "QueueAveLength_Prm": "Average queue length",
+                "QueueMaxLength_Prm": "Maximum queue length",
+                "QueueAveWait_Prm": "Average wait time",
+                "QueueMaxWait_Prm": "Maximum wait time",
+                "ActivityCost_prm": "Total activity cost",
+                "QueueCost_prm": "Total queue cost"
+              },
+              "patterns": [
+                "Create → Workstation → Exit (simple one-block process)",
+                "Workstation with resource table for multi-server station"
+              ]
+            }
+          }
+        },
+        "Batching": {
+          "blocks": {
+            "Batch": {
+              "description": "Joins items from several sources as a single item. Useful for synchronizing resources and kitting.",
+              "connectors": {
+                "ItemsIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Items to batch together (one per input)"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Batched items (parent item)"
+                },
+                "BatchSizeIn": {
+                  "direction": "in",
+                  "usage": "Number of items per batch"
+                },
+                "ValuesOut": {
+                  "direction": "out",
+                  "usage": "Count waiting, batch statistics"
+                }
+              },
+              "patterns": [
+                "Queue + Resource Item → Batch → Activity (assembly)",
+                "Create → Queue → Batch → Transport (pack for transport)"
+              ]
+            },
+            "Unbatch": {
+              "description": "Produces multiple items from a single input item. Used for disassembly, message splitting, or distributing copies.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Batched items to split"
+                },
+                "ItemsOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Split items (child items)"
+                },
+                "QuantityIn": {
+                  "direction": "in",
+                  "usage": "Number of items to create per batch"
+                },
+                "ValuesOut": {
+                  "direction": "out",
+                  "usage": "Statistics: count processed"
+                }
+              },
+              "patterns": [
+                "Transport → Unbatch → Queue (unpack delivery)",
+                "Batch → Activity → Unbatch (process whole batch, then split)"
+              ]
+            }
+          }
+        },
+        "Data Access": {
+          "blocks": {
+            "Read(I)": {
+              "description": "Reads data from a database when an item arrives. Supports indefinite number of reads per item based on item attributes.",
+              "connectors": {
+                "itemIn": {
+                  "direction": "in",
+                  "usage": "Items that trigger database read"
+                },
+                "itemOut": {
+                  "direction": "out",
+                  "usage": "Items after data read"
+                },
+                "valuesIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Row/column indices for reading"
+                },
+                "DBIn": {
+                  "direction": "in",
+                  "usage": "Database connection input"
+                },
+                "resultsOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Values read from database",
+                  "connectTo": "Equation iVarsIn, Set attribValsIn"
+                }
+              },
+              "dialogVariables": {
+                "DB_DatabaseName_pop": "Database to read from",
+                "AttribsTable_ttbl": "Table of read operations",
+                "ResultsOut_Initialize_prm": "Initial value for results",
+                "DataOutTimeUnits_pop": "Time units for date/time data"
+              },
+              "patterns": [
+                "Create → Read(I) → Set (read data, set as attributes)",
+                "Queue → Read(I) → Activity (look up process time)"
+              ]
+            },
+            "Write(I)": {
+              "description": "Writes data to a database when an item arrives. Supports indefinite number of writes per item based on item attributes.",
+              "connectors": {
+                "itemIn": {
+                  "direction": "in",
+                  "usage": "Items that trigger database write"
+                },
+                "itemOut": {
+                  "direction": "out",
+                  "usage": "Items after data write"
+                },
+                "valuesIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Values to write or row/column indices"
+                },
+                "DBIn": {
+                  "direction": "in",
+                  "usage": "Database connection input"
+                }
+              },
+              "dialogVariables": {
+                "DB_DatabaseName_pop": "Database to write to",
+                "AttribsTable_ttbl": "Table of write operations",
+                "InputDataOptions_pop": "Input data options",
+                "DataInTimeUnits_pop": "Time units for date/time data",
+                "DB_ExpandDataSourceRows_chk": "Expand data source rows as needed",
+                "BlankToZero_chk": "Convert blank values to zero"
+              },
+              "patterns": [
+                "Activity → Write(I) → Exit (log completed items)",
+                "Get → Write(I) (save attribute values to database)"
+              ]
+            }
+          }
+        },
+        "Information": {
+          "blocks": {
+            "Cost By Item": "Views and displays cost of cost accumulators passing through.",
+            "History": {
+              "description": "Views and displays information about items passing through. Records item history including attributes, priority, creation time, and more.",
+              "connectors": {
+                "itemIn": {
+                  "direction": "in",
+                  "usage": "Items to track history"
+                },
+                "itemOut": {
+                  "direction": "out",
+                  "usage": "Items pass through unchanged"
+                },
+                "SensorIn": {
+                  "direction": "in",
+                  "usage": "Controls when history is recorded (0=off, 1=on)"
+                }
+              },
+              "dialogVariables": {
+                "HistorySave_chk": "Save history to database",
+                "AnimateItem_chk": "Animate items passing through",
+                "DisplayStrings_chk": "Display string attributes",
+                "AutoScrollHistory_chk": "Auto-scroll history table",
+                "TimeUnits_pop": "Time units for display",
+                "CalendarDates_chk": "Show calendar dates",
+                "DBL_Database_txt": "Database name for logging",
+                "DBL_Table_txt": "Table name for logging",
+                "DisableRecording_chk": "Disable history recording",
+                "ICH_StartTime_prm": "Start time for logging",
+                "ICH_EndTime_prm": "End time for logging"
+              },
+              "patterns": [
+                "Create → History → Queue (track item arrivals)",
+                "Activity → History → Exit (track completed items)"
+              ]
+            },
+            "Information": {
+              "description": "Reports statistics about items (cycle time, Time Between Items).",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Items to collect statistics on"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Items pass through unchanged"
+                },
+                "valuesOut": {
+                  "direction": "out",
+                  "usage": "Statistics: cycle time, count, etc.",
+                  "connectTo": "Mean & Variance, Histogram"
+                }
+              }
+            }
+          }
+        },
+        "Properties": {
+          "blocks": {
+            "Equation(I)": {
+              "description": "Calculates equations when an item passes through. Uses inputs and item properties as variables.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Items that trigger calculation"
+                },
+                "iVarsIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Input values (i0, i1...)"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Items with updated attributes"
+                },
+                "oVarsOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Result values (o0, o1...)"
+                }
+              },
+              "patterns": [
+                "Create → Equation(I) → Select Item Out (calculate routing per item)",
+                "Random Number → Equation(I) iVarsIn (random attribute value)"
+              ]
+            },
+            "Get": {
+              "description": "Displays and outputs properties from passing items. Can read attributes, priority, quantity, and other item properties.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Items to get properties from"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Items pass through unchanged"
+                },
+                "attribValsOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Attribute values from the item",
+                  "connectTo": "Equation iVarsIn, Decision AIn, Select Item Out SelectIn"
+                },
+                "deltaOut": {
+                  "direction": "out",
+                  "usage": "Delta (change) in attribute values"
+                }
+              },
+              "dialogVariables": {
+                "ShowPropertyNames_chk": "Show property names on block",
+                "ShowPropertyValues_chk": "Show property values on block",
+                "IfNoValueUse_prm": "Default value if property not found",
+                "AttribsTable_ttbl": "Table of attributes to get"
+              },
+              "patterns": [
+                "Create → Set → Queue → Get → Equation(I) (read and calculate)",
+                "Get attribValsOut → Select Item Out SelectIn (route by attribute)"
+              ]
+            },
+            "Query Equation (I)": {
+              "description": "Intelligently searches database and reports best-ranked record when item arrives. Can spawn new items based on query results.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Items that trigger database query"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Items after query processing"
+                },
+                "iVarsIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Input variables for equation (i0, i1...)"
+                },
+                "oVarsOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Output variables from equation (o0, o1...)"
+                },
+                "DBQ_CoordsIn": {
+                  "direction": "in",
+                  "usage": "Coordinates for proximity-based queries"
+                },
+                "DBQ_SpawnOut": {
+                  "direction": "out",
+                  "usage": "Spawned items based on query results"
+                }
+              },
+              "dialogVariables": {
+                "Equation_dtxt": "Equation text for query logic",
+                "DBQ_Database_pop": "Database to query",
+                "DBQ_Table_pop": "Table to query",
+                "DBQPT_Tolerance_prm": "Tolerance for proximity matching",
+                "DBQPT_RecordRankRule_pop": "How to rank matching records",
+                "DBQS_Enable_chk": "Enable spawning items",
+                "DBQS_RecordRankRule_pop": "Rank rule for spawning",
+                "DBQS_CopyAttributes_chk": "Copy attributes to spawned items",
+                "OVars_Initialize_prm": "Initial value for output variables"
+              },
+              "patterns": [
+                "Create → Query Equation (I) → Select Item Out (route by database lookup)",
+                "Queue → Query Equation (I) → Activity (process based on data)"
+              ]
+            },
+            "Set": {
+              "description": "Sets properties of passing items from input connectors, dialog values, or databases.",
+              "connectors": {
+                "itemIn": {
+                  "direction": "in",
+                  "usage": "Items whose attributes to set"
+                },
+                "itemOut": {
+                  "direction": "out",
+                  "usage": "Items with new attribute values"
+                },
+                "attribValsIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Values to set as attributes"
+                }
+              },
+              "patterns": [
+                "Create → Set → Queue (set initial attributes)",
+                "Activity → Set → Exit (update attributes after process)"
+              ]
+            }
+          }
+        },
+        "Queues": {
+          "blocks": {
+            "Queue": {
+              "description": "Queues items and releases based on selected algorithm (FIFO, LIFO, Priority, Resource Pool).",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Items to queue",
+                  "connectTo": "ItemOut from Create, Select Item Out, or other routing"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Next item released",
+                  "connectTo": "ItemIn on Activity, Select Item Out"
+                },
+                "RenegeItemOut": {
+                  "direction": "out",
+                  "usage": "Items leaving queue due to timeout (renege)",
+                  "connectTo": "Throw Item or alternative process"
+                },
+                "ValuesIn": {
+                  "direction": "in",
+                  "usage": "Renege time (wait time before item leaves)",
+                  "connectTo": "Random Number for random wait time"
+                },
+                "ValuesOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Queue length, wait time, statistics",
+                  "connectTo": "Line Chart, Throw Value, Decision"
+                },
+                "ResourcePoolQuantityIn": {
+                  "direction": "in",
+                  "usage": "Connection to Resource Pool (limits capacity)"
+                }
+              },
+              "patterns": [
+                "Create → Queue → Activity → Exit (basic flow)",
+                "Queue + Resource Pool (capacity constraint)",
+                "Random Number → Queue ValuesIn (renege with random timeout)",
+                "Queue RenegeItemOut → Throw Item (handle dropouts)"
+              ]
+            },
+            "Queue Equation": {
+              "description": "Queues items and releases based on user-entered equations. Provides full control over queue behavior through ModL equations.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Items entering the queue"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Items released from queue"
+                },
+                "iVarsIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Input variables for equation (i0, i1...)"
+                },
+                "oVarsOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Output variables from equation (o0, o1...)"
+                },
+                "valuesIn": {
+                  "direction": "in",
+                  "usage": "External control values"
+                },
+                "valuesOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Queue statistics: length, wait time, arrivals, departures"
+                }
+              },
+              "dialogVariables": {
+                "Equation_dtxt": "Equation text for queue logic",
+                "MaxQueueLength_prm": "Maximum queue capacity",
+                "Tolerance_prm": "Tolerance for time comparisons",
+                "ReleaseRule_pop": "Base release rule",
+                "CalcWaitCosts_chk": "Calculate waiting costs",
+                "IC_chk": "Enable item contents display",
+                "AR_Enable_chk": "Enable advanced requirements"
+              },
+              "statistics": {
+                "AveLength_prm": "Average queue length",
+                "AveWait_prm": "Average wait time",
+                "MaxLength_prm": "Maximum queue length",
+                "MaxWait_prm": "Maximum wait time",
+                "Arrivals_prm": "Total arrivals",
+                "Departures_prm": "Total departures",
+                "QueueLength_prm": "Current queue length",
+                "Utilization_prm": "Queue utilization"
+              },
+              "patterns": [
+                "Create → Queue Equation → Activity (custom release logic)",
+                "Queue Equation with equations for priority scheduling"
+              ]
+            },
+            "Queue Matching": {
+              "description": "Matches one type of item with another based on attribute values. Has multiple internal queues for different item groups.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Items entering to be matched"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Matched items released together"
+                },
+                "lengthOut": {
+                  "direction": "out",
+                  "usage": "Current queue lengths"
+                },
+                "MRIn": {
+                  "direction": "in",
+                  "usage": "Match requirements input"
+                },
+                "valuesIn": {
+                  "direction": "in",
+                  "usage": "External control values"
+                },
+                "valuesOut": {
+                  "direction": "out",
+                  "usage": "Queue statistics"
+                }
+              },
+              "dialogVariables": {
+                "NumQueues_prm": "Number of internal queues",
+                "MatchAttrib_pop": "Attribute to match items on",
+                "Attrib_EffectiveMatchSize_pop": "Effective match size attribute",
+                "SortingRule_pop": "How to sort items in queue",
+                "ReleaseOptions_pop": "Release options",
+                "GT_pop": "Group type",
+                "FGT_NumGroups_prm": "Number of groups",
+                "Batch_chk": "Enable batching",
+                "Batch_preserve_chk": "Preserve batch relationship",
+                "CalcWaitCosts_chk": "Calculate waiting costs"
+              },
+              "patterns": [
+                "Multiple Queues → Queue Matching → Activity (synchronize different item types)",
+                "Orders + Parts → Queue Matching → Assembly (match orders with components)"
+              ]
+            }
+          }
+        },
+        "Resources": {
+          "blocks": {
+            "Resource Item": {
+              "description": "Holds and provides items (cars, workers, orders) for simulation. Acts as infinite source of items.",
+              "connectors": {
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Items from storage (triggered by downstream demand)"
+                },
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Returned items (optional)"
+                },
+                "ValuesOut": {
+                  "direction": "out",
+                  "usage": "Count of available items"
+                }
+              },
+              "patterns": [
+                "Resource Item → Batch (components for assembly)",
+                "Resource Item (AGV) → Transport → reuse"
+              ]
+            },
+            "Resource Manager": {
+              "description": "Develops sophisticated resource structures and requirements. Defines resource pools, groups, properties, and complex allocation rules.",
+              "connectors": {},
+              "dialogVariables": {
+                "ResourcePool_POP": "Select resource pool",
+                "Shift_POP": "Assign shift schedule",
+                "InitialStatusValue_POP": "Initial resource status",
+                "ResourceGroup_POP": "Resource group selection",
+                "ResourceRequirement_POP": "Resource requirement definition",
+                "SelectionQuantity_POP": "Quantity selection method",
+                "SelectQuantity_PRM": "Number to select",
+                "OrderBy_POP": "Resource ordering field",
+                "OrderByMethod_POP": "Ordering method (asc/desc)",
+                "FC_ListElements_POP": "Filter condition elements",
+                "FC_ListOperator_POP": "Filter condition operator"
+              },
+              "patterns": [
+                "Resource Manager defines pools → Queue uses Resource Pool mode",
+                "Resource Manager with groups → Activity with complex requirements"
+              ]
+            },
+            "Resource Pool": {
+              "description": "Holds resource pool units that limit capacity. Works with Queue block in Resource Pool mode.",
+              "connectors": {
+                "NumResourcesIn": {
+                  "direction": "in",
+                  "usage": "Set number of available resources dynamically"
+                },
+                "ValuesOut": {
+                  "direction": "out",
+                  "usage": "Count of available/busy resources",
+                  "connectTo": "Bar Chart for resource utilization"
+                }
+              },
+              "patterns": [
+                "Resource Pool → Queue ResourcePoolQuantityIn (limit queue release)",
+                "Shift → Resource Pool (schedule resource capacity)"
+              ]
+            },
+            "Resource Pool Release": {
+              "description": "Releases a resource back to its resource pool as an item passes through.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Items that are done and should release resource"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Items continue after resource release"
+                },
+                "NumberToReleaseIn": {
+                  "direction": "in",
+                  "usage": "Number of resources to release (default: 1)"
+                }
+              },
+              "patterns": [
+                "Activity → Resource Pool Release → Exit (release resource after process)"
+              ]
+            },
+            "Shift": {
+              "description": "Generates schedule over time to change capacity of other blocks.",
+              "connectors": {
+                "ScheduleOut": {
+                  "direction": "out",
+                  "usage": "Scheduled capacity",
+                  "connectTo": "Resource Pool NumResourcesIn"
+                }
+              },
+              "patterns": [
+                "Shift → Resource Pool (staff schedule)",
+                "Multiple Shift blocks for complex schedules"
+              ]
+            },
+            "Shutdown": {
+              "description": "Generates shutdown information for activities based on time between failures (TBF) and time to repair (TTR). Models machine breakdowns and maintenance.",
+              "connectors": {
+                "SD_ItemOut": {
+                  "direction": "out",
+                  "usage": "Shutdown event items"
+                },
+                "SD_ValueOut": {
+                  "direction": "out",
+                  "usage": "Shutdown signal (0=up, 1=down)"
+                },
+                "valuesIn": {
+                  "direction": "in",
+                  "usage": "External control values"
+                },
+                "valuesOut": {
+                  "direction": "out",
+                  "usage": "Status outputs"
+                },
+                "SD_ValuesOut": {
+                  "direction": "out",
+                  "usage": "Shutdown statistics"
+                }
+              },
+              "dialogVariables": {
+                "SD_SignalType_pop": "Signal type (item or value)",
+                "SF_TBF_Distribs_pop": "Time between failures distribution",
+                "SF_TBF_Arg1_prm": "TBF parameter 1 (e.g. mean)",
+                "SF_TBF_Arg2_prm": "TBF parameter 2",
+                "SF_TTR_Distribs_pop": "Time to repair distribution",
+                "SF_TTR_Arg1_prm": "TTR parameter 1 (e.g. mean)",
+                "SF_TTR_Arg2_prm": "TTR parameter 2",
+                "SD_TbfStartsAfter_pop": "When TBF timer starts",
+                "OPT_BlockTimeUnits_pop": "Time units",
+                "VSD_UpValue_prm": "Value when up (default 0)",
+                "VSD_DownValue_prm": "Value when down (default 1)",
+                "SD_CompetingFailures_chk": "Enable competing failures"
+              },
+              "patterns": [
+                "Shutdown SD_ValueOut → Activity shutdownIn (random failures)",
+                "Shutdown with exponential TBF for reliability modeling"
+              ]
+            }
+          }
+        },
+        "Routing": {
+          "blocks": {
+            "Catch Item": {
+              "description": "Catches items sent by Throw Item blocks without connection lines.",
+              "connectors": {
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Received items from matching Throw Item"
+                },
+                "ValuesOut": {
+                  "direction": "out",
+                  "usage": "Count of received items"
+                }
+              },
+              "patterns": [
+                "Throw Item (in H-block A) → Catch Item (in H-block B)"
+              ]
+            },
+            "Create": {
+              "description": "Provides items for discrete event simulation at specified interarrival times.",
+              "connectors": {
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Newly created items",
+                  "connectTo": "Set itemIn (set attributes), Queue ItemIn, or Equation(I)"
+                },
+                "prg_StartIn": {
+                  "direction": "in",
+                  "usage": "Start item generation"
+                },
+                "nextEventOut": {
+                  "direction": "out",
+                  "usage": "Time of next item"
+                },
+                "rnd_ValuesIn": {
+                  "direction": "in",
+                  "usage": "Interarrival time between items",
+                  "connectTo": "Lookup Table ValuesOut (time-dependent arrival rate)"
+                },
+                "valuesOut": {
+                  "direction": "out",
+                  "usage": "Count of created items"
+                }
+              },
+              "patterns": [
+                "Create → Set → Queue → Activity → Exit (basic flow)",
+                "Lookup Table → Create rnd_ValuesIn (time-dependent arrivals)"
+              ]
+            },
+            "Exit": {
+              "description": "Passes items out of simulation. Reports total items absorbed.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Items leaving simulation",
+                  "connectTo": "ItemOut from Activity, Resource Pool Release, Select Item Out"
+                },
+                "exitsOut": {
+                  "direction": "out",
+                  "usage": "Signal each time an item exits",
+                  "connectTo": "Line Chart TracesIn (display exit rate)"
+                },
+                "totalExitedOut": {
+                  "direction": "out",
+                  "usage": "Total count of items exited"
+                }
+              },
+              "patterns": [
+                "Activity → Exit (end process)",
+                "Multiple paths → Exit ItemIn (array connector receives from multiple flows)",
+                "Exit exitsOut → Line Chart (visualize throughput)"
+              ]
+            },
+            "Gate": {
+              "description": "Limits passing of items through a model portion, by demand or sensor connector.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Items to pass through gate"
+                },
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Items released through gate"
+                },
+                "DemandIn": {
+                  "direction": "in",
+                  "usage": "Number of items to release (demand mode)"
+                },
+                "SensorIn": {
+                  "direction": "in",
+                  "usage": "Boolean: close (0) or open (1) gate"
+                },
+                "ValuesOut": {
+                  "direction": "out",
+                  "usage": "Count waiting, count passed"
+                }
+              },
+              "patterns": [
+                "Queue → Gate → Activity (controlled flow)",
+                "Equation → Gate DemandIn (calculated batch size)",
+                "Shift → Gate SensorIn (scheduled opening/closing)"
+              ]
+            },
+            "Select Item In": {
+              "description": "Selects items from one input to output based on a decision.",
+              "connectors": {
+                "ItemOut": {
+                  "direction": "out",
+                  "usage": "Merged items from selected inputs"
+                },
+                "ItemsIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Multiple inputs to select from"
+                },
+                "SelectIn": {
+                  "direction": "in",
+                  "usage": "Select which input (0-based index)"
+                }
+              },
+              "patterns": [
+                "Multiple Queues → Select Item In → Activity (merge parallel flows)"
+              ]
+            },
+            "Select Item Out": {
+              "description": "Selects which output gets items from input based on a decision.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Items to route"
+                },
+                "ItemsOut": {
+                  "direction": "out",
+                  "isArray": true,
+                  "usage": "Multiple outputs - items sent to selected one",
+                  "connectTo": "ItemIn on different Queues or Activities"
+                },
+                "SelectIn": {
+                  "direction": "in",
+                  "usage": "Select which output (0-based index)",
+                  "connectTo": "Equation oVarsOut, Decision YOut"
+                },
+                "PrioritiesIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Priority values per output"
+                }
+              },
+              "patterns": [
+                "Equation(I) → Select Item Out SelectIn (calculated routing)",
+                "Select Item Out → Multiple Queues (split flow)",
+                "Random Number → Equation → Select Item Out (random routing)"
+              ]
+            },
+            "Throw Item": {
+              "description": "Throws items to Catch blocks without connection lines.",
+              "connectors": {
+                "ItemIn": {
+                  "direction": "in",
+                  "usage": "Items to send to Catch Item"
+                }
+              },
+              "patterns": [
+                "Queue RenegeItemOut → Throw Item (send dropouts)",
+                "Activity → Throw Item (move items between H-blocks)"
+              ]
+            }
+          }
+        },
+        "Executive": {
+          "blocks": {
+            "Executive": {
+              "description": "Must be placed to the left of all other blocks in discrete event and discrete rate models.",
+              "connectors": {
+                "CountIn": {
+                  "direction": "in",
+                  "usage": "Count active items (for animation)"
+                },
+                "EventOut": {
+                  "direction": "out",
+                  "usage": "Event signal"
+                }
+              },
+              "patterns": [
+                "Executive must exist in all discrete event models"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "Chart.lbr": {
+      "name": "Chart Library",
+      "description": "Blocks for visualization - charts, graphs, and plots",
+      "categories": {
+        "Charts": {
+          "blocks": {
+            "Line Chart": {
+              "description": "Displays values over time as line graphs with multiple traces.",
+              "connectors": {
+                "TracesIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Values to plot (one line per connection)",
+                  "connectTo": "ContentsOut from Holding Tank, ValuesOut from Queue, exitsOut from Exit"
+                }
+              },
+              "dialogVariables": {
+                "ShowTracesOptions_pop": "Display options for traces",
+                "AutoScaleOption_pop": "Auto-scale behavior",
+                "AutoscaleXAxix_pop": "X-axis auto-scale mode",
+                "AutoscaleXGrow_pop": "X-axis grow behavior",
+                "AutoscaleXSlide_pop": "X-axis slide behavior",
+                "TRACE_ScatterTraces_chk": "Show as scatter plot instead of lines",
+                "TRACE_XaxixIsTimeBased_chk": "X-axis is time-based",
+                "DisableRecording_chk": "Disable data recording",
+                "DCW_StartTime_prm": "Data collection start time",
+                "DCW_EndTime_prm": "Data collection end time",
+                "Block_TimeUnits_pop": "Time units",
+                "FixedNumberOfPointsToPlot_chk": "Limit number of points",
+                "FixedNumberOfPointsToPlot_prm": "Maximum points to plot",
+                "TRACE_MaxTraces_prm": "Maximum traces (read-only, default 20)"
+              },
+              "patterns": [
+                "Queue ValuesOut → Line Chart (queue length over time)",
+                "Holding Tank ContentsOut → Line Chart (tank level over time)",
+                "Exit exitsOut → Line Chart (throughput over time)"
+              ]
+            },
+            "Bar Chart": {
+              "description": "Displays values as bar graphs with support for series and categories.",
+              "connectors": {
+                "BarValuesIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Values to display as bars",
+                  "connectTo": "Queue ValuesOut, Resource Pool ValuesOut, Activity valuesOut"
+                },
+                "GoIn": {
+                  "direction": "in",
+                  "usage": "Trigger to update chart"
+                },
+                "ValSerCatIn": {
+                  "direction": "in",
+                  "usage": "Value, Series, Category input (3-connector mode)"
+                }
+              },
+              "dialogVariables": {
+                "ShowTracesOptions_pop": "Display options for traces",
+                "AutoScaleOption_pop": "Auto-scale behavior",
+                "Data_Size_Series_prm": "Number of series (1-20)",
+                "Data_Size_Categories_prm": "Number of categories (1-20)",
+                "BarChartIsStacked_chk": "Display as stacked bar chart",
+                "Connector_setting_for_Bar_Value_pop": "Bar value connector mode",
+                "ScaleRefreshFreq_chk": "Refresh scale periodically",
+                "ScaleToHighestDuringSim_chk": "Scale to highest value during simulation"
+              },
+              "patterns": [
+                "Multiple Queue ValuesOut → Bar Chart (compare queue lengths)",
+                "Resource Pool ValuesOut → Bar Chart (resource utilization)"
+              ]
+            },
+            "Histogram": {
+              "description": "Displays distribution of values as histogram with configurable bins.",
+              "connectors": {
+                "DataValuesIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Values to collect in histogram",
+                  "connectTo": "Information valuesOut, Mean & Variance ValuesOut"
+                },
+                "GoIn": {
+                  "direction": "in",
+                  "usage": "Trigger to collect data point"
+                },
+                "DataSeriesIn": {
+                  "direction": "in",
+                  "usage": "Series index for multi-series histograms"
+                }
+              },
+              "dialogVariables": {
+                "ShowTracesOptions_pop": "Display options",
+                "AutoScaleOption_pop": "Auto-scale behavior",
+                "Connector_setting_for_Data_Collection_pop": "Data collection mode",
+                "Data_Bin_Number_PRM": "Number of bins",
+                "Data_Bin_Size_PRM": "Bin size",
+                "Data_Bin_X_Min_PRM": "Minimum X value",
+                "Data_Bin_X_Max_PRM": "Maximum X value",
+                "Data_Bin_Number_FixedOrVar_POP": "Fixed or variable bin count",
+                "Data_Time_weighted_chk": "Time-weighted data collection",
+                "BarChartIsStacked_chk": "Display as stacked histogram"
+              },
+              "patterns": [
+                "Information valuesOut → Histogram (cycle time distribution)",
+                "Activity valuesOut → Histogram (process time distribution)"
+              ]
+            },
+            "Scatter Chart": {
+              "description": "Displays X-Y scatter plot of values with multiple traces.",
+              "connectors": {
+                "TracesYIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Y values for points"
+                },
+                "TracesXIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "X values for points"
+                }
+              },
+              "dialogVariables": {
+                "ShowTracesOptions_pop": "Display options for traces",
+                "AutoScaleOption_pop": "Auto-scale behavior",
+                "TRACE_ScatterTraces_chk": "Show as scatter (default true)",
+                "TRACE_XaxixIsTimeBased_chk": "X-axis is time-based",
+                "DisableRecording_chk": "Disable data recording",
+                "DCW_StartTime_prm": "Data collection start time",
+                "DCW_EndTime_prm": "Data collection end time",
+                "Block_TimeUnits_pop": "Time units",
+                "FixedNumberOfPointsToPlot_chk": "Limit number of points",
+                "FixedNumberOfPointsToPlot_prm": "Maximum points to plot",
+                "NoResetOnConsecutiveRuns_chk": "Keep data across runs",
+                "TRACE_MaxTraces_prm": "Maximum traces (read-only, default 20)"
+              },
+              "patterns": [
+                "Mean & Variance → Scatter Chart (visualize spread)",
+                "Get attribValsOut → Scatter Chart (plot attribute relationships)",
+                "Queue length vs wait time → Scatter Chart (correlation analysis)"
+              ]
+            },
+            "DB Line Chart": {
+              "description": "Displays line chart from database table data. Plots values stored in database fields over time.",
+              "connectors": {},
+              "dialogVariables": {
+                "DataSourceDatabase_pop": "Database source type",
+                "DSDB_FIELD_DB_pop": "Database name",
+                "DSDB_FIELD_Table_pop": "Table name",
+                "DSDB_FIELD_TimeField_pop": "Time field for X-axis",
+                "ShowTracesOptions_pop": "Display options for traces",
+                "AutoScaleOption_pop": "Auto-scale behavior",
+                "AutoscaleXAxix_pop": "X-axis auto-scale mode",
+                "TRACE_ScatterTraces_chk": "Show as scatter plot",
+                "TRACE_XaxixIsTimeBased_chk": "X-axis is time-based",
+                "DisableRecording_chk": "Disable data recording",
+                "DCW_StartTime_prm": "Data collection start time",
+                "DCW_EndTime_prm": "Data collection end time",
+                "Block_TimeUnits_pop": "Time units",
+                "FixedNumberOfPointsToPlot_chk": "Limit number of points",
+                "FixedNumberOfPointsToPlot_prm": "Maximum points to plot"
+              },
+              "patterns": [
+                "History block logs to DB → DB Line Chart (visualize item history)",
+                "Write(I) → Database → DB Line Chart (plot logged data)"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "Plotter.lbr": {
+      "name": "Plotter Library",
+      "description": "Legacy plotting blocks for visualization (prefer Chart.lbr for new models)",
+      "categories": {
+        "Plotters": {
+          "blocks": {
+            "Plotter, Worm": {
+              "description": "Displays values as a worm plot showing recent history of values.",
+              "connectors": {
+                "Con0In": { "direction": "in", "usage": "Trace 0 input" },
+                "Con1In": { "direction": "in", "usage": "Trace 1 input" },
+                "Con2In": { "direction": "in", "usage": "Trace 2 input" },
+                "Con3In": { "direction": "in", "usage": "Trace 3 input" }
+              },
+              "dialogVariables": {
+                "Num": "Number of points to display",
+                "InsertPlotterBackground_CB": "Show background image",
+                "PictList_POP": "Background image selection"
+              }
+            },
+            "Plotter, Strip": {
+              "description": "Displays values over time as strip chart with pass-through outputs.",
+              "connectors": {
+                "Con0In": { "direction": "in", "usage": "Trace 0 input" },
+                "Con1In": { "direction": "in", "usage": "Trace 1 input" },
+                "Con2In": { "direction": "in", "usage": "Trace 2 input" },
+                "Con3In": { "direction": "in", "usage": "Trace 3 input" },
+                "Con0Out": { "direction": "out", "usage": "Pass-through of trace 0" },
+                "Con1Out": { "direction": "out", "usage": "Pass-through of trace 1" },
+                "Con2Out": { "direction": "out", "usage": "Pass-through of trace 2" },
+                "Con3Out": { "direction": "out", "usage": "Pass-through of trace 3" }
+              },
+              "dialogVariables": {
+                "Num": "Number of points to display",
+                "InsertPlotterBackground_CB": "Show background image",
+                "XJulian": "Use Julian date format for X-axis",
+                "JulianFormat": "Julian date format"
+              }
+            },
+            "Plotter, Scatter (4)": {
+              "description": "Displays 4 X-Y scatter plots (8 inputs: 4 X values, 4 Y values).",
+              "connectors": {
+                "Con0In": { "direction": "in", "usage": "X value for trace 0" },
+                "Con1In": { "direction": "in", "usage": "Y value for trace 0" },
+                "Con2In": { "direction": "in", "usage": "X value for trace 1" },
+                "Con3In": { "direction": "in", "usage": "Y value for trace 1" },
+                "Con4In": { "direction": "in", "usage": "X value for trace 2" },
+                "Con5In": { "direction": "in", "usage": "Y value for trace 2" },
+                "Con6In": { "direction": "in", "usage": "X value for trace 3" },
+                "Con7In": { "direction": "in", "usage": "Y value for trace 3" }
+              }
+            },
+            "Plotter, Scatter": {
+              "description": "Displays X-Y scatter plot with 4 traces (2 inputs per trace).",
+              "connectors": {
+                "Con0In": { "direction": "in", "usage": "X value" },
+                "Con1In": { "direction": "in", "usage": "Y value" },
+                "Con2In": { "direction": "in", "usage": "Additional X" },
+                "Con3In": { "direction": "in", "usage": "Additional Y" }
+              }
+            },
+            "Plotter, MultiSim": {
+              "description": "Displays values from multiple simulation runs on same chart.",
+              "connectors": {
+                "Con0In": { "direction": "in", "usage": "Value to plot across runs" }
+              }
+            },
+            "Plotter, I/O": {
+              "description": "Displays input/output relationship with pass-through.",
+              "connectors": {
+                "Con0In": { "direction": "in", "usage": "Input 0" },
+                "Con1In": { "direction": "in", "usage": "Input 1" },
+                "Con2In": { "direction": "in", "usage": "Input 2" },
+                "Con3In": { "direction": "in", "usage": "Input 3" },
+                "Con0Out": { "direction": "out", "usage": "Pass-through 0" },
+                "Con1Out": { "direction": "out", "usage": "Pass-through 1" },
+                "Con2Out": { "direction": "out", "usage": "Pass-through 2" },
+                "Con3Out": { "direction": "out", "usage": "Pass-through 3" }
+              }
+            },
+            "Plotter, FFT": {
+              "description": "Displays Fast Fourier Transform of input signal.",
+              "connectors": {
+                "Con0In": { "direction": "in", "usage": "Signal to analyze" }
+              }
+            },
+            "Plotter, Error Bars": {
+              "description": "Displays values with error bars showing variance.",
+              "connectors": {
+                "Con0In": { "direction": "in", "usage": "Value with error data" }
+              }
+            },
+            "Plotter, Discrete Event": {
+              "description": "Displays discrete event data over time with 4 traces.",
+              "connectors": {
+                "Con1In": { "direction": "in", "usage": "Trace 0 input" },
+                "Con3In": { "direction": "in", "usage": "Trace 1 input" },
+                "Con5In": { "direction": "in", "usage": "Trace 2 input" },
+                "Con7In": { "direction": "in", "usage": "Trace 3 input" }
+              }
+            },
+            "Plotter, DE Multisim": {
+              "description": "Displays discrete event data from multiple simulation runs.",
+              "connectors": {
+                "Con1In": { "direction": "in", "usage": "Value to plot across runs" }
+              }
+            },
+            "Plotter, DE Error Bars": {
+              "description": "Displays discrete event data with error bars.",
+              "connectors": {
+                "Con1In": { "direction": "in", "usage": "Value with error data" }
+              }
+            },
+            "Histogram": {
+              "description": "Legacy histogram plotter for value distribution.",
+              "connectors": {
+                "hist0In": { "direction": "in", "usage": "Histogram 0 input" },
+                "hist1In": { "direction": "in", "usage": "Histogram 1 input" },
+                "hist2In": { "direction": "in", "usage": "Histogram 2 input" },
+                "hist3In": { "direction": "in", "usage": "Histogram 3 input" }
+              }
+            },
+            "Gantt chart": {
+              "description": "Displays Gantt chart for scheduling and timeline visualization.",
+              "connectors": {
+                "Gantt1In": { "direction": "in", "usage": "Task 1 data" },
+                "Gantt2In": { "direction": "in", "usage": "Task 2 data" },
+                "Gantt3In": { "direction": "in", "usage": "Task 3 data" },
+                "Gantt4In": { "direction": "in", "usage": "Task 4 data" },
+                "Gantt5In": { "direction": "in", "usage": "Task 5 data" },
+                "Gantt6In": { "direction": "in", "usage": "Task 6 data" }
+              }
+            },
+            "Bar Chart": {
+              "description": "Legacy bar chart plotter.",
+              "connectors": {
+                "Con1In": { "direction": "in", "usage": "Bar 1 value" },
+                "Con2In": { "direction": "in", "usage": "Bar 2 value" },
+                "Con3In": { "direction": "in", "usage": "Bar 3 value" },
+                "Con4In": { "direction": "in", "usage": "Bar 4 value" },
+                "Con5In": { "direction": "in", "usage": "Bar 5 value" },
+                "Con6In": { "direction": "in", "usage": "Bar 6 value" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Report.lbr": {
+      "name": "Report Library",
+      "description": "Blocks for statistics collection and reporting",
+      "categories": {
+        "Statistics": {
+          "blocks": {
+            "Statistics": {
+              "description": "Collects and reports simulation statistics. Auto-placed in discrete event models.",
+              "connectors": {
+                "ValuesIn": {
+                  "direction": "in",
+                  "isArray": true,
+                  "usage": "Values to collect statistics on"
+                }
+              },
+              "patterns": [
+                "Automatically placed in models to collect run statistics"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "Analysis.lbr": {
+      "name": "Analysis Library",
+      "description": "Blocks for model analysis, optimization, and multi-run scenarios",
+      "categories": {
+        "Analysis": {
+          "blocks": {
+            "Analysis Manager": {
+              "description": "Data management system to collect data and results in an Analysis database.",
+              "connectors": {},
+              "patterns": [
+                "Place in model to automatically collect run statistics",
+                "Use with Scenario Manager for experiment tracking"
+              ]
+            },
+            "Multicore Analysis": {
+              "description": "Manages running model copies in parallel using multiple ExtendSim instances.",
+              "connectors": {},
+              "patterns": [
+                "Use for parallel scenario evaluation",
+                "Combine with Optimizer for faster optimization"
+              ]
+            },
+            "Optimizer": {
+              "description": "Searches for best model parameters that maximize profit or minimize cost. Uses evolutionary strategies.",
+              "connectors": {},
+              "patterns": [
+                "Define factors and responses in dialog",
+                "Use evolutionary algorithm for global optimization"
+              ]
+            },
+            "Scenario Manager": {
+              "description": "Evaluate and compare different model configurations with results.",
+              "connectors": {},
+              "patterns": [
+                "Define scenarios with parameter combinations",
+                "Compare results across scenarios"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "Animation.lbr": {
+      "name": "Animation Library",
+      "description": "Blocks for model animation and visualization",
+      "categories": {
+        "Animation": {
+          "blocks": {
+            "Animate Value": "Animates a value on the worksheet (meters, icons, etc.)."
+          }
+        }
+      }
+    },
+    "Rate.lbr": {
+      "name": "Rate Library",
+      "description": "Blocks for discrete rate simulation - flow-based modeling",
+      "categories": {
+        "Rate": {
+          "blocks": {
+            "Bias": {
+              "description": "Prioritizes flow going through it, specifying preference for flow direction.",
+              "connectors": {
+                "FlowIn": { "direction": "in", "usage": "Flow input" },
+                "FlowOut": { "direction": "out", "usage": "Flow output" },
+                "ValuesIn": { "direction": "in", "usage": "Bias order value" }
+              },
+              "dialogVariables": {
+                "RealBiasOrder_prm": "Bias order (priority)",
+                "DefineTimeUnit_pop": "Time unit",
+                "DefineFlowUnit_pop": "Flow unit",
+                "EffectiveRate_prm": "Effective rate (read-only)",
+                "Quantity_prm": "Quantity passed (read-only)"
+              }
+            },
+            "Catch Flow": {
+              "description": "Receives flow from non-connected Throw Flow blocks.",
+              "connectors": {
+                "FlowOut": { "direction": "out", "usage": "Received flow output" }
+              }
+            },
+            "Change Units": {
+              "description": "Changes flow unit of measurement, creating a new unit group downstream.",
+              "connectors": {
+                "FlowIn": { "direction": "in", "usage": "Flow input" },
+                "FlowOut": { "direction": "out", "usage": "Flow output with new units" },
+                "ValuesIn": { "direction": "in", "usage": "Conversion factor" }
+              }
+            },
+            "Convey Flow": {
+              "description": "Adds delay to flow output. FIFO, accumulating or non-accumulating.",
+              "connectors": {
+                "FlowIn": { "direction": "in", "usage": "Flow input" },
+                "FlowOut": { "direction": "out", "usage": "Delayed flow output" },
+                "ValuesIn": { "direction": "in", "usage": "Delay time or speed" },
+                "ValuesOut": { "direction": "out", "usage": "Statistics output" },
+                "SensorsOut": { "direction": "out", "usage": "Sensor data" }
+              }
+            },
+            "Diverge": {
+              "description": "Distributes input flow to two or more outputs. Seven rule-based distribution options.",
+              "connectors": {
+                "FlowIn": { "direction": "in", "usage": "Flow input" },
+                "FlowOut": { "direction": "out", "isArray": true, "usage": "Distributed flow outputs" },
+                "ParameterIn": { "direction": "in", "usage": "Distribution parameter" },
+                "ValuesIn": { "direction": "in", "usage": "Control values" }
+              }
+            },
+            "History(R)": {
+              "description": "Views and displays information about flow passing through.",
+              "connectors": {
+                "FlowIn": { "direction": "in", "usage": "Flow input" },
+                "FlowOut": { "direction": "out", "usage": "Flow pass-through" },
+                "SensorFlowIn": { "direction": "in", "usage": "Sensor trigger" }
+              }
+            },
+            "Interchange": {
+              "description": "Acts as a Tank interfacing between Flow and Items.",
+              "connectors": {
+                "FlowIn": { "direction": "in", "usage": "Flow input" },
+                "FlowOut": { "direction": "out", "usage": "Flow output" },
+                "ValuesIn": { "direction": "in", "usage": "Control values" },
+                "ValuesOut": { "direction": "out", "usage": "Status outputs" },
+                "ItemIn": { "direction": "in", "usage": "Items to convert to flow" },
+                "ItemOut": { "direction": "out", "usage": "Items created from flow" }
+              }
+            },
+            "Merge": {
+              "description": "Merges flows from multiple inputs into one output. Seven rule-based merge options.",
+              "connectors": {
+                "FlowIn": { "direction": "in", "isArray": true, "usage": "Flow inputs to merge" },
+                "FlowOut": { "direction": "out", "usage": "Merged flow output" },
+                "ParameterIn": { "direction": "in", "usage": "Merge parameter" },
+                "ValuesIn": { "direction": "in", "usage": "Control values" }
+              }
+            },
+            "Sensor": {
+              "description": "Displays potential upstream supply and downstream demand in a Flow branch.",
+              "connectors": {
+                "FlowIn": { "direction": "in", "usage": "Flow input" },
+                "FlowOut": { "direction": "out", "usage": "Flow pass-through" },
+                "ValuesIn": { "direction": "in", "usage": "Control values" },
+                "ValuesOut": { "direction": "out", "usage": "Supply/demand values" }
+              }
+            },
+            "Tank": {
+              "description": "Acts as source, intermediate storage, or sink. Holds defined amounts of flow over time.",
+              "connectors": {
+                "FlowIn": { "direction": "in", "usage": "Flow input" },
+                "FlowOut": { "direction": "out", "usage": "Flow output" },
+                "ValuesIn": { "direction": "in", "usage": "Control values (capacity, initial level)" },
+                "ValuesOut": { "direction": "out", "usage": "Tank status (level, rate)" }
+              }
+            },
+            "Throw Flow": {
+              "description": "Sends flow to non-connected Catch Flow blocks.",
+              "connectors": {
+                "FlowIn": { "direction": "in", "usage": "Flow to throw" }
+              }
+            },
+            "Valve": {
+              "description": "Controls, monitors, and transfers flow. Sets upper bound on flow rate.",
+              "connectors": {
+                "ValuesIn": { "direction": "in", "usage": "Maximum rate setting" },
+                "FlowIn": { "direction": "in", "usage": "Flow input" },
+                "FlowOut": { "direction": "out", "usage": "Controlled flow output" },
+                "ValuesOut": { "direction": "out", "usage": "Actual rate, statistics" }
+              }
+            },
+            "Get(R)": {
+              "description": "Gets flow attributes as values pass through.",
+              "connectors": {
+                "FlowLocationIn": { "direction": "in", "usage": "Location in flow" },
+                "FlowAttValsOut": { "direction": "out", "usage": "Attribute values" },
+                "FlowIn": { "direction": "in", "usage": "Flow input" },
+                "FlowOut": { "direction": "out", "usage": "Flow pass-through" },
+                "DeltaOut": { "direction": "out", "usage": "Change in values" }
+              }
+            },
+            "Set(R)": {
+              "description": "Sets flow attributes as values pass through.",
+              "connectors": {
+                "attribValsIn": { "direction": "in", "usage": "Attribute values to set" },
+                "flowIn": { "direction": "in", "usage": "Flow input" },
+                "flowOut": { "direction": "out", "usage": "Flow with new attributes" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Reliability.lbr": {
+      "name": "Reliability Library",
+      "description": "Blocks for reliability block diagrams (RBD)",
+      "categories": {
+        "Reliability": {
+          "blocks": {
+            "Component": {
+              "description": "Represents resources. Alternates between up and down states via Event Builder event cycles.",
+              "connectors": {
+                "netConIn": { "direction": "in", "usage": "Network connection input" },
+                "netConOut": { "direction": "out", "usage": "Network connection output" },
+                "valuesIn": { "direction": "in", "usage": "Control values" },
+                "valuesOut": { "direction": "out", "usage": "Status outputs (up/down)" }
+              }
+            },
+            "Distribution Builder": {
+              "description": "Creates and provides statistical distribution definitions for TBD (Time Between Downs), TTD (Time To Down), and TTU (Time To Up).",
+              "connectors": {}
+            },
+            "End Node": {
+              "description": "Ends the RBD and reports its status.",
+              "connectors": {
+                "netConIn": { "direction": "in", "usage": "Network input" },
+                "netConOut": { "direction": "out", "usage": "Network output" },
+                "valuesOut": { "direction": "out", "usage": "RBD status" },
+                "itemOut": { "direction": "out", "usage": "Status item output" }
+              }
+            },
+            "Event Builder": {
+              "description": "Creates event cycle classes for Start Node and Component blocks.",
+              "connectors": {}
+            },
+            "Start Node": {
+              "description": "Manages RBD behavior over time. Brain of the RBD.",
+              "connectors": {
+                "valuesIn": { "direction": "in", "usage": "Control values" },
+                "netConOut": { "direction": "out", "usage": "Network output" },
+                "netConIn": { "direction": "in", "usage": "Network input" },
+                "itemIn": { "direction": "in", "usage": "Status item input" },
+                "itemOut": { "direction": "out", "usage": "Status item output" },
+                "valuesOut": { "direction": "out", "usage": "Status outputs" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Utilities.lbr": {
+      "name": "Utilities Library",
+      "description": "Utility blocks for model control, debugging, and information",
+      "categories": {
+        "Developer Tools": {
+          "blocks": {
+            "Object Mapper": "Gets information about IDispatch properties and methods from ActiveX controls."
+          }
+        },
+        "Discrete Event Tools": {
+          "blocks": {
+            "Event Monitor": "Displays event calendar in discrete event models.",
+            "Item Messages": "Displays detailed information about messages used to pass items.",
+            "Link Alert": "Registers a database section to receive messages when linked data changes.",
+            "Queue Tools": "Views and optionally initializes queue contents via tables.",
+            "Record Message": "Records all messages between two value connections.",
+            "Stop Message": "Transfers value from input to output without relaying discrete event messages."
+          }
+        },
+        "Information": {
+          "blocks": {
+            "Model Compare": "Reports differences between models run in different ExtendSim releases.",
+            "Block Info": "Reports information (name, number, position) about the connected block.",
+            "Count Blocks": "Calculates number of blocks of each type in the model.",
+            "Find and Replace": "Searches for similar dialog items in the model.",
+            "Memory Usage": "Calculates memory required for each block, global array, or database table.",
+            "Search Blocks": "Makes targeted list of blocks based on specific criteria."
+          }
+        },
+        "Math": {
+          "blocks": {
+            "Data Fitter": "Uses matrix techniques for least mean square curve fit to data."
+          }
+        },
+        "Model Control": {
+          "blocks": {
+            "Buttons": "Creates pushbutton interface for a model with equations executed on push.",
+            "Feedback": "Resolves feedback calculation order issues in continuous models.",
+            "Meter": "Displays input relative to min/max values.",
+            "Model Interface": "Creates an interface for controlling a model.",
+            "Pause Sim": "Causes simulation to pause when certain conditions are met.",
+            "Popups": "Defines custom popup menu, clonable to worksheet, usable as numeric input.",
+            "Run Model": "Provides Run Simulation Now button for worksheet or notebook.",
+            "Slider": "Provides flexible slider for models. Clonable, linkable to database.",
+            "Switch": "Defines switch for model worksheet."
+          }
+        },
+        "Time": {
+          "blocks": {
+            "RealTimer": "Reports simulation run time information including execution time.",
+            "TimeSync": "Synchronizes model to run in real time."
+          }
+        }
+      }
+    }
+  }
+}

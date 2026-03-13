@@ -1,0 +1,606 @@
+{
+  "simple_process": {
+    "description": "Create -> Queue -> Activity -> Exit: Basic item flow with single processing step",
+    "blocks": [
+      {"name": "source", "library": "Item.lbr", "block": "Create", "label": "Source"},
+      {"name": "queue", "library": "Item.lbr", "block": "Queue", "label": "Queue"},
+      {"name": "process", "library": "Item.lbr", "block": "Activity", "label": "Process"},
+      {"name": "sink", "library": "Item.lbr", "block": "Exit", "label": "Exit"}
+    ],
+    "connections": [
+      {"from": "source", "to": "queue"},
+      {"from": "queue", "to": "process"},
+      {"from": "process", "to": "sink"}
+    ],
+    "parameters": {
+      "arrivalRate": {"block": "source", "var": "Rnd_Arg1_prm", "description": "Mean inter-arrival time"},
+      "processTime": {"block": "process", "var": "WaitDelta_prm", "description": "Fixed processing time"}
+    }
+  },
+  "two_stage_process": {
+    "description": "Create -> Queue -> Activity -> Queue -> Activity -> Exit: Two-stage manufacturing process",
+    "blocks": [
+      {"name": "source", "library": "Item.lbr", "block": "Create", "label": "Source"},
+      {"name": "q1", "library": "Item.lbr", "block": "Queue", "label": "Queue1"},
+      {"name": "p1", "library": "Item.lbr", "block": "Activity", "label": "Stage1"},
+      {"name": "q2", "library": "Item.lbr", "block": "Queue", "label": "Queue2"},
+      {"name": "p2", "library": "Item.lbr", "block": "Activity", "label": "Stage2"},
+      {"name": "sink", "library": "Item.lbr", "block": "Exit", "label": "Exit"}
+    ],
+    "connections": [
+      {"from": "source", "to": "q1"},
+      {"from": "q1", "to": "p1"},
+      {"from": "p1", "to": "q2"},
+      {"from": "q2", "to": "p2"},
+      {"from": "p2", "to": "sink"}
+    ],
+    "parameters": {
+      "arrivalRate": {"block": "source", "var": "Rnd_Arg1_prm", "description": "Mean inter-arrival time"},
+      "stage1Time": {"block": "p1", "var": "WaitDelta_prm", "description": "Stage 1 processing time"},
+      "stage2Time": {"block": "p2", "var": "WaitDelta_prm", "description": "Stage 2 processing time"}
+    }
+  },
+  "batch_process": {
+    "description": "Create -> Queue -> Batch -> Activity -> Unbatch -> Exit: Batch processing pattern",
+    "blocks": [
+      {"name": "source", "library": "Item.lbr", "block": "Create", "label": "Source"},
+      {"name": "queue", "library": "Item.lbr", "block": "Queue", "label": "Queue"},
+      {"name": "batch", "library": "Item.lbr", "block": "Batch", "label": "Batch"},
+      {"name": "process", "library": "Item.lbr", "block": "Activity", "label": "Process"},
+      {"name": "unbatch", "library": "Item.lbr", "block": "Unbatch", "label": "Unbatch"},
+      {"name": "sink", "library": "Item.lbr", "block": "Exit", "label": "Exit"}
+    ],
+    "connections": [
+      {"from": "source", "to": "queue"},
+      {"from": "queue", "to": "batch"},
+      {"from": "batch", "to": "process"},
+      {"from": "process", "to": "unbatch"},
+      {"from": "unbatch", "to": "sink"}
+    ],
+    "parameters": {
+      "arrivalRate": {"block": "source", "var": "Rnd_Arg1_prm", "description": "Mean inter-arrival time"},
+      "processTime": {"block": "process", "var": "WaitDelta_prm", "description": "Batch processing time"}
+    }
+  },
+  "resource_constrained": {
+    "description": "Create -> Queue -> Activity -> Resource Pool Release -> Exit: Process with shared resource pool (validated against Simple Resource Pool.mox)",
+    "blocks": [
+      {"name": "source", "library": "Item.lbr", "block": "Create", "label": "Source"},
+      {"name": "queue", "library": "Item.lbr", "block": "Queue", "label": "HoldForResource"},
+      {"name": "pool", "library": "Item.lbr", "block": "Resource Pool", "label": "Resources"},
+      {"name": "process", "library": "Item.lbr", "block": "Activity", "label": "Process"},
+      {"name": "release", "library": "Item.lbr", "block": "Resource Pool Release", "label": "ReleaseResource"},
+      {"name": "sink", "library": "Item.lbr", "block": "Exit", "label": "Exit"}
+    ],
+    "connections": [
+      {"from": "source", "to": "queue"},
+      {"from": "queue", "to": "process"},
+      {"from": "process", "to": "release"},
+      {"from": "release", "to": "sink"}
+    ],
+    "parameters": {
+      "arrivalRate": {"block": "source", "var": "Rnd_Arg1_prm", "description": "Mean inter-arrival time"},
+      "processTime": {"block": "process", "var": "WaitDelta_prm", "description": "Processing time"}
+    }
+  },
+  "split_merge": {
+    "description": "Create -> Queue -> Select Item Out -> (Activity, Activity) -> Combine -> Exit: Parallel processing paths",
+    "blocks": [
+      {"name": "source", "library": "Item.lbr", "block": "Create", "label": "Source"},
+      {"name": "queue", "library": "Item.lbr", "block": "Queue", "label": "Queue"},
+      {"name": "split", "library": "Item.lbr", "block": "Select Item Out", "label": "Split"},
+      {"name": "path1", "library": "Item.lbr", "block": "Activity", "label": "Path1"},
+      {"name": "path2", "library": "Item.lbr", "block": "Activity", "label": "Path2"},
+      {"name": "merge", "library": "Item.lbr", "block": "Combine", "label": "Merge"},
+      {"name": "sink", "library": "Item.lbr", "block": "Exit", "label": "Exit"}
+    ],
+    "connections": [
+      {"from": "source", "to": "queue"},
+      {"from": "queue", "to": "split"},
+      {"from": "path1", "to": "merge"},
+      {"from": "path2", "to": "merge"},
+      {"from": "merge", "to": "sink"}
+    ],
+    "parameters": {
+      "arrivalRate": {"block": "source", "var": "Rnd_Arg1_prm", "description": "Mean inter-arrival time"},
+      "path1Time": {"block": "path1", "var": "WaitDelta_prm", "description": "Path 1 processing time"},
+      "path2Time": {"block": "path2", "var": "WaitDelta_prm", "description": "Path 2 processing time"}
+    }
+  },
+  "manufacturing_line": {
+    "description": "Create -> 3x (Queue -> Activity) -> Exit: Three-stage serial manufacturing line with buffer queues",
+    "blocks": [
+      {"name": "source", "library": "Item.lbr", "block": "Create", "label": "Arrivals"},
+      {"name": "q1", "library": "Item.lbr", "block": "Queue", "label": "Buffer1"},
+      {"name": "stage1", "library": "Item.lbr", "block": "Activity", "label": "Stage1"},
+      {"name": "q2", "library": "Item.lbr", "block": "Queue", "label": "Buffer2"},
+      {"name": "stage2", "library": "Item.lbr", "block": "Activity", "label": "Stage2"},
+      {"name": "q3", "library": "Item.lbr", "block": "Queue", "label": "Buffer3"},
+      {"name": "stage3", "library": "Item.lbr", "block": "Activity", "label": "Stage3"},
+      {"name": "sink", "library": "Item.lbr", "block": "Exit", "label": "Finished"}
+    ],
+    "connections": [
+      {"from": "source", "to": "q1"},
+      {"from": "q1", "to": "stage1"},
+      {"from": "stage1", "to": "q2"},
+      {"from": "q2", "to": "stage2"},
+      {"from": "stage2", "to": "q3"},
+      {"from": "q3", "to": "stage3"},
+      {"from": "stage3", "to": "sink"}
+    ],
+    "parameters": {
+      "arrivalRate": {"block": "source", "var": "Rnd_Arg1_prm", "description": "Mean inter-arrival time"},
+      "stage1Time": {"block": "stage1", "var": "WaitDelta_prm", "description": "Stage 1 processing time"},
+      "stage2Time": {"block": "stage2", "var": "WaitDelta_prm", "description": "Stage 2 processing time"},
+      "stage3Time": {"block": "stage3", "var": "WaitDelta_prm", "description": "Stage 3 processing time"}
+    }
+  },
+  "inspection_rework": {
+    "description": "Process with quality inspection: failed items loop back for rework before re-inspection",
+    "blocks": [
+      {"name": "source", "library": "Item.lbr", "block": "Create", "label": "Arrivals"},
+      {"name": "queue", "library": "Item.lbr", "block": "Queue", "label": "InQueue"},
+      {"name": "process", "library": "Item.lbr", "block": "Activity", "label": "Process"},
+      {"name": "inspect", "library": "Item.lbr", "block": "Select Item Out", "label": "Inspect"},
+      {"name": "rework", "library": "Item.lbr", "block": "Activity", "label": "Rework"},
+      {"name": "rejoin", "library": "Item.lbr", "block": "Select Item In", "label": "Rejoin"},
+      {"name": "sink", "library": "Item.lbr", "block": "Exit", "label": "Shipped"}
+    ],
+    "connections": [
+      {"from": "source", "to": "rejoin"},
+      {"from": "rejoin", "to": "queue"},
+      {"from": "queue", "to": "process"},
+      {"from": "process", "to": "inspect"},
+      {"from": "inspect", "to": "sink", "fromConnector": "ItemOut"},
+      {"from": "inspect", "to": "rework", "fromConnector": "ItemOut2"},
+      {"from": "rework", "to": "rejoin"}
+    ],
+    "parameters": {
+      "arrivalRate": {"block": "source", "var": "Rnd_Arg1_prm", "description": "Mean inter-arrival time"},
+      "processTime": {"block": "process", "var": "WaitDelta_prm", "description": "Processing time"},
+      "reworkTime": {"block": "rework", "var": "WaitDelta_prm", "description": "Rework processing time"}
+    }
+  },
+  "resource_pool_shared": {
+    "description": "Two processes sharing a single resource pool: models contention for limited resources",
+    "blocks": [
+      {"name": "source1", "library": "Item.lbr", "block": "Create", "label": "TypeA"},
+      {"name": "source2", "library": "Item.lbr", "block": "Create", "label": "TypeB"},
+      {"name": "q1", "library": "Item.lbr", "block": "Queue", "label": "QueueA"},
+      {"name": "q2", "library": "Item.lbr", "block": "Queue", "label": "QueueB"},
+      {"name": "pool", "library": "Item.lbr", "block": "Resource Pool", "label": "SharedPool"},
+      {"name": "proc1", "library": "Item.lbr", "block": "Activity", "label": "ProcessA"},
+      {"name": "proc2", "library": "Item.lbr", "block": "Activity", "label": "ProcessB"},
+      {"name": "merge", "library": "Item.lbr", "block": "Select Item In", "label": "Merge"},
+      {"name": "sink", "library": "Item.lbr", "block": "Exit", "label": "Exit"}
+    ],
+    "connections": [
+      {"from": "source1", "to": "q1"},
+      {"from": "source2", "to": "q2"},
+      {"from": "q1", "to": "proc1"},
+      {"from": "q2", "to": "proc2"},
+      {"from": "proc1", "to": "merge"},
+      {"from": "proc2", "to": "merge"},
+      {"from": "merge", "to": "sink"}
+    ],
+    "parameters": {
+      "arrivalRateA": {"block": "source1", "var": "Rnd_Arg1_prm", "description": "Type A mean inter-arrival time"},
+      "arrivalRateB": {"block": "source2", "var": "Rnd_Arg1_prm", "description": "Type B mean inter-arrival time"},
+      "processTimeA": {"block": "proc1", "var": "WaitDelta_prm", "description": "Type A processing time"},
+      "processTimeB": {"block": "proc2", "var": "WaitDelta_prm", "description": "Type B processing time"}
+    }
+  },
+  "priority_routing": {
+    "description": "Route items by attribute-based priority to different service levels",
+    "blocks": [
+      {"name": "source", "library": "Item.lbr", "block": "Create", "label": "Arrivals"},
+      {"name": "setattr", "library": "Item.lbr", "block": "Set", "label": "SetPriority"},
+      {"name": "queue", "library": "Item.lbr", "block": "Queue", "label": "Queue"},
+      {"name": "route", "library": "Item.lbr", "block": "Select Item Out", "label": "Route"},
+      {"name": "high", "library": "Item.lbr", "block": "Activity", "label": "HighPriority"},
+      {"name": "low", "library": "Item.lbr", "block": "Activity", "label": "LowPriority"},
+      {"name": "exitHigh", "library": "Item.lbr", "block": "Exit", "label": "ExitHigh"},
+      {"name": "exitLow", "library": "Item.lbr", "block": "Exit", "label": "ExitLow"}
+    ],
+    "connections": [
+      {"from": "source", "to": "setattr"},
+      {"from": "setattr", "to": "queue"},
+      {"from": "queue", "to": "route"},
+      {"from": "route", "to": "high", "fromConnector": "ItemOut"},
+      {"from": "route", "to": "low", "fromConnector": "ItemOut2"},
+      {"from": "high", "to": "exitHigh"},
+      {"from": "low", "to": "exitLow"}
+    ],
+    "parameters": {
+      "arrivalRate": {"block": "source", "var": "Rnd_Arg1_prm", "description": "Mean inter-arrival time"},
+      "highTime": {"block": "high", "var": "WaitDelta_prm", "description": "High priority processing time"},
+      "lowTime": {"block": "low", "var": "WaitDelta_prm", "description": "Low priority processing time"}
+    }
+  },
+  "shift_schedule": {
+    "description": "Process with shift-based capacity scheduling: models on/off shift patterns",
+    "blocks": [
+      {"name": "source", "library": "Item.lbr", "block": "Create", "label": "Arrivals"},
+      {"name": "queue", "library": "Item.lbr", "block": "Queue", "label": "Queue"},
+      {"name": "process", "library": "Item.lbr", "block": "Activity", "label": "Process"},
+      {"name": "shift", "library": "Item.lbr", "block": "Shift", "label": "ShiftSchedule"},
+      {"name": "sink", "library": "Item.lbr", "block": "Exit", "label": "Exit"}
+    ],
+    "connections": [
+      {"from": "source", "to": "queue"},
+      {"from": "queue", "to": "process"},
+      {"from": "process", "to": "sink"}
+    ],
+    "parameters": {
+      "arrivalRate": {"block": "source", "var": "Rnd_Arg1_prm", "description": "Mean inter-arrival time"},
+      "processTime": {"block": "process", "var": "WaitDelta_prm", "description": "Processing time per item"}
+    }
+  },
+  "assembly_join": {
+    "description": "Two part streams merging at assembly: both parts required before processing",
+    "blocks": [
+      {"name": "partsA", "library": "Item.lbr", "block": "Create", "label": "PartsA"},
+      {"name": "partsB", "library": "Item.lbr", "block": "Create", "label": "PartsB"},
+      {"name": "qA", "library": "Item.lbr", "block": "Queue", "label": "QueueA"},
+      {"name": "qB", "library": "Item.lbr", "block": "Queue", "label": "QueueB"},
+      {"name": "assemble", "library": "Item.lbr", "block": "Batch", "label": "Assemble"},
+      {"name": "process", "library": "Item.lbr", "block": "Activity", "label": "Process"},
+      {"name": "sink", "library": "Item.lbr", "block": "Exit", "label": "Finished"}
+    ],
+    "connections": [
+      {"from": "partsA", "to": "qA"},
+      {"from": "partsB", "to": "qB"},
+      {"from": "qA", "to": "assemble"},
+      {"from": "qB", "to": "assemble"},
+      {"from": "assemble", "to": "process"},
+      {"from": "process", "to": "sink"}
+    ],
+    "parameters": {
+      "arrivalRateA": {"block": "partsA", "var": "Rnd_Arg1_prm", "description": "Part A mean inter-arrival time"},
+      "arrivalRateB": {"block": "partsB", "var": "Rnd_Arg1_prm", "description": "Part B mean inter-arrival time"},
+      "assemblyTime": {"block": "process", "var": "WaitDelta_prm", "description": "Assembly processing time"}
+    }
+  },
+  "tank_flow_basic": {
+    "description": "Basic continuous flow: source tank -> valve -> sink tank (requires DE or Pro license)",
+    "blocks": [
+      {"name": "supply", "library": "Rate.lbr", "block": "Tank", "label": "SupplyTank"},
+      {"name": "valve", "library": "Rate.lbr", "block": "Valve", "label": "FlowValve"},
+      {"name": "demand", "library": "Rate.lbr", "block": "Tank", "label": "DemandTank"}
+    ],
+    "connections": [
+      {"from": "supply", "to": "valve"},
+      {"from": "valve", "to": "demand"}
+    ],
+    "parameters": {
+      "supplyCapacity": {"block": "supply", "var": "TankCapacity_prm", "description": "Supply tank capacity"},
+      "supplyInitial": {"block": "supply", "var": "TankInitLevel_prm", "description": "Supply tank initial level"},
+      "maxFlowRate": {"block": "valve", "var": "MaxRate_prm", "description": "Maximum flow rate through valve"},
+      "demandCapacity": {"block": "demand", "var": "TankCapacity_prm", "description": "Demand tank capacity"}
+    }
+  },
+  "call_center": {
+    "description": "Call center with queue abandonment: callers renege after patience timeout (validated against Call Center.mox — uses Queue renege, not Gate)",
+    "blocks": [
+      {"name": "calls", "library": "Item.lbr", "block": "Create", "label": "IncomingCalls"},
+      {"name": "patience", "library": "Value.lbr", "block": "Random Number", "label": "PatienceTime"},
+      {"name": "queue", "library": "Item.lbr", "block": "Queue", "label": "WaitQueue"},
+      {"name": "serve", "library": "Item.lbr", "block": "Activity", "label": "Service"},
+      {"name": "completed", "library": "Item.lbr", "block": "Exit", "label": "Served"},
+      {"name": "abandoned", "library": "Item.lbr", "block": "Exit", "label": "Abandoned"}
+    ],
+    "connections": [
+      {"from": "calls", "to": "queue"},
+      {"from": "patience", "to": "queue", "toConnector": "ValuesIn"},
+      {"from": "queue", "to": "serve"},
+      {"from": "queue", "to": "abandoned", "fromConnector": "RenegeItemOut"},
+      {"from": "serve", "to": "completed"}
+    ],
+    "parameters": {
+      "callRate": {"block": "calls", "var": "Rnd_Arg1_prm", "description": "Mean time between calls"},
+      "serviceTime": {"block": "serve", "var": "WaitDelta_prm", "description": "Mean service time per call"}
+    }
+  },
+  "kanban_pull": {
+    "description": "Pull-based production with WIP limit: Gate controls release based on downstream capacity",
+    "blocks": [
+      {"name": "orders", "library": "Item.lbr", "block": "Create", "label": "Orders"},
+      {"name": "gate", "library": "Item.lbr", "block": "Gate", "label": "WIPLimit"},
+      {"name": "queue", "library": "Item.lbr", "block": "Queue", "label": "WorkQueue"},
+      {"name": "process", "library": "Item.lbr", "block": "Activity", "label": "Production"},
+      {"name": "sink", "library": "Item.lbr", "block": "Exit", "label": "Shipped"}
+    ],
+    "connections": [
+      {"from": "orders", "to": "gate"},
+      {"from": "gate", "to": "queue"},
+      {"from": "queue", "to": "process"},
+      {"from": "process", "to": "sink"}
+    ],
+    "parameters": {
+      "orderRate": {"block": "orders", "var": "Rnd_Arg1_prm", "description": "Mean time between orders"},
+      "productionTime": {"block": "process", "var": "WaitDelta_prm", "description": "Production time per item"}
+    }
+  },
+  "parallel_servers": {
+    "description": "Single queue feeding N parallel servers: models multi-server service systems",
+    "blocks": [
+      {"name": "source", "library": "Item.lbr", "block": "Create", "label": "Arrivals"},
+      {"name": "queue", "library": "Item.lbr", "block": "Queue", "label": "Queue"},
+      {"name": "split", "library": "Item.lbr", "block": "Select Item Out", "label": "Dispatch"},
+      {"name": "server1", "library": "Item.lbr", "block": "Activity", "label": "Server1"},
+      {"name": "server2", "library": "Item.lbr", "block": "Activity", "label": "Server2"},
+      {"name": "server3", "library": "Item.lbr", "block": "Activity", "label": "Server3"},
+      {"name": "merge", "library": "Item.lbr", "block": "Select Item In", "label": "Collect"},
+      {"name": "sink", "library": "Item.lbr", "block": "Exit", "label": "Exit"}
+    ],
+    "connections": [
+      {"from": "source", "to": "queue"},
+      {"from": "queue", "to": "split"},
+      {"from": "split", "to": "server1", "fromConnector": "ItemOut"},
+      {"from": "split", "to": "server2", "fromConnector": "ItemOut2"},
+      {"from": "split", "to": "server3", "fromConnector": "ItemOut3"},
+      {"from": "server1", "to": "merge"},
+      {"from": "server2", "to": "merge"},
+      {"from": "server3", "to": "merge"},
+      {"from": "merge", "to": "sink"}
+    ],
+    "parameters": {
+      "arrivalRate": {"block": "source", "var": "Rnd_Arg1_prm", "description": "Mean inter-arrival time"},
+      "server1Time": {"block": "server1", "var": "WaitDelta_prm", "description": "Server 1 processing time"},
+      "server2Time": {"block": "server2", "var": "WaitDelta_prm", "description": "Server 2 processing time"},
+      "server3Time": {"block": "server3", "var": "WaitDelta_prm", "description": "Server 3 processing time"}
+    }
+  },
+  "flow_supply_chain": {
+    "description": "Three-tank supply chain with flow control valves: models inventory flow through a logistics pipeline (Rate.lbr)",
+    "blocks": [
+      {"name": "raw", "library": "Rate.lbr", "block": "Tank", "label": "RawMaterial"},
+      {"name": "v1", "library": "Rate.lbr", "block": "Valve", "label": "Valve1"},
+      {"name": "wip", "library": "Rate.lbr", "block": "Tank", "label": "WorkInProgress"},
+      {"name": "v2", "library": "Rate.lbr", "block": "Valve", "label": "Valve2"},
+      {"name": "finished", "library": "Rate.lbr", "block": "Tank", "label": "FinishedGoods"}
+    ],
+    "connections": [
+      {"from": "raw", "to": "v1"},
+      {"from": "v1", "to": "wip"},
+      {"from": "wip", "to": "v2"},
+      {"from": "v2", "to": "finished"}
+    ],
+    "parameters": {
+      "rawCapacity": {"block": "raw", "var": "TankCapacity_prm", "description": "Raw material tank capacity"},
+      "rawInitial": {"block": "raw", "var": "TankInitLevel_prm", "description": "Raw material initial level"},
+      "rate1": {"block": "v1", "var": "MaxRate_prm", "description": "Stage 1 max flow rate"},
+      "rate2": {"block": "v2", "var": "MaxRate_prm", "description": "Stage 2 max flow rate"},
+      "finishedCapacity": {"block": "finished", "var": "TankCapacity_prm", "description": "Finished goods tank capacity"}
+    }
+  },
+  "flow_merge_blend": {
+    "description": "Two source tanks with per-source valves blended via Merge into product tank (validated against Proportional Mode Merge.mox — valves before Merge for per-source rate control)",
+    "blocks": [
+      {"name": "sourceA", "library": "Rate.lbr", "block": "Tank", "label": "IngredientA"},
+      {"name": "valveA", "library": "Rate.lbr", "block": "Valve", "label": "ValveA"},
+      {"name": "sourceB", "library": "Rate.lbr", "block": "Tank", "label": "IngredientB"},
+      {"name": "valveB", "library": "Rate.lbr", "block": "Valve", "label": "ValveB"},
+      {"name": "blend", "library": "Rate.lbr", "block": "Merge", "label": "Blender"},
+      {"name": "product", "library": "Rate.lbr", "block": "Tank", "label": "Product"}
+    ],
+    "connections": [
+      {"from": "sourceA", "to": "valveA"},
+      {"from": "valveA", "to": "blend"},
+      {"from": "sourceB", "to": "valveB"},
+      {"from": "valveB", "to": "blend"},
+      {"from": "blend", "to": "product"}
+    ],
+    "parameters": {
+      "capacityA": {"block": "sourceA", "var": "TankCapacity_prm", "description": "Ingredient A tank capacity"},
+      "initialA": {"block": "sourceA", "var": "TankInitLevel_prm", "description": "Ingredient A initial level"},
+      "rateA": {"block": "valveA", "var": "MaxRate_prm", "description": "Ingredient A max flow rate"},
+      "capacityB": {"block": "sourceB", "var": "TankCapacity_prm", "description": "Ingredient B tank capacity"},
+      "initialB": {"block": "sourceB", "var": "TankInitLevel_prm", "description": "Ingredient B initial level"},
+      "rateB": {"block": "valveB", "var": "MaxRate_prm", "description": "Ingredient B max flow rate"}
+    }
+  },
+  "flow_diverge_split": {
+    "description": "Source tank distributing via Diverge to two destinations with per-branch valves (validated against Proportional Mode Diverge.mox — valves after Diverge for per-branch rate control)",
+    "blocks": [
+      {"name": "source", "library": "Rate.lbr", "block": "Tank", "label": "Source"},
+      {"name": "split", "library": "Rate.lbr", "block": "Diverge", "label": "Splitter"},
+      {"name": "valveA", "library": "Rate.lbr", "block": "Valve", "label": "ValveA"},
+      {"name": "destA", "library": "Rate.lbr", "block": "Tank", "label": "DestinationA"},
+      {"name": "valveB", "library": "Rate.lbr", "block": "Valve", "label": "ValveB"},
+      {"name": "destB", "library": "Rate.lbr", "block": "Tank", "label": "DestinationB"}
+    ],
+    "connections": [
+      {"from": "source", "to": "split"},
+      {"from": "split", "to": "valveA"},
+      {"from": "valveA", "to": "destA"},
+      {"from": "split", "to": "valveB"},
+      {"from": "valveB", "to": "destB"}
+    ],
+    "parameters": {
+      "sourceCapacity": {"block": "source", "var": "TankCapacity_prm", "description": "Source tank capacity"},
+      "sourceInitial": {"block": "source", "var": "TankInitLevel_prm", "description": "Source tank initial level"},
+      "rateA": {"block": "valveA", "var": "MaxRate_prm", "description": "Branch A max flow rate"},
+      "rateB": {"block": "valveB", "var": "MaxRate_prm", "description": "Branch B max flow rate"},
+      "destACapacity": {"block": "destA", "var": "TankCapacity_prm", "description": "Destination A capacity"},
+      "destBCapacity": {"block": "destB", "var": "TankCapacity_prm", "description": "Destination B capacity"}
+    }
+  },
+  "flow_feedback_control": {
+    "description": "Flow with level-based feedback: Bias prioritizes flow direction based on tank level (Rate.lbr)",
+    "blocks": [
+      {"name": "supply", "library": "Rate.lbr", "block": "Tank", "label": "Supply"},
+      {"name": "valve", "library": "Rate.lbr", "block": "Valve", "label": "FlowValve"},
+      {"name": "bias", "library": "Rate.lbr", "block": "Bias", "label": "FlowBias"},
+      {"name": "process", "library": "Rate.lbr", "block": "Tank", "label": "ProcessTank"}
+    ],
+    "connections": [
+      {"from": "supply", "to": "valve"},
+      {"from": "valve", "to": "bias"},
+      {"from": "bias", "to": "process"}
+    ],
+    "parameters": {
+      "supplyCapacity": {"block": "supply", "var": "TankCapacity_prm", "description": "Supply tank capacity"},
+      "supplyInitial": {"block": "supply", "var": "TankInitLevel_prm", "description": "Supply tank initial level"},
+      "maxRate": {"block": "valve", "var": "MaxRate_prm", "description": "Maximum flow rate"},
+      "processCapacity": {"block": "process", "var": "TankCapacity_prm", "description": "Process tank capacity"}
+    }
+  },
+  "flow_conveyor_delay": {
+    "description": "Flow with transport delay: models pipeline or conveyor with time lag (Rate.lbr)",
+    "blocks": [
+      {"name": "source", "library": "Rate.lbr", "block": "Tank", "label": "Source"},
+      {"name": "valve", "library": "Rate.lbr", "block": "Valve", "label": "FlowControl"},
+      {"name": "conveyor", "library": "Rate.lbr", "block": "Convey Flow", "label": "Pipeline"},
+      {"name": "dest", "library": "Rate.lbr", "block": "Tank", "label": "Destination"}
+    ],
+    "connections": [
+      {"from": "source", "to": "valve"},
+      {"from": "valve", "to": "conveyor"},
+      {"from": "conveyor", "to": "dest"}
+    ],
+    "parameters": {
+      "sourceCapacity": {"block": "source", "var": "TankCapacity_prm", "description": "Source tank capacity"},
+      "sourceInitial": {"block": "source", "var": "TankInitLevel_prm", "description": "Source tank initial level"},
+      "flowRate": {"block": "valve", "var": "MaxRate_prm", "description": "Maximum flow rate"},
+      "destCapacity": {"block": "dest", "var": "TankCapacity_prm", "description": "Destination tank capacity"}
+    }
+  },
+  "flow_item_interchange": {
+    "description": "Hybrid discrete-continuous: items arrive and fill an Interchange tank that feeds a flow network (Item.lbr + Rate.lbr)",
+    "blocks": [
+      {"name": "source", "library": "Item.lbr", "block": "Create", "label": "ItemSource"},
+      {"name": "queue", "library": "Item.lbr", "block": "Queue", "label": "WaitQueue"},
+      {"name": "interchange", "library": "Rate.lbr", "block": "Interchange", "label": "LoadStation"},
+      {"name": "valve", "library": "Rate.lbr", "block": "Valve", "label": "FlowControl"},
+      {"name": "dest", "library": "Rate.lbr", "block": "Tank", "label": "Storage"}
+    ],
+    "connections": [
+      {"from": "source", "to": "queue"},
+      {"from": "queue", "to": "interchange"},
+      {"from": "interchange", "to": "valve"},
+      {"from": "valve", "to": "dest"}
+    ],
+    "parameters": {
+      "arrivalRate": {"block": "source", "var": "Rnd_Arg1_prm", "description": "Mean inter-arrival time for items"},
+      "flowRate": {"block": "valve", "var": "MaxRate_prm", "description": "Maximum outgoing flow rate"},
+      "storageCapacity": {"block": "dest", "var": "TankCapacity_prm", "description": "Storage tank capacity"}
+    }
+  },
+  "continuous_feedback": {
+    "description": "Feedback control loop: setpoint vs Holding Tank level, error drives Equation that adjusts inflow (validated against Reservoir 3.mox — Holding Tank as sole accumulator, no Integrate)",
+    "blocks": [
+      {"name": "setpoint", "library": "Value.lbr", "block": "Constant", "label": "Setpoint"},
+      {"name": "input", "library": "Value.lbr", "block": "Constant", "label": "InputRate"},
+      {"name": "sum", "library": "Value.lbr", "block": "Math", "label": "SumInputs"},
+      {"name": "plant", "library": "Value.lbr", "block": "Holding Tank", "label": "Plant"},
+      {"name": "controller", "library": "Value.lbr", "block": "Equation", "label": "Controller"},
+      {"name": "error", "library": "Value.lbr", "block": "Math", "label": "Error"}
+    ],
+    "connections": [
+      {"from": "input", "to": "sum"},
+      {"from": "sum", "to": "plant", "toConnector": "InputIn"},
+      {"from": "plant", "to": "error", "fromConnector": "ContentsOut"},
+      {"from": "setpoint", "to": "error"},
+      {"from": "error", "to": "controller"},
+      {"from": "controller", "to": "plant", "toConnector": "ValuesIn"}
+    ],
+    "parameters": {
+      "setpointValue": {"block": "setpoint", "var": "ConstantValue", "description": "Target level setpoint"},
+      "inputRate": {"block": "input", "var": "ConstantValue", "description": "Constant input rate"}
+    }
+  },
+  "continuous_decay": {
+    "description": "Exponential decay model: Holding Tank loses contents at rate proportional to level (validated against Drug Ingestion.mox — Holding Tank as accumulator, Equation computes outflow)",
+    "blocks": [
+      {"name": "rate", "library": "Value.lbr", "block": "Constant", "label": "DecayRate"},
+      {"name": "initial", "library": "Value.lbr", "block": "Constant", "label": "InitialDose"},
+      {"name": "tank", "library": "Value.lbr", "block": "Holding Tank", "label": "Quantity"},
+      {"name": "decay", "library": "Value.lbr", "block": "Equation", "label": "DecayCalc"},
+      {"name": "display", "library": "Value.lbr", "block": "Display Value", "label": "CurrentLevel"}
+    ],
+    "connections": [
+      {"from": "initial", "to": "tank", "toConnector": "InputIn"},
+      {"from": "tank", "to": "decay", "fromConnector": "ContentsOut"},
+      {"from": "rate", "to": "decay"},
+      {"from": "decay", "to": "tank", "toConnector": "ValuesIn"},
+      {"from": "tank", "to": "display", "fromConnector": "ContentsOut"}
+    ],
+    "parameters": {
+      "decayConstant": {"block": "rate", "var": "ConstantValue", "description": "Decay rate constant k"},
+      "initialQuantity": {"block": "initial", "var": "ConstantValue", "description": "Initial quantity"}
+    }
+  },
+  "continuous_predator_prey": {
+    "description": "Lotka-Volterra predator-prey: two Holding Tanks with Math blocks for births/deaths and Lookup Table for nonlinear mortality (validated against Predator_Prey.mox)",
+    "blocks": [
+      {"name": "preyPop", "library": "Value.lbr", "block": "Holding Tank", "label": "PreyPopulation"},
+      {"name": "preyBirthRate", "library": "Value.lbr", "block": "Constant", "label": "PreyBirthRate"},
+      {"name": "preyBirths", "library": "Value.lbr", "block": "Math", "label": "PreyBirths"},
+      {"name": "kills", "library": "Value.lbr", "block": "Math", "label": "Kills"},
+      {"name": "predPop", "library": "Value.lbr", "block": "Holding Tank", "label": "PredatorPopulation"},
+      {"name": "predBirthRate", "library": "Value.lbr", "block": "Constant", "label": "PredBirthRate"},
+      {"name": "predBirths", "library": "Value.lbr", "block": "Math", "label": "PredatorBirths"},
+      {"name": "predMortality", "library": "Value.lbr", "block": "Lookup Table", "label": "MortalityRate"},
+      {"name": "predDeaths", "library": "Value.lbr", "block": "Math", "label": "PredatorDeaths"}
+    ],
+    "connections": [
+      {"from": "preyBirthRate", "to": "preyBirths"},
+      {"from": "preyPop", "to": "preyBirths", "fromConnector": "ContentsOut"},
+      {"from": "preyBirths", "to": "preyPop", "toConnector": "InputIn"},
+      {"from": "preyPop", "to": "kills", "fromConnector": "ContentsOut"},
+      {"from": "predPop", "to": "kills", "fromConnector": "ContentsOut"},
+      {"from": "kills", "to": "preyPop", "toConnector": "ValuesIn"},
+      {"from": "predBirthRate", "to": "predBirths"},
+      {"from": "predPop", "to": "predBirths", "fromConnector": "ContentsOut"},
+      {"from": "predBirths", "to": "predPop", "toConnector": "InputIn"},
+      {"from": "preyPop", "to": "predMortality", "fromConnector": "ContentsOut"},
+      {"from": "predMortality", "to": "predDeaths"},
+      {"from": "predPop", "to": "predDeaths", "fromConnector": "ContentsOut"},
+      {"from": "predDeaths", "to": "predPop", "toConnector": "ValuesIn"}
+    ],
+    "parameters": {
+      "initialPrey": {"block": "preyPop", "var": "InitVal", "description": "Initial prey population"},
+      "initialPredators": {"block": "predPop", "var": "InitVal", "description": "Initial predator population"}
+    }
+  },
+  "continuous_pid_control": {
+    "description": "PID controller: proportional-integral-derivative control with setpoint tracking (Value.lbr)",
+    "blocks": [
+      {"name": "setpoint", "library": "Value.lbr", "block": "Constant", "label": "Setpoint"},
+      {"name": "error", "library": "Value.lbr", "block": "Math", "label": "Error"},
+      {"name": "pid", "library": "Value.lbr", "block": "Equation", "label": "PID"},
+      {"name": "integral", "library": "Value.lbr", "block": "Integrate", "label": "IntegralTerm"},
+      {"name": "process", "library": "Value.lbr", "block": "Integrate", "label": "Process"},
+      {"name": "display", "library": "Value.lbr", "block": "Display Value", "label": "ProcessOutput"}
+    ],
+    "connections": [
+      {"from": "setpoint", "to": "error"},
+      {"from": "process", "to": "error"},
+      {"from": "error", "to": "pid"},
+      {"from": "error", "to": "integral"},
+      {"from": "integral", "to": "pid"},
+      {"from": "pid", "to": "process"},
+      {"from": "process", "to": "display"}
+    ],
+    "parameters": {
+      "setpointValue": {"block": "setpoint", "var": "ConstantValue", "description": "Target setpoint value"},
+      "processInitial": {"block": "process", "var": "Init", "description": "Initial process state"}
+    }
+  },
+  "continuous_statistics": {
+    "description": "Statistical monitoring of a stochastic process: random input with running mean and variance (Value.lbr)",
+    "blocks": [
+      {"name": "source", "library": "Value.lbr", "block": "Random Number", "label": "RandomProcess"},
+      {"name": "stats", "library": "Value.lbr", "block": "Mean & Variance", "label": "Statistics"},
+      {"name": "calc", "library": "Value.lbr", "block": "Equation", "label": "Analysis"},
+      {"name": "display", "library": "Value.lbr", "block": "Display Value", "label": "Result"}
+    ],
+    "connections": [
+      {"from": "source", "to": "stats"},
+      {"from": "stats", "to": "calc"},
+      {"from": "calc", "to": "display"}
+    ],
+    "parameters": {}
+  }
+}

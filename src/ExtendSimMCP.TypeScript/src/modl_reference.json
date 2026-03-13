@@ -1,0 +1,2530 @@
+{
+  "version": "1.0",
+  "description": "ExtendSim ModL function reference for MCP server",
+  "returnTypes": {
+    "I": "integer",
+    "R": "real",
+    "S": "string",
+    "V": "void"
+  },
+  "dialogItemTypes": {
+    "1": "button",
+    "2": "checkbox",
+    "3": "radiobutton",
+    "4": "meter",
+    "5": "parameter",
+    "6": "slider",
+    "7": "datatable",
+    "8": "edittext",
+    "9": "statictext",
+    "12": "switch",
+    "13": "stringtable",
+    "14": "plotpane",
+    "16": "popupmenu",
+    "17": "embedobject (obsolete ES10)",
+    "18": "dynamictext",
+    "19": "textframe",
+    "20": "calendar",
+    "21": "edittext31"
+  },
+  "categories": {
+    "DialogItems": {
+      "description": "Functions for working with block dialog items - get/set values, colors, visibility, etc.",
+      "functions": {
+        "AppendPopupLabels": {
+          "description": "Appends the specified string onto the labels associated with the named popup menu. Popup menu labels can total up to 5100 characters.",
+          "signature": "AppendPopupLabels(variableNameStr, theLabels)",
+          "arguments": [
+            {"name": "variableNameStr", "type": "string", "description": "Dialog item name as a string or in quotes"},
+            {"name": "theLabels", "type": "string", "description": "Labels to append"}
+          ],
+          "returns": "I"
+        },
+        "CreatePopupMenu": {
+          "description": "Creates a Popup at the last location the user clicked. Used with dialogClick message handler.",
+          "signature": "CreatePopupMenu(string1, string2, initialSelection)",
+          "arguments": [
+            {"name": "string1", "type": "string", "description": "First menu item"},
+            {"name": "string2", "type": "string", "description": "Second menu item"},
+            {"name": "initialSelection", "type": "integer", "description": "Initial selected item"}
+          ],
+          "returns": "I"
+        },
+        "DialogHasEmbeddedObject": {
+          "description": "OBSOLETE AS OF ES10. Returns the dialog item name if the specified block contains any embedded object dialog items.",
+          "signature": "DialogHasEmbeddedObject(blockNumber)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"}
+          ],
+          "returns": "S",
+          "obsolete": true
+        },
+        "DialogItemVisible": {
+          "description": "Returns true if the specified dialog item is visible.",
+          "signature": "DialogItemVisible(blockNumber, variableNameStr, clones)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "variableNameStr", "type": "string", "description": "Variable name"},
+            {"name": "clones", "type": "integer", "description": "Check clones (TRUE) or primary item"}
+          ],
+          "returns": "I"
+        },
+        "DIGetID": {
+          "description": "Returns a dialog item ID number. Used in LINKCONTENT and LINKSTRUCTURE message handlers.",
+          "signature": "DIGetID(blockNumber, name)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "name", "type": "string", "description": "Dialog item name"}
+          ],
+          "returns": "I"
+        },
+        "DIGetName": {
+          "description": "Returns the dialog item name from the item's dialogID.",
+          "signature": "DIGetName(blockNum, dialogID)",
+          "arguments": [
+            {"name": "blockNum", "type": "integer", "description": "Block ID"},
+            {"name": "dialogID", "type": "integer", "description": "Dialog item ID number"}
+          ],
+          "returns": "S"
+        },
+        "DIMoveBy": {
+          "description": "Offsets the dialog item by the values of the y and x parameters.",
+          "signature": "DIMoveBy(blockNumber, name, y, x)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "name", "type": "string", "description": "Dialog item name"},
+            {"name": "y", "type": "integer", "description": "Y offset"},
+            {"name": "x", "type": "integer", "description": "X offset"}
+          ],
+          "returns": "I"
+        },
+        "DIMoveTo": {
+          "description": "Moves the specified dialog item to the y and x location specified.",
+          "signature": "DIMoveTo(blockNumber, name, top, left)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "name", "type": "string", "description": "Dialog item name"},
+            {"name": "top", "type": "integer", "description": "Top position"},
+            {"name": "left", "type": "integer", "description": "Left position"}
+          ],
+          "returns": "I"
+        },
+        "DIMsgNumber": {
+          "description": "Returns the message number associated with a dialog item. Used to send a dialog item message to a block.",
+          "signature": "DIMsgNumber(blockNumber, name)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "name", "type": "string", "description": "Dialog item name"}
+          ],
+          "returns": "I"
+        },
+        "DIPopupButton": {
+          "description": "Changes the behavior of the specified popup menu so it behaves like a button instead.",
+          "signature": "DIPopupButton(blockNumber, name, behavesAsButton)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "name", "type": "string", "description": "Dialog item name"},
+            {"name": "behavesAsButton", "type": "integer", "description": "1 for button behavior, 0 for popup"}
+          ],
+          "returns": "I"
+        },
+        "DIPositionGet": {
+          "description": "Gets the position of a dialog item. Position array must be declared as: integer array[4]",
+          "signature": "DIPositionGet(blockNumber, name, position)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "name", "type": "string", "description": "Dialog item name"},
+            {"name": "position", "type": "integer array", "description": "Array to store position [4]"}
+          ],
+          "returns": "I"
+        },
+        "DIPositionHome": {
+          "description": "Resets the location of the dialog item back to the position and size defined in the structure.",
+          "signature": "DIPositionHome(blockNumber, name)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "name", "type": "string", "description": "Dialog item name"}
+          ],
+          "returns": "I"
+        },
+        "DIPositionSet": {
+          "description": "Sets the position of the specified dialog item including size.",
+          "signature": "DIPositionSet(blockNumber, name, top, left, bottom, right)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "name", "type": "string", "description": "Dialog item name"},
+            {"name": "top", "type": "integer", "description": "Top position"},
+            {"name": "left", "type": "integer", "description": "Left position"},
+            {"name": "bottom", "type": "integer", "description": "Bottom position"},
+            {"name": "right", "type": "integer", "description": "Right position"}
+          ],
+          "returns": "I"
+        },
+        "DisableDialogItem": {
+          "description": "Disables or enables the specified dialog item.",
+          "signature": "DisableDialogItem(variableNameStr, TRUEFALSE)",
+          "arguments": [
+            {"name": "variableNameStr", "type": "string", "description": "Dialog item name"},
+            {"name": "TRUEFALSE", "type": "integer", "description": "TRUE to disable, FALSE to enable"}
+          ],
+          "returns": "V"
+        },
+        "DisableDialogItem2": {
+          "description": "Disables the specified Dialog Item with block number argument for remote block access.",
+          "signature": "DisableDialogItem2(blockNumber, name, disableEnable)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "name", "type": "string", "description": "Dialog item name"},
+            {"name": "disableEnable", "type": "integer", "description": "1 to disable, 0 to enable"}
+          ],
+          "returns": "I"
+        },
+        "DISetFocus": {
+          "description": "Sets the focus on the specified dialog item. Returns 0 for success or negative for failure.",
+          "signature": "DISetFocus(blockNumber, dialogItemName)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "dialogItemName", "type": "string", "description": "Dialog item name"}
+          ],
+          "returns": "I"
+        },
+        "DISetParent": {
+          "description": "Sets a parent-child relationship between dialog items.",
+          "signature": "DISetParent(blockNum, dialogItemName, dialogItemName)",
+          "arguments": [
+            {"name": "blockNum", "type": "integer", "description": "Block ID"},
+            {"name": "dialogItemName", "type": "string", "description": "Child dialog item name"},
+            {"name": "dialogItemName", "type": "string", "description": "Parent dialog item name"}
+          ],
+          "returns": "V"
+        },
+        "DITitleGet": {
+          "description": "Returns the string title of the dialog item (text on radio buttons, checkboxes, etc.).",
+          "signature": "DITitleGet(blockNumber, dialogItemName)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "dialogItemName", "type": "string", "description": "Dialog item name"}
+          ],
+          "returns": "S"
+        },
+        "DITitleSet": {
+          "description": "Sets the title of a dialog item (radio buttons, checkboxes, etc.).",
+          "signature": "DITitleSet(blockNumber, name, title)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "name", "type": "string", "description": "Dialog item name"},
+            {"name": "title", "type": "string", "description": "New title text"}
+          ],
+          "returns": "I",
+          "notes": "Use && to display & character in labels"
+        },
+        "GetDialogColors": {
+          "description": "Copies all the color information from the dialog colors into the color array.",
+          "signature": "GetDialogColors(blockNumber, HSVColorArray)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "HSVColorArray", "type": "integer array", "description": "Array declared as integer HSVColorArray[][3]"}
+          ],
+          "returns": "I"
+        },
+        "GetDialogItemColor": {
+          "description": "Gets a color value associated with the dialog item.",
+          "signature": "GetDialogItemColor(blockNumber, variableNameStr, HSVColorArray)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "variableNameStr", "type": "string", "description": "Variable name"},
+            {"name": "HSVColorArray", "type": "integer array", "description": "Array to store HSV values [3]"}
+          ],
+          "returns": "I",
+          "notes": "For ExtendSim 10 or later, use GetDialogItemEColor"
+        },
+        "GetDialogItemEColor": {
+          "description": "Returns the EColor value of the color of the dialog item.",
+          "signature": "GetDialogItemEColor(blockName, dialogItemName)",
+          "arguments": [
+            {"name": "blockName", "type": "long", "description": "Block ID"},
+            {"name": "dialogItemName", "type": "string", "description": "Dialog item name"}
+          ],
+          "returns": "I"
+        },
+        "GetDialogItemInfo": {
+          "description": "Returns TRUE if the specified quality is true for the dialog item.",
+          "signature": "GetDialogItemInfo(blockNumber, variableNameStr, which)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "variableNameStr", "type": "string", "description": "Variable name"},
+            {"name": "which", "type": "integer", "description": "Quality to check: 0=exist, 1=hidden, 2=enabled, 3=display only, 4=dialog item type, 5=rows, 6=columns, 7=width, 8=height, 9=left, 10=top, 11=tab number"}
+          ],
+          "returns": "I"
+        },
+        "GetDialogItemLabel": {
+          "description": "Returns the nth item label (popup menu item or column header in data table).",
+          "signature": "GetDialogItemLabel(blockNumber, variableNameStr, n)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "variableNameStr", "type": "string", "description": "Variable name"},
+            {"name": "n", "type": "integer", "description": "Index of label to get"}
+          ],
+          "returns": "S"
+        },
+        "GetDialogNames": {
+          "description": "Returns a list of the dialog variables in the specified block.",
+          "signature": "GetDialogNames(block, nameArray, typeArray)",
+          "arguments": [
+            {"name": "block", "type": "integer", "description": "Block ID"},
+            {"name": "nameArray", "type": "string array", "description": "Dynamic array for names"},
+            {"name": "typeArray", "type": "integer array", "description": "Dynamic array for types"}
+          ],
+          "returns": "I",
+          "notes": "Type values: 1=Button, 2=CheckBox, 3=RadioButton, 4=Meter, 5=Parameter, 6=Slider, 7=DataTable, 8=EditableText, 9=StaticText, 12=Switch, 13=TextTable, 16=PopupMenu, 17=EmbeddedObject(obsolete), 18=DynamicText, 19=TextFrame, 20=Calendar, 21=EditableText31"
+        },
+        "GetDialogVariable": {
+          "description": "Returns the string value of the named variable. Use StringToReal to convert numeric values.",
+          "signature": "GetDialogVariable(blockNumber, variableNameStr, row, col)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "variableNameStr", "type": "string", "description": "Variable name in quotes"},
+            {"name": "row", "type": "integer", "description": "Row index for tables (0 for min, 1 for max, 2 for value on sliders/meters)"},
+            {"name": "col", "type": "integer", "description": "Column index for tables"}
+          ],
+          "returns": "S",
+          "notes": "Row and col are ignored for non-table items. See also GetStaticVariable and GetVariableNumeric for faster queries."
+        },
+        "getStaticVariable": {
+          "description": "Similar to GetDialogVariable but explicitly retrieves a static variable value.",
+          "signature": "getStaticVariable(blockNum, staticVariableName, row, col)",
+          "arguments": [
+            {"name": "blockNum", "type": "integer", "description": "Block ID"},
+            {"name": "staticVariableName", "type": "string", "description": "Static variable name"},
+            {"name": "row", "type": "long", "description": "Row index"},
+            {"name": "col", "type": "integer", "description": "Column index"}
+          ],
+          "returns": "S",
+          "notes": "Faster than GetDialogVariable when you know it's a static variable"
+        },
+        "GetVariableNumeric": {
+          "description": "Similar to GetDialogVariable, but returns a numeric (real) value. Faster for non-string variables.",
+          "signature": "GetVariableNumeric(blockNum, name, row, col)",
+          "arguments": [
+            {"name": "blockNum", "type": "integer", "description": "Block ID"},
+            {"name": "name", "type": "string", "description": "Variable name"},
+            {"name": "row", "type": "integer", "description": "Row index"},
+            {"name": "col", "type": "integer", "description": "Column index"}
+          ],
+          "returns": "R"
+        },
+        "HideDialogItem": {
+          "description": "Hides the named dialog item if hideShow is TRUE.",
+          "signature": "HideDialogItem(variableNameStr, hideShow)",
+          "arguments": [
+            {"name": "variableNameStr", "type": "string", "description": "Dialog item name"},
+            {"name": "hideShow", "type": "integer", "description": "TRUE to hide, FALSE to show"}
+          ],
+          "returns": "I"
+        },
+        "HideDialogItem2": {
+          "description": "Set the hidden/shown status of the item with block number argument for remote access.",
+          "signature": "HideDialogItem2(blockNumber, name, hideShow)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "name", "type": "string", "description": "Dialog item name"},
+            {"name": "hideShow", "type": "integer", "description": "TRUE to hide, FALSE to show"}
+          ],
+          "returns": "I"
+        },
+        "LastSetDialogVariableString": {
+          "description": "Returns the last string value that was set by SetDialogVariable.",
+          "signature": "LastSetDialogVariableString()",
+          "arguments": [],
+          "returns": "S"
+        },
+        "OpenAndSelectDialogItem2": {
+          "description": "Opens the block's dialog, highlighting the dialog item corresponding to varName.",
+          "signature": "OpenAndSelectDialogItem2(blockNumber, variableNameStr, row, col)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "variableNameStr", "type": "string", "description": "Variable name"},
+            {"name": "row", "type": "integer", "description": "Row index (-1 to select entire table)"},
+            {"name": "col", "type": "integer", "description": "Column index (-1 to select entire table)"}
+          ],
+          "returns": "V"
+        },
+        "PopupCanceled": {
+          "description": "Returns whether or not the last popup menu was canceled.",
+          "signature": "PopupCanceled()",
+          "arguments": [],
+          "returns": "I"
+        },
+        "PopupItemParse": {
+          "description": "Parses the string and removes special formatting characters used in dialog item contexts.",
+          "signature": "PopupItemParse(itemString)",
+          "arguments": [
+            {"name": "itemString", "type": "string", "description": "String to parse"}
+          ],
+          "returns": "S"
+        },
+        "PopupMenuAppendArray": {
+          "description": "Appends the contents of the string array to the popup menu specified by dialogItemName.",
+          "signature": "PopupMenuAppendArray(dialogItemName, stringArray)",
+          "arguments": [
+            {"name": "dialogItemName", "type": "string", "description": "Dialog item name"},
+            {"name": "stringArray", "type": "string array", "description": "Array of strings to append"}
+          ],
+          "returns": "I"
+        },
+        "PopupMenuArray": {
+          "description": "Creates a flying popup menu based on the strings in theArray (max 20 strings, 5100 chars total).",
+          "signature": "PopupMenuArray(theArray, initialValue)",
+          "arguments": [
+            {"name": "theArray", "type": "string array", "description": "Array of menu items"},
+            {"name": "initialValue", "type": "integer", "description": "Initial selected item"}
+          ],
+          "returns": "I"
+        },
+        "SetDialogColors": {
+          "description": "Sets all the colors of the dialog items at once.",
+          "signature": "SetDialogColors(blockNumber, HSVColorArray)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "HSVColorArray", "type": "integer array", "description": "Color array from GetDialogColors"}
+          ],
+          "returns": "I"
+        },
+        "SetDialogItemColor": {
+          "description": "Sets a color value associated with the dialog item.",
+          "signature": "SetDialogItemColor(blockNumber, variableNameStr, HSVValues)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "variableNameStr", "type": "string", "description": "Variable name"},
+            {"name": "HSVValues", "type": "long array", "description": "HSV color values"}
+          ],
+          "returns": "V",
+          "notes": "For ExtendSim 10 or later, use SetDialogItemEColor"
+        },
+        "SetDialogItemEColor": {
+          "description": "Sets the EColor value of the dialog item color.",
+          "signature": "SetDialogItemEColor(blockName, dialogItemName, value)",
+          "arguments": [
+            {"name": "blockName", "type": "long", "description": "Block ID"},
+            {"name": "dialogItemName", "type": "string", "description": "Dialog item name"},
+            {"name": "value", "type": "long", "description": "EColor value"}
+          ],
+          "returns": "I"
+        },
+        "SetDialogVariable": {
+          "description": "Sets the value of the named variable to the given numeric or string value.",
+          "signature": "SetDialogVariable(blockNumber, variableNameStr, value, row, col)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "variableNameStr", "type": "string", "description": "Variable name in quotes"},
+            {"name": "value", "type": "string", "description": "Value to set (numeric or string)"},
+            {"name": "row", "type": "integer", "description": "Row index for tables (0=min, 1=max, 2=value for sliders)"},
+            {"name": "col", "type": "integer", "description": "Column index for tables"}
+          ],
+          "returns": "V",
+          "notes": "See also SetVariableNumeric for faster setting of non-string values"
+        },
+        "SetDialogVariableNoMsg": {
+          "description": "Same as SetDialogVariable, but doesn't send a dialog item message to the block.",
+          "signature": "SetDialogVariableNoMsg(blockNumber, variableNameStr, value, row, col)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "variableNameStr", "type": "string", "description": "Variable name"},
+            {"name": "value", "type": "string", "description": "Value to set"},
+            {"name": "row", "type": "integer", "description": "Row index"},
+            {"name": "col", "type": "integer", "description": "Column index"}
+          ],
+          "returns": "V"
+        },
+        "SetPopupLabels": {
+          "description": "Sets the named popup menu items to theLabels string. Items separated by semicolons.",
+          "signature": "SetPopupLabels(variableNameStr, theLabels)",
+          "arguments": [
+            {"name": "variableNameStr", "type": "string", "description": "Dialog item name"},
+            {"name": "theLabels", "type": "string", "description": "Semicolon-separated labels"}
+          ],
+          "returns": "V"
+        },
+        "SetVariableNumeric": {
+          "description": "Similar to SetDialogVariable, except it takes a numeric (real) value. Faster for non-string values.",
+          "signature": "SetVariableNumeric(blockNum, name, value, row, col, msg)",
+          "arguments": [
+            {"name": "blockNum", "type": "integer", "description": "Block ID"},
+            {"name": "name", "type": "string", "description": "Variable name"},
+            {"name": "value", "type": "real", "description": "Numeric value to set"},
+            {"name": "row", "type": "integer", "description": "Row index"},
+            {"name": "col", "type": "integer", "description": "Column index"},
+            {"name": "msg", "type": "integer", "description": "Send message flag"}
+          ],
+          "returns": "V"
+        },
+        "SetVisibilityMonitoring": {
+          "description": "Turns on monitoring of the visibility of a dialog item.",
+          "signature": "SetVisibilityMonitoring(blockNumber, variableNameStr, monitor)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block ID"},
+            {"name": "variableNameStr", "type": "string", "description": "Variable name"},
+            {"name": "monitor", "type": "integer", "description": "1 to enable monitoring, 0 to disable"}
+          ],
+          "returns": "I"
+        },
+        "WhichDialogItem": {
+          "description": "Returns the name of the current dialog item in certain message handlers.",
+          "signature": "WhichDialogItem()",
+          "arguments": [],
+          "returns": "I",
+          "notes": "Used in CELLACCEPT, DATATABLERESIZE, DATATABLESCROLLED, DIALOGITEMTOOLTIP, DIALOGCLICK handlers"
+        },
+        "WhoInvoked": {
+          "description": "Determines the source of the invocation of the current message handler.",
+          "signature": "WhoInvoked()",
+          "arguments": [],
+          "returns": "I",
+          "notes": "In dialog handler: 1 if from SetDialogVariable, 0 if from user. In OpenModel: 2 if from Hblock placement, 0 if model opening."
+        }
+      }
+    },
+    "Scripting": {
+      "description": "Functions for building or changing models programmatically, including block placement, connections, selection, and preferences.",
+      "functions": {
+        "ActivateApplication": {
+          "description": "Brings the ExtendSim application to the foreground.",
+          "signature": "ActivateApplication()",
+          "arguments": [],
+          "returns": "V"
+        },
+        "ActivateWorksheet": {
+          "description": "Activates (selects and brings to front) the named worksheet.",
+          "signature": "ActivateWorksheet(sheetName)",
+          "arguments": [
+            {"name": "sheetName", "type": "string", "description": "Worksheet name"}
+          ],
+          "returns": "I",
+          "notes": "Returns 1 for success, 0 for failure (backwards compatibility)"
+        },
+        "AddBlockToClipboard": {
+          "description": "Adds the indicated block to clipboard without changing other contents.",
+          "signature": "AddBlockToClipboard(blockNumber)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"}
+          ],
+          "returns": "I",
+          "notes": "Returns FALSE if successful"
+        },
+        "AddBlockToSelection": {
+          "description": "Adds the indicated block to the selection (vs SelectBlock which replaces selection).",
+          "signature": "AddBlockToSelection(blockNumber)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"}
+          ],
+          "returns": "I",
+          "notes": "Returns FALSE if successful"
+        },
+        "ApplicationFrame": {
+          "description": "Returns the application frame in global coordinates.",
+          "signature": "ApplicationFrame(frame[], inside)",
+          "arguments": [
+            {"name": "frame", "type": "integer array", "description": "Array[4] for [top, left, bottom, right]"},
+            {"name": "inside", "type": "integer", "description": "TRUE for inside frame, FALSE for outside"}
+          ],
+          "returns": "I"
+        },
+        "BlockAdjustPosition": {
+          "description": "Adjusts block position relative to icon positioner location.",
+          "signature": "BlockAdjustPosition(blockNum)",
+          "arguments": [
+            {"name": "blockNum", "type": "integer", "description": "Block number"}
+          ],
+          "returns": "V"
+        },
+        "ChangePreference": {
+          "description": "Changes preference values using ModL code.",
+          "signature": "ChangePreference(preference, value)",
+          "arguments": [
+            {"name": "preference", "type": "integer", "description": "12=sound, 14=connection type, 21=worksheet tips, 22=dialog tips, 27=metric, 30=lib warnings, 31=check version, 32=auto-connect, 33=dialog editor tips"},
+            {"name": "value", "type": "integer", "description": "0=FALSE, 1=TRUE"}
+          ],
+          "returns": "V"
+        },
+        "ChangePreferenceString": {
+          "description": "Changes string-based preferences.",
+          "signature": "ChangePreferenceString(preference, theString)",
+          "arguments": [
+            {"name": "preference", "type": "integer", "description": "1=Default Library Path, 2-8=Library 1-7, 9=Default Model Path"},
+            {"name": "theString", "type": "string", "description": "Path string"}
+          ],
+          "returns": "V"
+        },
+        "ClearBlock": {
+          "description": "Clears (removes) the specified block from the worksheet permanently.",
+          "signature": "ClearBlock(blockNumber)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number to remove"}
+          ],
+          "returns": "V"
+        },
+        "ClearBlockUndo": {
+          "description": "Clears the block and adds it to undo list to allow undoing.",
+          "signature": "ClearBlockUndo(theBlockNumber)",
+          "arguments": [
+            {"name": "theBlockNumber", "type": "integer", "description": "Block number to remove"}
+          ],
+          "returns": "I",
+          "notes": "Returns FALSE if successful"
+        },
+        "ClearConnection": {
+          "description": "Removes the connection between the specified blocks and connectors.",
+          "signature": "ClearConnection(blockFrom, conFrom, blockTo, conTo)",
+          "arguments": [
+            {"name": "blockFrom", "type": "integer", "description": "Source block number"},
+            {"name": "conFrom", "type": "integer", "description": "Source connector index"},
+            {"name": "blockTo", "type": "integer", "description": "Target block number"},
+            {"name": "conTo", "type": "integer", "description": "Target connector index"}
+          ],
+          "returns": "I",
+          "notes": "Returns TRUE if successful"
+        },
+        "ClearUndo": {
+          "description": "Clears the Undo list and disables Undo command.",
+          "signature": "ClearUndo()",
+          "arguments": [],
+          "returns": "V"
+        },
+        "CodeExecute": {
+          "description": "Executes ModL code from a string. Use globals for input/output.",
+          "signature": "CodeExecute(modlCodeString)",
+          "arguments": [
+            {"name": "modlCodeString", "type": "string", "description": "ModL code to execute"}
+          ],
+          "returns": "V"
+        },
+        "CreateHblock": {
+          "description": "Makes the current selection into an H-block with the specified name.",
+          "signature": "CreateHblock(theName)",
+          "arguments": [
+            {"name": "theName", "type": "string", "description": "Name for the new H-block"}
+          ],
+          "returns": "I"
+        },
+        "DialogRefresh": {
+          "description": "Forces the dialog box of the specified block to refresh (redraw).",
+          "signature": "DialogRefresh(blockNumber)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"}
+          ],
+          "returns": "I",
+          "notes": "Returns 1 if succeeds, 0 otherwise"
+        },
+        "DialogFixedSize": {
+          "description": "Specifies that the dialog box should be fixed to the specified size.",
+          "signature": "DialogFixedSize(blockNumber, height, width)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "height", "type": "integer", "description": "Fixed height"},
+            {"name": "width", "type": "integer", "description": "Fixed width"}
+          ],
+          "returns": "I"
+        },
+        "DuplicateBlock": {
+          "description": "Makes a copy of the indicated block and returns the new block number.",
+          "signature": "DuplicateBlock(theBlockNumber)",
+          "arguments": [
+            {"name": "theBlockNumber", "type": "integer", "description": "Block number to copy"}
+          ],
+          "returns": "I",
+          "notes": "Returns FALSE if successful"
+        },
+        "ExtendMaximize": {
+          "description": "Maximizes the ExtendSim application window.",
+          "signature": "ExtendMaximize()",
+          "arguments": [],
+          "returns": "V"
+        },
+        "ExtendMinimize": {
+          "description": "Minimizes the ExtendSim application window.",
+          "signature": "ExtendMinimize()",
+          "arguments": [],
+          "returns": "V"
+        },
+        "FindBlock": {
+          "description": "Finds the first block matching the search string and returns its block number.",
+          "signature": "FindBlock(searchStr, which, openDialogs, wholeWords, justBlockNum)",
+          "arguments": [
+            {"name": "searchStr", "type": "string", "description": "String to search for"},
+            {"name": "which", "type": "integer", "description": "1=BlockLabel, 2=BlockName, 3=BlockType, 4=TextBlockText"},
+            {"name": "openDialogs", "type": "integer", "description": "TRUE to open dialog, FALSE to just select"},
+            {"name": "wholeWords", "type": "integer", "description": "TRUE for exact match"},
+            {"name": "justBlockNum", "type": "integer", "description": "TRUE to just return number without selecting"}
+          ],
+          "returns": "I"
+        },
+        "FindNext": {
+          "description": "Finds the next block matching the previous search. Call after FindBlock.",
+          "signature": "FindNext()",
+          "arguments": [],
+          "returns": "I",
+          "notes": "Returns -1 if no matching block found"
+        },
+        "GetAppPath": {
+          "description": "Returns the full path name for the ExtendSim application file.",
+          "signature": "GetAppPath()",
+          "arguments": [],
+          "returns": "S"
+        },
+        "GetPreference": {
+          "description": "Gets preference values. Returns 1 for TRUE, 0 for FALSE.",
+          "signature": "GetPreference(preference)",
+          "arguments": [
+            {"name": "preference", "type": "integer", "description": "Same values as ChangePreference"}
+          ],
+          "returns": "I"
+        },
+        "GetRecentFilePath": {
+          "description": "Returns the full path to the specified recent file (1-5).",
+          "signature": "GetRecentFilePath(which)",
+          "arguments": [
+            {"name": "which", "type": "integer", "description": "Recent file number 1-5"}
+          ],
+          "returns": "S"
+        },
+        "GetUserPath": {
+          "description": "Returns the path to the user documents directory.",
+          "signature": "GetUserPath()",
+          "arguments": [],
+          "returns": "S"
+        },
+        "GetWorksheetFrame": {
+          "description": "Returns the frame of the worksheet in screen pixels.",
+          "signature": "GetWorksheetFrame(blockNumber, arrayName)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "arrayName", "type": "integer array", "description": "Array[4] for [top, left, bottom, right]"}
+          ],
+          "returns": "I"
+        },
+        "HBlockTopGet": {
+          "description": "Returns block number of topmost open Hblock's submodel.",
+          "signature": "HBlockTopGet()",
+          "arguments": [],
+          "returns": "I",
+          "notes": "Returns negative if no Hblocks open above worksheet"
+        },
+        "HBlockUnlinkFromLibrary": {
+          "description": "Disconnects the specified Hblock from its library link.",
+          "signature": "HBlockUnlinkFromLibrary(blockNumber)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"}
+          ],
+          "returns": "V"
+        },
+        "IsBlockSelected": {
+          "description": "Returns TRUE if the indicated block is selected.",
+          "signature": "IsBlockSelected(blockNumber)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"}
+          ],
+          "returns": "I",
+          "notes": "Returns -1 if block number is invalid"
+        },
+        "IsLibEnabled": {
+          "description": "Returns TRUE if ExtendSim product allows specific library.",
+          "signature": "IsLibEnabled(type)",
+          "arguments": [
+            {"name": "type", "type": "integer", "description": "17=DE (Item library), 18=Pro (Rate/Reliability)"}
+          ],
+          "returns": "I"
+        },
+        "IsMenuItemOn": {
+          "description": "Returns TRUE if the given menu command is currently checked.",
+          "signature": "IsMenuItemOn(whichItem)",
+          "arguments": [
+            {"name": "whichItem", "type": "integer", "description": "Menu command number (see ExecuteMenuCommand)"}
+          ],
+          "returns": "I"
+        },
+        "IsMetric": {
+          "description": "Returns TRUE if metric is set in options dialog.",
+          "signature": "IsMetric()",
+          "arguments": [],
+          "returns": "I"
+        },
+        "LastBlockPlaced": {
+          "description": "Returns block number of the last block placed on the active worksheet.",
+          "signature": "LastBlockPlaced()",
+          "arguments": [],
+          "returns": "I"
+        },
+        "MakeBlockInvisible": {
+          "description": "Makes the indicated block invisible (or visible if already invisible).",
+          "signature": "MakeBlockInvisible(globalBlockNum, invisible)",
+          "arguments": [
+            {"name": "globalBlockNum", "type": "integer", "description": "Block number"},
+            {"name": "invisible", "type": "integer", "description": "TRUE to make invisible"}
+          ],
+          "returns": "I",
+          "notes": "Returns FALSE if successful. Invisible blocks cannot be selected."
+        },
+        "ModelSettingsGet": {
+          "description": "Returns a model setting value.",
+          "signature": "ModelSettingsGet(modelName, which)",
+          "arguments": [
+            {"name": "modelName", "type": "string", "description": "Model name (empty string for active model)"},
+            {"name": "which", "type": "integer", "description": "0=exists, 1=animation on, 2=dirty, 3=run mode, 4=sim running"}
+          ],
+          "returns": "R"
+        },
+        "ModelSettingsSet": {
+          "description": "Sets a model setting value.",
+          "signature": "ModelSettingsSet(modelName, which, value)",
+          "arguments": [
+            {"name": "modelName", "type": "string", "description": "Model name (empty string for active model)"},
+            {"name": "which", "type": "integer", "description": "1=animation on, 2=dirty, 3=run mode"},
+            {"name": "value", "type": "real", "description": "Value to set"}
+          ],
+          "returns": "I",
+          "notes": "Returns 0 for success, non-zero for failure"
+        },
+        "MoveBlock": {
+          "description": "Moves the specified block by the specified number of pixels.",
+          "signature": "MoveBlock(blockNumber, xPixel, yPixel)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "xPixel", "type": "integer", "description": "Pixels to move horizontally"},
+            {"name": "yPixel", "type": "integer", "description": "Pixels to move vertically"}
+          ],
+          "returns": "I"
+        },
+        "MoveBlockTo": {
+          "description": "Moves the specified block to the specified absolute location.",
+          "signature": "MoveBlockTo(blockNumber, xLoc, yLoc)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "xLoc", "type": "integer", "description": "X coordinate (upper left)"},
+            {"name": "yLoc", "type": "integer", "description": "Y coordinate (upper left)"}
+          ],
+          "returns": "I"
+        },
+        "OpenExtendFile": {
+          "description": "Opens an ExtendSim model, library, or text file.",
+          "signature": "OpenExtendFile(fullPath)",
+          "arguments": [
+            {"name": "fullPath", "type": "string", "description": "Full path to the file"}
+          ],
+          "returns": "I",
+          "notes": "Returns 0 if successful"
+        },
+        "PlaceBlock": {
+          "description": "Places a block from a library onto the active worksheet.",
+          "signature": "PlaceBlock(blockName, libName, xPixel, yPixel, neighbor, side)",
+          "arguments": [
+            {"name": "blockName", "type": "string", "description": "Block name (e.g., 'Activity')"},
+            {"name": "libName", "type": "string", "description": "Library name (e.g., 'Item.lbr')"},
+            {"name": "xPixel", "type": "integer", "description": "X position (absolute if neighbor=-1, else relative)"},
+            {"name": "yPixel", "type": "integer", "description": "Y position"},
+            {"name": "neighbor", "type": "integer", "description": "Block number to place relative to, or -1 for absolute"},
+            {"name": "side", "type": "integer", "description": "0=left, 1=top, 2=right, 3=bottom"}
+          ],
+          "returns": "I"
+        },
+        "PlaceBlockInHblock": {
+          "description": "Places a block inside an H-block.",
+          "signature": "PlaceBlockInHblock(blockName, libName, xPixel, yPixel, HblockNum)",
+          "arguments": [
+            {"name": "blockName", "type": "string", "description": "Block name"},
+            {"name": "libName", "type": "string", "description": "Library name"},
+            {"name": "xPixel", "type": "integer", "description": "X position"},
+            {"name": "yPixel", "type": "integer", "description": "Y position"},
+            {"name": "HblockNum", "type": "integer", "description": "H-block number"}
+          ],
+          "returns": "I",
+          "notes": "Returns FALSE if successful"
+        },
+        "PlaceDotBlock": {
+          "description": "Places a dot block (connection point) into the worksheet.",
+          "signature": "PlaceDotBlock(xPixel, yPixel, neighbor, side, width, HblockName)",
+          "arguments": [
+            {"name": "xPixel", "type": "integer", "description": "X position"},
+            {"name": "yPixel", "type": "integer", "description": "Y position"},
+            {"name": "neighbor", "type": "integer", "description": "Neighbor block or -1"},
+            {"name": "side", "type": "integer", "description": "Side relative to neighbor"},
+            {"name": "width", "type": "integer", "description": "Width"},
+            {"name": "HblockName", "type": "integer", "description": "H-block to place in"}
+          ],
+          "returns": "I"
+        },
+        "PlaceTextBlock": {
+          "description": "Places a text block with the specified text content.",
+          "signature": "PlaceTextBlock(text, xPixel, yPixel, neighbor, side, width)",
+          "arguments": [
+            {"name": "text", "type": "string", "description": "Text content"},
+            {"name": "xPixel", "type": "integer", "description": "X position"},
+            {"name": "yPixel", "type": "integer", "description": "Y position"},
+            {"name": "neighbor", "type": "integer", "description": "Neighbor block or -1"},
+            {"name": "side", "type": "integer", "description": "Side relative to neighbor"},
+            {"name": "width", "type": "integer", "description": "Width in pixels"}
+          ],
+          "returns": "I"
+        },
+        "PlaceTextBlockInHblock": {
+          "description": "Places a text block inside an H-block.",
+          "signature": "PlaceTextBlockInHblock(text, xPixel, yPixel, neighbor, side, width, HblockNum)",
+          "arguments": [
+            {"name": "text", "type": "string", "description": "Text content"},
+            {"name": "xPixel", "type": "integer", "description": "X position"},
+            {"name": "yPixel", "type": "integer", "description": "Y position"},
+            {"name": "neighbor", "type": "integer", "description": "Neighbor block or -1"},
+            {"name": "side", "type": "integer", "description": "Side relative to neighbor"},
+            {"name": "width", "type": "integer", "description": "Width in pixels"},
+            {"name": "HblockNum", "type": "integer", "description": "H-block number"}
+          ],
+          "returns": "I"
+        },
+        "SelectConnection": {
+          "description": "Selects the connection line between the specified blocks.",
+          "signature": "SelectConnection(blockFrom, conFrom, blockTo, conTo)",
+          "arguments": [
+            {"name": "blockFrom", "type": "integer", "description": "Source block number"},
+            {"name": "conFrom", "type": "integer", "description": "Source connector index"},
+            {"name": "blockTo", "type": "integer", "description": "Target block number"},
+            {"name": "conTo", "type": "integer", "description": "Target connector index"}
+          ],
+          "returns": "I",
+          "notes": "Returns TRUE if succeeds, FALSE if fails"
+        },
+        "SetDirty": {
+          "description": "Sets or unsets the 'dirty' (needs saving) flag on the active worksheet.",
+          "signature": "SetDirty(dirty)",
+          "arguments": [
+            {"name": "dirty", "type": "integer", "description": "TRUE to mark as dirty, FALSE to mark as clean"}
+          ],
+          "returns": "V",
+          "notes": "Set to FALSE before ExecuteMenuCommand(Close) to close without save prompt"
+        },
+        "SuppressWorksheetRedraw": {
+          "description": "Stops/enables worksheet redrawing.",
+          "signature": "SuppressWorksheetRedraw(suppress)",
+          "arguments": [
+            {"name": "suppress", "type": "integer", "description": "TRUE to stop drawing, FALSE to resume and redraw"}
+          ],
+          "returns": "V"
+        },
+        "UnselectAll": {
+          "description": "Unselects all blocks, connections, etc.",
+          "signature": "UnselectAll()",
+          "arguments": [],
+          "returns": "V"
+        },
+        "WinSetForegroundWindow": {
+          "description": "Sets the application with the given handle as foreground window.",
+          "signature": "WinSetForegroundWindow(handle)",
+          "arguments": [
+            {"name": "handle", "type": "integer", "description": "Window handle (0 for ExtendSim)"}
+          ],
+          "returns": "V"
+        },
+        "WinShellExecute": {
+          "description": "Calls the Windows ShellExecute() function.",
+          "signature": "WinShellExecute(operation, fileName, params, dir, show)",
+          "arguments": [
+            {"name": "operation", "type": "string", "description": "Operation (e.g., 'open')"},
+            {"name": "fileName", "type": "string", "description": "File name"},
+            {"name": "params", "type": "string", "description": "Parameters"},
+            {"name": "dir", "type": "string", "description": "Working directory"},
+            {"name": "show", "type": "integer", "description": "Show window flag"}
+          ],
+          "returns": "I"
+        },
+        "WorksheetRefresh": {
+          "description": "Forces a worksheet refresh (redraw).",
+          "signature": "WorksheetRefresh(blockNumber)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number in the worksheet"}
+          ],
+          "returns": "I"
+        },
+        "worksheetSettingGet": {
+          "description": "Gets a setting on the worksheet containing the specified block.",
+          "signature": "worksheetSettingGet(blockNum, which)",
+          "arguments": [
+            {"name": "blockNum", "type": "integer", "description": "Block number"},
+            {"name": "which", "type": "integer", "description": "1=left, 2=top, 3=width, 4=height, 5=scroll X, 6=scroll Y"}
+          ],
+          "returns": "I"
+        },
+        "worksheetSettingSet": {
+          "description": "Sets a setting on the worksheet containing the specified block.",
+          "signature": "worksheetSettingSet(blockNum, which, value)",
+          "arguments": [
+            {"name": "blockNum", "type": "integer", "description": "Block number"},
+            {"name": "which", "type": "integer", "description": "1=left, 2=top, 3=width, 4=height, 5=scroll X, 6=scroll Y"},
+            {"name": "value", "type": "integer", "description": "Value to set"}
+          ],
+          "returns": "I"
+        }
+      }
+    },
+    "MenuCommands": {
+      "description": "ExecuteMenuCommand(commandNumber) executes a specified menu command. This is functionally the same as selecting the command from the menu.",
+      "functions": {
+        "ExecuteMenuCommand": {
+          "description": "Executes a specified menu command by its command number.",
+          "signature": "ExecuteMenuCommand(commandNumber)",
+          "arguments": [
+            {"name": "commandNumber", "type": "integer", "description": "Menu command ID number"}
+          ],
+          "returns": "V"
+        }
+      },
+      "commandNumbers": {
+        "FileMenu": {
+          "Exit": 1,
+          "NewModel": 2,
+          "Open": 3,
+          "Close": 4,
+          "SaveModel": 5,
+          "SaveModelAs": 6,
+          "Print": 9,
+          "UpdateLaunchControl": 1410,
+          "RecentFile1": 1555,
+          "RecentFile2": 1556,
+          "RecentFile3": 1557,
+          "RecentFile4": 1558,
+          "RecentFile5": 1559,
+          "NewTextFile": 1601,
+          "Properties": 2001
+        },
+        "EditMenu": {
+          "Cut": 18,
+          "Copy": 19,
+          "Paste": 20,
+          "Clear": 21
+        },
+        "ModelMenu": {
+          "HideConnections": 2012,
+          "HideConnectors": 2071
+        },
+        "ConnectionLineStyle": {
+          "RightAngle": 5001,
+          "Straight": 5002,
+          "FreeForm": 5003,
+          "Smart": 5004,
+          "DoubleLine": 1204,
+          "SolidLine": 1205,
+          "DottedLine": 1206,
+          "OutputToInput": 1208,
+          "InputToOutput": 1209,
+          "DefaultThickness": 1250
+        },
+        "DatabaseMenu": {
+          "ReadWriteIndexChecking": 1931
+        },
+        "RunMenu": {
+          "RunSimulation": 6000,
+          "SimulationSetup": 6001,
+          "RunOptimizationOrScenarios": 6002,
+          "Show2DAnimation": 2020,
+          "Stop": 30000,
+          "Pause": 30001,
+          "Resume": 30002,
+          "Step": 30003,
+          "SlowerAnimation": 30004,
+          "FasterAnimation": 30005
+        },
+        "ModelDebugging": {
+          "StepEntireModel": 2023,
+          "StepEachBlock": 2024,
+          "ProfileBlockCode": 2029,
+          "GenerateTrace": 2040,
+          "AddSelectedBlocksToTrace": 2041,
+          "RemoveSelectedBlocksFromTrace": 2042,
+          "RemoveAllBlocksFromTrace": 2043,
+          "ShowTracingBlocks": 2044,
+          "AddAllBlocksToTrace": 2045
+        },
+        "EditToolbar": {
+          "ReduceToFit": 2009,
+          "NormalSize": 2010
+        },
+        "TextToolbar": {
+          "Courier": 6100,
+          "Helvetica": 6101,
+          "Times": 6102,
+          "Arial": 6103
+        }
+      }
+    },
+    "ModelsAndSimulation": {
+      "description": "Functions for model operations, simulation control, run parameters, and library information.",
+      "functions": {
+        "DuringContinue": {
+          "description": "Returns true if the model is being continued from a previous saved run.",
+          "signature": "DuringContinue()",
+          "arguments": [],
+          "returns": "I"
+        },
+        "GetBlockInfo": {
+          "description": "Returns misc information about a block.",
+          "signature": "GetBlockInfo(theBlockNumber, which)",
+          "arguments": [
+            {"name": "theBlockNumber", "type": "integer", "description": "Block number"},
+            {"name": "which", "type": "integer", "description": "1=invisible, 2=scriptedBlock, 3=dialog open, 4=debugging mode"}
+          ],
+          "returns": "R"
+        },
+        "GetGlobalSimulationOrder": {
+          "description": "Returns the actual simulation order index of a block.",
+          "signature": "GetGlobalSimulationOrder(blockNumber)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"}
+          ],
+          "returns": "I"
+        },
+        "GetLibraryContents": {
+          "description": "Fills arrays with names and types of blocks in the named library.",
+          "signature": "GetLibraryContents(libName, blockNames[], blockTypes[])",
+          "arguments": [
+            {"name": "libName", "type": "string", "description": "Library name"},
+            {"name": "blockNames", "type": "Str31 array", "description": "Dynamic array for block names"},
+            {"name": "blockTypes", "type": "Str31 array", "description": "Dynamic array for block types"}
+          ],
+          "returns": "I",
+          "notes": "Returns number of blocks in library"
+        },
+        "GetLibraryInfo": {
+          "description": "Returns whether a library is of a certain type.",
+          "signature": "GetLibraryInfo(blockNumber, specify)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "specify", "type": "integer", "description": "1=RunTime"}
+          ],
+          "returns": "I"
+        },
+        "GetLibraryPathName": {
+          "description": "Returns the pathname of a library file, given a block in that library.",
+          "signature": "GetLibraryPathName(blockNumber, specify)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "specify", "type": "integer", "description": "1=pathname without library name, 2=just library name"}
+          ],
+          "returns": "S"
+        },
+        "GetLibraryStringInfo": {
+          "description": "Returns string information about the library that the block comes from.",
+          "signature": "GetLibraryStringInfo(blockNumber, specify)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "specify", "type": "integer", "description": "1=Name"}
+          ],
+          "returns": "S"
+        },
+        "GetLibraryVersion": {
+          "description": "Returns the short version string for the library that includes the specified block.",
+          "signature": "GetLibraryVersion(blockNumber)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"}
+          ],
+          "returns": "S"
+        },
+        "GetLibraryVersionByName": {
+          "description": "Returns the library version string by library name.",
+          "signature": "GetLibraryVersionByName(libName)",
+          "arguments": [
+            {"name": "libName", "type": "string", "description": "Library name"}
+          ],
+          "returns": "S"
+        },
+        "GetModelName": {
+          "description": "Returns the model's file name.",
+          "signature": "GetModelName()",
+          "arguments": [],
+          "returns": "S"
+        },
+        "GetModelPath": {
+          "description": "Returns the pathname to the specified model (without model name). Model must be open.",
+          "signature": "GetModelPath(modelName)",
+          "arguments": [
+            {"name": "modelName", "type": "string", "description": "Model name"}
+          ],
+          "returns": "S"
+        },
+        "GetModelSimulationOrder": {
+          "description": "Returns the simulation order of the block that called this function.",
+          "signature": "GetModelSimulationOrder()",
+          "arguments": [],
+          "returns": "I"
+        },
+        "GetRunParameter": {
+          "description": "Gets a parameter from the Simulation Setup dialog as real value.",
+          "signature": "GetRunParameter(which)",
+          "arguments": [
+            {"name": "which", "type": "integer", "description": "1=endTime, 2=startTime, 10=startDate, 12=endDate"}
+          ],
+          "returns": "R"
+        },
+        "GetRunParameterLong": {
+          "description": "Gets a parameter from the Simulation Setup dialog as integer.",
+          "signature": "GetRunParameterLong(which)",
+          "arguments": [
+            {"name": "which", "type": "integer", "description": "3=numSims, 4=numSteps, 5=random seed, 6=seedControl, 7=checkRandomSeeds, 8=timeUnits, 9=calendarDates, 11=__seed table index"}
+          ],
+          "returns": "I"
+        },
+        "GetSerialNumber": {
+          "description": "Returns the serial number of the unit as a string.",
+          "signature": "GetSerialNumber()",
+          "arguments": [],
+          "returns": "S"
+        },
+        "GetSimulationPhase": {
+          "description": "Returns the current phase of the simulation.",
+          "signature": "GetSimulationPhase()",
+          "arguments": [],
+          "returns": "I",
+          "notes": "Phases: -1=No model, 0=Not running, 1=CheckData, 2=StepSize, 3=InitSim, 4=Simulate, 5=FinalCalc, 6=BlockReport, 7=EndSim, 8=AbortSim, 9=PreCheckData, 10=PostInitSim, 11=SimStart, 12=SimFinish, 13=ModifyRunParameter, 14=OpenModelPhase"
+        },
+        "GetWindowsHndl": {
+          "description": "Returns the Windows API handle of the main ExtendSim window.",
+          "signature": "GetWindowsHndl(which)",
+          "arguments": [
+            {"name": "which", "type": "integer", "description": "0 for main window handle"}
+          ],
+          "returns": "I",
+          "notes": "Windows only. Used to pass to Windows DLLs."
+        },
+        "IsSimulationPaused": {
+          "description": "Returns TRUE if the simulation run is paused or about to pause.",
+          "signature": "IsSimulationPaused()",
+          "arguments": [],
+          "returns": "I"
+        },
+        "LibrariesOpen": {
+          "description": "Returns list of library names in the String dynamic array.",
+          "signature": "LibrariesOpen(stringDynamicArrayName)",
+          "arguments": [
+            {"name": "stringDynamicArrayName", "type": "string array", "description": "Dynamic array for library names"}
+          ],
+          "returns": "I",
+          "notes": "Returns number of open libraries"
+        },
+        "LibraryUsed": {
+          "description": "Returns the name of the library that owns the specified block.",
+          "signature": "LibraryUsed(blockNum)",
+          "arguments": [
+            {"name": "blockNum", "type": "integer", "description": "Block number"}
+          ],
+          "returns": "S"
+        },
+        "ModelLock": {
+          "description": "Locks or unlocks the model from ModL code.",
+          "signature": "ModelLock(lock, HblocksLocked, password)",
+          "arguments": [
+            {"name": "lock", "type": "integer", "description": "1 to lock, 0 to unlock"},
+            {"name": "HblocksLocked", "type": "integer", "description": "Lock Hblocks when locking"},
+            {"name": "password", "type": "string", "description": "Password for lock/unlock"}
+          ],
+          "returns": "I",
+          "notes": "Returns: 0=success, -1=password mismatch, -2=already locked, -3=lock value out of range"
+        },
+        "PauseSimForSave": {
+          "description": "Pauses simulation at end of time step for saving. Use ResumeSimulation to continue.",
+          "signature": "PauseSimForSave()",
+          "arguments": [],
+          "returns": "V",
+          "notes": "Different from PauseSim() which stops instantly"
+        },
+        "ResumeSimulation": {
+          "description": "Resumes the simulation and returns immediately.",
+          "signature": "ResumeSimulation()",
+          "arguments": [],
+          "returns": "V"
+        },
+        "RunSetup": {
+          "description": "Opens Simulation Setup dialog with OK button instead of Run Now.",
+          "signature": "RunSetup(trueFalse)",
+          "arguments": [
+            {"name": "trueFalse", "type": "integer", "description": "TRUE to show RunNow button, FALSE to hide"}
+          ],
+          "returns": "I",
+          "notes": "Returns TRUE if OK clicked"
+        },
+        "RunSimulation": {
+          "description": "Runs the model simulation.",
+          "signature": "RunSimulation(trueFalse)",
+          "arguments": [
+            {"name": "trueFalse", "type": "integer", "description": "TRUE to show Setup dialog first, FALSE to run directly"}
+          ],
+          "returns": "I",
+          "notes": "Returns TRUE if simulation completed without errors. From scripting/OLE via ExecuteMenuCommand returns immediately after starting."
+        },
+        "SaveModel": {
+          "description": "Saves the model. Cannot save during a simulation run.",
+          "signature": "SaveModel()",
+          "arguments": [],
+          "returns": "V"
+        },
+        "SaveModelAs": {
+          "description": "Saves the model under a new name and path.",
+          "signature": "SaveModelAs(fileName)",
+          "arguments": [
+            {"name": "fileName", "type": "string", "description": "Full path and filename"}
+          ],
+          "returns": "I",
+          "notes": "Returns 0 if successful, negative otherwise. Cannot save during simulation."
+        },
+        "SaveTopDocAs": {
+          "description": "Saves the top document under specified path.",
+          "signature": "SaveTopDocAs(filePath, aSync)",
+          "arguments": [
+            {"name": "filePath", "type": "string", "description": "Full path and filename"},
+            {"name": "aSync", "type": "integer", "description": "TRUE to save after current block executes"}
+          ],
+          "returns": "I",
+          "notes": "Returns 0 for success, negative for failure"
+        },
+        "SetBlockSimulationOrder": {
+          "description": "Sets the simulation order value of a block. Only works with custom simulation order.",
+          "signature": "SetBlockSimulationOrder(blockNumber, newOrder)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "newOrder", "type": "integer", "description": "New order value (must be > 0)"}
+          ],
+          "returns": "I",
+          "notes": "Returns: 0=success, -1=during sim, -2=order<=0, -3=no model, -4=not custom order, -5=no block"
+        },
+        "SetModelSimulationOrder": {
+          "description": "Sets the type of simulation order for the model.",
+          "signature": "SetModelSimulationOrder(neworder)",
+          "arguments": [
+            {"name": "neworder", "type": "integer", "description": "0=left to right, 1=not used, 2=flow, 3=custom"}
+          ],
+          "returns": "I"
+        },
+        "SetRunParameter": {
+          "description": "Sets a single parameter in the Simulation Setup dialog.",
+          "signature": "SetRunParameter(paramValue, which)",
+          "arguments": [
+            {"name": "paramValue", "type": "real", "description": "Value to set"},
+            {"name": "which", "type": "integer", "description": "1=endTime, 2=startTime, 3=numSims, 4=numSteps, 5=seed, 6=seedControl, 7=checkSeeds, 8=timeUnits, 9=calendarDates, 10=startDate, 11=__seed index"}
+          ],
+          "returns": "I"
+        },
+        "SetRunParameters": {
+          "description": "Sets multiple parameters in the Simulation Setup dialog.",
+          "signature": "SetRunParameters(SetEndTime, SetStartTime, SetNumSims, SetNumStep)",
+          "arguments": [
+            {"name": "SetEndTime", "type": "real", "description": "End time"},
+            {"name": "SetStartTime", "type": "real", "description": "Start time"},
+            {"name": "SetNumSims", "type": "real", "description": "Number of simulations"},
+            {"name": "SetNumStep", "type": "real", "description": "Number of steps"}
+          ],
+          "returns": "I",
+          "notes": "Returns: 0=success, -1=end<=start, -2=steps<1, -3=steps>=2B, -4=sims out of range"
+        },
+        "SpinCursor": {
+          "description": "Spins the beachball cursor for long calculations.",
+          "signature": "SpinCursor()",
+          "arguments": [],
+          "returns": "V"
+        },
+        "SpinCursorStart": {
+          "description": "Starts a spinning cursor until SpinCursorStop is called.",
+          "signature": "SpinCursorStart(showDuringRun)",
+          "arguments": [
+            {"name": "showDuringRun", "type": "integer", "description": "Show cursor during simulation"}
+          ],
+          "returns": "V"
+        },
+        "SpinCursorStop": {
+          "description": "Stops a spinning cursor started by SpinCursorStart.",
+          "signature": "SpinCursorStop()",
+          "arguments": [],
+          "returns": "V"
+        }
+      }
+    },
+    "BlockInfo": {
+      "description": "Functions for block numbers, labels, names, categories, and position. Blocks are numbered 0 to NumBlocks()-1.",
+      "functions": {
+        "BlockName": {
+          "description": "Returns block name, first 255 chars of text, or empty string if unused slot.",
+          "signature": "BlockName(i)",
+          "arguments": [
+            {"name": "i", "type": "integer", "description": "Global block slot number"}
+          ],
+          "returns": "S"
+        },
+        "BlockRect": {
+          "description": "Returns block position, optionally including animation objects. Array filled with [top, left, bottom, right].",
+          "signature": "BlockRect(blockNumber, array[4], useAnimation)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "array", "type": "integer or real array", "description": "Four-element array for position"},
+            {"name": "useAnimation", "type": "integer", "description": "TRUE to include animation objects"}
+          ],
+          "returns": "I"
+        },
+        "FindInHierarchy": {
+          "description": "Locates corresponding block (e.g., Catch/Throw pairs). Returns block number or -1 if not found.",
+          "signature": "FindInHierarchy(FindBlockName, FindBlockLabel, FindDialogName, FindDialog)",
+          "arguments": [
+            {"name": "FindBlockName", "type": "string", "description": "Block name to find (e.g., 'Catch')"},
+            {"name": "FindBlockLabel", "type": "string", "description": "Block label to find"},
+            {"name": "FindDialogName", "type": "string", "description": "Dialog item name:value (e.g., 'Item:54')"},
+            {"name": "FindDialog", "type": "integer", "description": "0=name+label, 1=name+dialog, 2=name+label+dialog"}
+          ],
+          "returns": "I"
+        },
+        "FindInHierarchy2": {
+          "description": "Same as FindInHierarchy but takes a block number argument.",
+          "signature": "FindInHierarchy2(blockNumber, findBlockName, findBlockLabel, findDialog)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "findBlockName", "type": "string", "description": "Block name to find"},
+            {"name": "findBlockLabel", "type": "string", "description": "Block label to find"},
+            {"name": "findDialog", "type": "integer", "description": "Search mode"}
+          ],
+          "returns": "I"
+        },
+        "GetBlockLabel": {
+          "description": "Returns the label string for the global block.",
+          "signature": "GetBlockLabel(i)",
+          "arguments": [
+            {"name": "i", "type": "integer", "description": "Global block number"}
+          ],
+          "returns": "S"
+        },
+        "GetBlockMemSize": {
+          "description": "Returns the number of bytes of memory used by the block.",
+          "signature": "GetBlockMemSize(blockNumber)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"}
+          ],
+          "returns": "I"
+        },
+        "GetBlockType": {
+          "description": "Returns the category string (e.g., Math or Holding) for the block.",
+          "signature": "GetBlockType(i)",
+          "arguments": [
+            {"name": "i", "type": "integer", "description": "Global block number"}
+          ],
+          "returns": "S"
+        },
+        "GetBlockTypeNumeric": {
+          "description": "Returns block type without calculating position. Faster than GetBlockTypePosition.",
+          "signature": "GetBlockTypeNumeric(objectID)",
+          "arguments": [
+            {"name": "objectID", "type": "integer", "description": "Object ID"}
+          ],
+          "returns": "I"
+        },
+        "GetBlockTypePosition": {
+          "description": "Returns object type and fills array with position [top, left, bottom, right].",
+          "signature": "GetBlockTypePosition(i, array[4])",
+          "arguments": [
+            {"name": "i", "type": "integer", "description": "Global block number"},
+            {"name": "array", "type": "integer or real array", "description": "Four-element array for position"}
+          ],
+          "returns": "I",
+          "notes": "Types: 0=empty slot, 1=anchor point, 2=text, 3=block, 4=Hblock, 5=embedded object (obsolete), 6=Slider/Switch/Meter"
+        },
+        "GetEnclosingHblockNum": {
+          "description": "Returns global block number of enclosing hierarchical block. Returns -1 if none.",
+          "signature": "GetEnclosingHblockNum()",
+          "arguments": [],
+          "returns": "I"
+        },
+        "GetEnclosingHblockNum2": {
+          "description": "Same as GetEnclosingHblockNum() but refers to a global block number.",
+          "signature": "GetEnclosingHblockNum2(block)",
+          "arguments": [
+            {"name": "block", "type": "integer", "description": "Global block number"}
+          ],
+          "returns": "I"
+        },
+        "GetStaticNames": {
+          "description": "Fills arrays with names and types of all static variables in block structure.",
+          "signature": "GetStaticNames(blockNumber, names, types)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "names", "type": "string array", "description": "Array for variable names"},
+            {"name": "types", "type": "long array", "description": "Array for types"}
+          ],
+          "returns": "I",
+          "notes": "Types: 3=LONG, 6=DOUBLE, 7=STRING255, 8=STRING15, 9=STRING31, 10=STRING63, 11=STRING127"
+        },
+        "GlobalToLocal": {
+          "description": "Returns local block number for block in H-block. Returns -1 if not in H-block.",
+          "signature": "GlobalToLocal(blockNumber)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Global block number"}
+          ],
+          "returns": "I"
+        },
+        "IconBody": {
+          "description": "Returns rect for icon body with control over animation and connector inclusion.",
+          "signature": "IconBody(blockNum, array[4], useAnimation, useConnectors)",
+          "arguments": [
+            {"name": "blockNum", "type": "integer", "description": "Block number"},
+            {"name": "array", "type": "real array", "description": "Four-element array for position"},
+            {"name": "useAnimation", "type": "integer", "description": "Include animation objects"},
+            {"name": "useConnectors", "type": "integer", "description": "Include connectors"}
+          ],
+          "returns": "I",
+          "notes": "Returns 0 for success, non-zero for error"
+        },
+        "LocalNumBlocks": {
+          "description": "Number of internal blocks in the hierarchical block from which called.",
+          "signature": "LocalNumBlocks()",
+          "arguments": [],
+          "returns": "I"
+        },
+        "LocalNumBlocks2": {
+          "description": "Same as LocalNumBlocks() but refers to a global block number.",
+          "signature": "LocalNumBlocks2(block)",
+          "arguments": [
+            {"name": "block", "type": "integer", "description": "Global block number"}
+          ],
+          "returns": "I"
+        },
+        "LocalToGlobal": {
+          "description": "Converts local block number in H-block to global number.",
+          "signature": "LocalToGlobal(i)",
+          "arguments": [
+            {"name": "i", "type": "integer", "description": "Local block number"}
+          ],
+          "returns": "I"
+        },
+        "LocalToGlobal2": {
+          "description": "Converts local to global block number for specified H-block.",
+          "signature": "LocalToGlobal2(HblockNum, localBlockNum)",
+          "arguments": [
+            {"name": "HblockNum", "type": "integer", "description": "H-block number"},
+            {"name": "localBlockNum", "type": "integer", "description": "Local block number"}
+          ],
+          "returns": "I"
+        },
+        "MakeOptimizerBlock": {
+          "description": "Tags block as optimizer block for Run > Run Optimization command. Call in CREATEBLOCK.",
+          "signature": "MakeOptimizerBlock(trueFalse)",
+          "arguments": [
+            {"name": "trueFalse", "type": "integer", "description": "TRUE to tag as optimizer block"}
+          ],
+          "returns": "V"
+        },
+        "MyBlockNumber": {
+          "description": "Returns global number of the block in which called.",
+          "signature": "MyBlockNumber()",
+          "arguments": [],
+          "returns": "I"
+        },
+        "MyLocalBlockNumber": {
+          "description": "Returns local number of the block in which called.",
+          "signature": "MyLocalBlockNumber()",
+          "arguments": [],
+          "returns": "I"
+        },
+        "NumBlocks": {
+          "description": "Global number of blocks in model, including text blocks and unused slots.",
+          "signature": "NumBlocks()",
+          "arguments": [],
+          "returns": "I"
+        },
+        "ObjectIDNext": {
+          "description": "Returns objectID of next object of requested type. Faster than NumBlocks loop.",
+          "signature": "ObjectIDNext(fromBlock, which)",
+          "arguments": [
+            {"name": "fromBlock", "type": "integer", "description": "Start position (-1 to begin)"},
+            {"name": "which", "type": "integer", "description": "0=blocks, 1=Hblocks, 2=both"}
+          ],
+          "returns": "I",
+          "notes": "Loop: start with -1, continue while result > -1"
+        },
+        "SetBlockLabel": {
+          "description": "Sets the label for the global block.",
+          "signature": "SetBlockLabel(i, str)",
+          "arguments": [
+            {"name": "i", "type": "integer", "description": "Global block number"},
+            {"name": "str", "type": "string", "description": "Label text"}
+          ],
+          "returns": "V"
+        },
+        "ShowBlockLabel": {
+          "description": "Shows or hides a block's label.",
+          "signature": "ShowBlockLabel(i, show)",
+          "arguments": [
+            {"name": "i", "type": "integer", "description": "Global block number"},
+            {"name": "show", "type": "integer", "description": "TRUE to show, FALSE to hide"}
+          ],
+          "returns": "V"
+        }
+      }
+    },
+    "BlockConnections": {
+      "description": "Functions for working with block connectors and connection information. Conn is the ith connector (0 to n-1) in the connector pane.",
+      "functions": {
+        "AlignConnection": {
+          "description": "Adjusts the position of the second block (blockTo) to make the connection line between the two connectors specified straight.",
+          "signature": "AlignConnection(blockFrom, conFrom, blockTo, conTo, vertical)",
+          "arguments": [
+            {"name": "blockFrom", "type": "long", "description": "Source block number"},
+            {"name": "conFrom", "type": "long", "description": "Source connector index"},
+            {"name": "blockTo", "type": "long", "description": "Target block number"},
+            {"name": "conTo", "type": "long", "description": "Target connector index"},
+            {"name": "vertical", "type": "long", "description": "Alignment direction"}
+          ],
+          "returns": "I"
+        },
+        "GetConBlocks": {
+          "description": "Returns the number of blocks attached to the connector. IntArray rows contain connected block info: column 0 = block number, column 1 = connector number.",
+          "signature": "GetConBlocks(block, conn, intArray[][2])",
+          "arguments": [
+            {"name": "block", "type": "integer", "description": "Block number"},
+            {"name": "conn", "type": "integer", "description": "Connector index (0-based)"},
+            {"name": "intArray", "type": "integer array", "description": "Dynamic array declared as: integer intArray[][2];"}
+          ],
+          "returns": "I"
+        },
+        "GetConHblocks": {
+          "description": "Similar to GetConBlocks() but returns a list of connected Hblocks. Can start from textblock or anchor point.",
+          "signature": "GetConHblocks(blockNumber, conn, intArray[][2])",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "conn", "type": "integer", "description": "Connector index"},
+            {"name": "intArray", "type": "integer array", "description": "Dynamic array for results"}
+          ],
+          "returns": "I"
+        },
+        "GetConName": {
+          "description": "Returns the name of the connector.",
+          "signature": "GetConName(block, conn)",
+          "arguments": [
+            {"name": "block", "type": "integer", "description": "Block number"},
+            {"name": "conn", "type": "integer", "description": "Connector index"}
+          ],
+          "returns": "S"
+        },
+        "GetConnectedTextBlock": {
+          "description": "Returns block number of named connection connected to connector. Positive block bypasses Hblock internal connectors, negative stays inside.",
+          "signature": "GetConnectedTextBlock(block, conn)",
+          "arguments": [
+            {"name": "block", "type": "integer", "description": "Block number (positive to bypass Hblock, negative to stay inside)"},
+            {"name": "conn", "type": "integer", "description": "Connector index"}
+          ],
+          "returns": "I"
+        },
+        "GetConnectedType": {
+          "description": "Returns the type of connector connected to this connector. Useful for Universal connectors.",
+          "signature": "GetConnectedType(connName)",
+          "arguments": [
+            {"name": "connName", "type": "name", "description": "Connector name (without quotes)"}
+          ],
+          "returns": "I",
+          "notes": "Returns: 13=Value, 14=Item, 15=Universal, 16=User-defined, 25=Flow, 308=Reliability, -1=Array, 309=Box"
+        },
+        "GetConnectedType2": {
+          "description": "Similar to GetConnectedType() but uses global block number and connector index.",
+          "signature": "GetConnectedType2(block, conn)",
+          "arguments": [
+            {"name": "block", "type": "integer", "description": "Block number"},
+            {"name": "conn", "type": "integer", "description": "Connector index (0 to n-1)"}
+          ],
+          "returns": "I"
+        },
+        "GetConnectionColor": {
+          "description": "Fills color array with HSV values for the connection line color. Use GetConnectionEColor for ES10+.",
+          "signature": "GetConnectionColor(blockFrom, conFrom, blockTo, conTo, colorArray[])",
+          "arguments": [
+            {"name": "blockFrom", "type": "integer", "description": "Source block number"},
+            {"name": "conFrom", "type": "integer", "description": "Source connector index"},
+            {"name": "blockTo", "type": "integer", "description": "Target block number"},
+            {"name": "conTo", "type": "integer", "description": "Target connector index"},
+            {"name": "colorArray", "type": "integer array", "description": "Three element array for HSV values"}
+          ],
+          "returns": "I",
+          "notes": "Returns 0 for success, negative for failure. As of ES10, use GetConnectionEColor instead."
+        },
+        "GetConnectionEColor": {
+          "description": "Returns the EColor value for the specified connection line.",
+          "signature": "GetConnectionEColor(blockFrom, conFrom, blockTo, conTo)",
+          "arguments": [
+            {"name": "blockFrom", "type": "integer", "description": "Source block number"},
+            {"name": "conFrom", "type": "integer", "description": "Source connector index"},
+            {"name": "blockTo", "type": "integer", "description": "Target block number"},
+            {"name": "conTo", "type": "integer", "description": "Target connector index"}
+          ],
+          "returns": "I"
+        },
+        "GetConnectorPosition": {
+          "description": "Returns the position of the specified connector in pixels. Array filled with: [0]=top, [1]=left, [2]=bottom, [3]=right.",
+          "signature": "GetConnectorPosition(blockNumber, conn, array[4])",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "conn", "type": "integer", "description": "Connector index"},
+            {"name": "array", "type": "integer or real array", "description": "Four-element array for position"}
+          ],
+          "returns": "I"
+        },
+        "GetConnectorType": {
+          "description": "Returns the connector type of the specified connector.",
+          "signature": "GetConnectorType(blockNumber, conn)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "conn", "type": "integer", "description": "Connector index"}
+          ],
+          "returns": "I",
+          "notes": "Returns: 13=Value, 14=Item, 15=Universal, 16=User-defined, 25=Flow, 308=Reliability, -1=Array, 309=Box"
+        },
+        "GetConNumber": {
+          "description": "Returns the connector number of the connector with the specified name.",
+          "signature": "GetConNumber(blockNumber, conNameStr)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "conNameStr", "type": "string", "description": "Connector name as string"}
+          ],
+          "returns": "I"
+        },
+        "GetEnclosingHblockCon": {
+          "description": "Returns connector number of the enclosing Hblock's outer connector, given inner block and connector.",
+          "signature": "GetEnclosingHblockCon(blockNumber, conNum)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number inside Hblock"},
+            {"name": "conNum", "type": "integer", "description": "Connector index"}
+          ],
+          "returns": "I",
+          "notes": "Returns -1 if not an Hblock"
+        },
+        "GetIndexedConValue": {
+          "description": "Gets the connector's current value. Use in loop instead of individual connector statements.",
+          "signature": "GetIndexedConValue(conn)",
+          "arguments": [
+            {"name": "conn", "type": "integer", "description": "Connector index (0-based)"}
+          ],
+          "returns": "R"
+        },
+        "GetIndexedConValue2": {
+          "description": "Same as GetIndexedConValue() but refers to a global block number.",
+          "signature": "GetIndexedConValue2(block, conn)",
+          "arguments": [
+            {"name": "block", "type": "integer", "description": "Block number"},
+            {"name": "conn", "type": "integer", "description": "Connector index"}
+          ],
+          "returns": "R"
+        },
+        "GetIntermediateBlocks": {
+          "description": "Returns number of connected dot blocks, text blocks, and connectors between two blocks.",
+          "signature": "GetIntermediateBlocks(blockNum1, conn1, blockNum2, conn2, array)",
+          "arguments": [
+            {"name": "blockNum1", "type": "integer", "description": "First block number"},
+            {"name": "conn1", "type": "integer", "description": "First connector index"},
+            {"name": "blockNum2", "type": "integer", "description": "Second block number (negative for text block)"},
+            {"name": "conn2", "type": "integer", "description": "Second connector index"},
+            {"name": "array", "type": "integer array", "description": "Array for block info (see GetConBlocks)"}
+          ],
+          "returns": "I"
+        },
+        "MakeConnection": {
+          "description": "Creates a connection between two block connectors.",
+          "signature": "MakeConnection(blockFrom, conFrom, blockTo, conTo)",
+          "arguments": [
+            {"name": "blockFrom", "type": "integer", "description": "Source block number"},
+            {"name": "conFrom", "type": "integer", "description": "Source connector index (0-based)"},
+            {"name": "blockTo", "type": "integer", "description": "Target block number"},
+            {"name": "conTo", "type": "integer", "description": "Target connector index (0-based)"}
+          ],
+          "returns": "I",
+          "notes": "Creates connection line between specified connectors. Output connector should connect to input connector."
+        },
+        "GetNumCons": {
+          "description": "Returns the number of connectors on the block.",
+          "signature": "GetNumCons(block)",
+          "arguments": [
+            {"name": "block", "type": "integer", "description": "Block number"}
+          ],
+          "returns": "I"
+        },
+        "GetRightClickedCon": {
+          "description": "Returns the conn number of the last right-clicked connector. Call in CONNECTORRIGHTCLICK message.",
+          "signature": "GetRightClickedCon()",
+          "arguments": [],
+          "returns": "I"
+        },
+        "IsConVisible": {
+          "description": "Tests the specified connector for visibility.",
+          "signature": "IsConVisible(blockNumber, conn)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "conn", "type": "integer", "description": "Connector index"}
+          ],
+          "returns": "I",
+          "notes": "Returns TRUE if visible, FALSE otherwise"
+        },
+        "MakeFeedbackBlock": {
+          "description": "Causes ExtendSim to terminate the flow order search for this block. Prevents feedback from changing simulation order.",
+          "signature": "MakeFeedbackBlock(feedBack)",
+          "arguments": [
+            {"name": "feedBack", "type": "integer", "description": "TRUE to make feedback block"}
+          ],
+          "returns": "V"
+        },
+        "NodeGetCurrentValue": {
+          "description": "Returns the currently set value of the connected block connectors.",
+          "signature": "NodeGetCurrentValue(nodeIDIndex)",
+          "arguments": [
+            {"name": "nodeIDIndex", "type": "integer", "description": "Node ID from NodeGetIDIndex()"}
+          ],
+          "returns": "R"
+        },
+        "NodeGetIDIndex": {
+          "description": "Returns the nodeID for a connected network of block connectors. Each network has unique nodeID.",
+          "signature": "NodeGetIDIndex(blockNumber, conNum)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "conNum", "type": "integer", "description": "Connector index"}
+          ],
+          "returns": "I",
+          "notes": "NodeID can change when connectors are connected or model is reopened"
+        },
+        "SetConnectionColor": {
+          "description": "Sets the color value of the specified connection line using HSV values. Use SetConnectionEColor for ES10+.",
+          "signature": "SetConnectionColor(blockFrom, conFrom, blockTo, conTo, hue, saturation, value)",
+          "arguments": [
+            {"name": "blockFrom", "type": "integer", "description": "Source block number"},
+            {"name": "conFrom", "type": "integer", "description": "Source connector index"},
+            {"name": "blockTo", "type": "integer", "description": "Target block number"},
+            {"name": "conTo", "type": "integer", "description": "Target connector index"},
+            {"name": "hue", "type": "integer", "description": "Hue value"},
+            {"name": "saturation", "type": "integer", "description": "Saturation value"},
+            {"name": "value", "type": "integer", "description": "Brightness value"}
+          ],
+          "returns": "I",
+          "notes": "Returns TRUE on success, FALSE on failure. As of ES10, use SetConnectionEColor instead."
+        },
+        "SetConnectionEColor": {
+          "description": "Sets the EColor value of the specified connection line.",
+          "signature": "SetConnectionEColor(blockFrom, conFrom, blockTo, conTo, EColorValue)",
+          "arguments": [
+            {"name": "blockFrom", "type": "integer", "description": "Source block number"},
+            {"name": "conFrom", "type": "integer", "description": "Source connector index"},
+            {"name": "blockTo", "type": "integer", "description": "Target block number"},
+            {"name": "conTo", "type": "integer", "description": "Target connector index"},
+            {"name": "EColorValue", "type": "integer", "description": "EColor value"}
+          ],
+          "returns": "I",
+          "notes": "Returns TRUE on success, FALSE on failure"
+        },
+        "SetConnectionThickness": {
+          "description": "Sets the connection line thickness of the specified connection line.",
+          "signature": "SetConnectionThickness(blockFrom, conFrom, blockTo, conTo, value)",
+          "arguments": [
+            {"name": "blockFrom", "type": "long", "description": "Source block number"},
+            {"name": "conFrom", "type": "long", "description": "Source connector index"},
+            {"name": "blockTo", "type": "long", "description": "Target block number"},
+            {"name": "conTo", "type": "long", "description": "Target connector index"},
+            {"name": "value", "type": "long", "description": "Thickness value"}
+          ],
+          "returns": "I",
+          "notes": "Returns 0 for success, non-zero for error"
+        },
+        "SetConVisibility": {
+          "description": "Sets the visibility flag on an individual connector.",
+          "signature": "SetConVisibility(blockNumber, conn, visible)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "conn", "type": "integer", "description": "Connector index"},
+            {"name": "visible", "type": "integer", "description": "TRUE to show, FALSE to hide"}
+          ],
+          "returns": "V"
+        },
+        "SetIndexedConValue": {
+          "description": "Sets the connector's numerical value. Use in loop for blocks with many similar connectors.",
+          "signature": "SetIndexedConValue(conn, value)",
+          "arguments": [
+            {"name": "conn", "type": "integer", "description": "Connector index (0-based)"},
+            {"name": "value", "type": "real", "description": "Value to set"}
+          ],
+          "returns": "V"
+        },
+        "SetIndexedConValue2": {
+          "description": "Same as SetIndexedConValue() but refers to a global block number.",
+          "signature": "SetIndexedConValue2(block, conn, value)",
+          "arguments": [
+            {"name": "block", "type": "integer", "description": "Block number"},
+            {"name": "conn", "type": "integer", "description": "Connector index"},
+            {"name": "value", "type": "real", "description": "Value to set"}
+          ],
+          "returns": "V"
+        },
+        "SetSelectedConnectionColor": {
+          "description": "Sets the color value of all selected connections using HSV values.",
+          "signature": "SetSelectedConnectionColor(hue, saturation, value)",
+          "arguments": [
+            {"name": "hue", "type": "integer", "description": "Hue value"},
+            {"name": "saturation", "type": "integer", "description": "Saturation value"},
+            {"name": "value", "type": "integer", "description": "Brightness value"}
+          ],
+          "returns": "I",
+          "notes": "Returns TRUE on success, FALSE on failure"
+        },
+        "SetSelectedConnectionEColor": {
+          "description": "Sets the EColor value of all selected connections.",
+          "signature": "SetSelectedConnectionEColor(EColorValue)",
+          "arguments": [
+            {"name": "EColorValue", "type": "integer", "description": "EColor value"}
+          ],
+          "returns": "I",
+          "notes": "Returns TRUE on success, FALSE on failure"
+        }
+      }
+    },
+    "VariableConnectors": {
+      "description": "Functions for working with variable (array) connectors. Use ConArrayGetConNumber() to get actual connector number for use with standard connector functions.",
+      "functions": {
+        "ConArrayChangedWhichCon": {
+          "description": "Returns the owning connector name being dragged. Called in CONARRAYCHANGED message handler.",
+          "signature": "ConArrayChangedWhichCon()",
+          "arguments": [],
+          "returns": "S"
+        },
+        "ConArrayGetCollapsed": {
+          "description": "Returns True if the specified connector is collapsed, False if not.",
+          "signature": "ConArrayGetCollapsed(blockNumber, origConName)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "origConName", "type": "string", "description": "Owning connector name"}
+          ],
+          "returns": "I"
+        },
+        "ConArrayGetConNumber": {
+          "description": "Returns the connector number of the nth connector in this array.",
+          "signature": "ConArrayGetConNumber(blockNumber, origConNameStr, nthConn)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "origConNameStr", "type": "string", "description": "Owning connector name as string"},
+            {"name": "nthConn", "type": "integer", "description": "Index in array (0 for owning connector)"}
+          ],
+          "returns": "I"
+        },
+        "ConArrayGetDirection": {
+          "description": "Returns the array direction: 0=top, 1=right, 2=bottom, 3=left.",
+          "signature": "ConArrayGetDirection(blockNumber, origConNameStr)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "origConNameStr", "type": "string", "description": "Owning connector name as string"}
+          ],
+          "returns": "I",
+          "notes": "Returns -1 if not an array connector or error"
+        },
+        "ConArrayGetNthCon": {
+          "description": "Given a block connector number, returns the member index of its connector array.",
+          "signature": "ConArrayGetNthCon(conn)",
+          "arguments": [
+            {"name": "conn", "type": "integer", "description": "Block connector number"}
+          ],
+          "returns": "I",
+          "notes": "Returns -1 for error"
+        },
+        "ConArrayGetNthCon2": {
+          "description": "Same as ConArrayGetNthCon but with additional block number argument.",
+          "signature": "ConArrayGetNthCon2(blocknum, conn)",
+          "arguments": [
+            {"name": "blocknum", "type": "integer", "description": "Block number"},
+            {"name": "conn", "type": "integer", "description": "Connector number"}
+          ],
+          "returns": "I"
+        },
+        "ConArrayGetNumCons": {
+          "description": "Returns the number of connectors in this array. Returns 1 if no added array connectors.",
+          "signature": "ConArrayGetNumCons(blockNumber, origConNameStr)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "origConNameStr", "type": "string", "description": "Owning connector name as string"}
+          ],
+          "returns": "I"
+        },
+        "ConArrayGetOwnerCon": {
+          "description": "Given a block connector number, returns the block connector number of the owning connector.",
+          "signature": "ConArrayGetOwnerCon(conn)",
+          "arguments": [
+            {"name": "conn", "type": "integer", "description": "Block connector number"}
+          ],
+          "returns": "I",
+          "notes": "Returns -1 for error"
+        },
+        "ConArrayGetTotalCons": {
+          "description": "Returns the total number of connectors in this block, including array connectors.",
+          "signature": "ConArrayGetTotalCons(blockNumber)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"}
+          ],
+          "returns": "I",
+          "notes": "Used to prevent exceeding 255 connector limit"
+        },
+        "ConArrayGetValue": {
+          "description": "Returns the value of the nth connector of the array owned by ConName.",
+          "signature": "ConArrayGetValue(ConName, nthConn)",
+          "arguments": [
+            {"name": "ConName", "type": "name or integer", "description": "Connector name (without quotes) or index"},
+            {"name": "nthConn", "type": "integer", "description": "Index in array (0 to numCons-1)"}
+          ],
+          "returns": "R"
+        },
+        "ConArrayMsgFromCon": {
+          "description": "Returns the index of the connector that received the message in an array.",
+          "signature": "ConArrayMsgFromCon()",
+          "arguments": [],
+          "returns": "I",
+          "notes": "Call at beginning of message handler to know which array connector received message"
+        },
+        "ConArraySendMsgToAllCons": {
+          "description": "Sends a connector message to all connectors connected to the specified connector.",
+          "signature": "ConArraySendMsgToAllCons(origConName, nthConn)",
+          "arguments": [
+            {"name": "origConName", "type": "integer", "description": "Owning connector name"},
+            {"name": "nthConn", "type": "integer", "description": "Index in array"}
+          ],
+          "returns": "V"
+        },
+        "ConArraySendMsgToInputs": {
+          "description": "Sends a connector message to input connectors connected to the specified connector.",
+          "signature": "ConArraySendMsgToInputs(origConName, nthConn)",
+          "arguments": [
+            {"name": "origConName", "type": "integer", "description": "Owning connector name"},
+            {"name": "nthConn", "type": "integer", "description": "Index in array"}
+          ],
+          "returns": "V"
+        },
+        "ConArraySendMsgToOutputs": {
+          "description": "Sends a connector message to output connectors connected to the specified connector.",
+          "signature": "ConArraySendMsgToOutputs(origConName, nthConn)",
+          "arguments": [
+            {"name": "origConName", "type": "integer", "description": "Owning connector name"},
+            {"name": "nthConn", "type": "integer", "description": "Index in array"}
+          ],
+          "returns": "V"
+        },
+        "ConArraySetCollapsed": {
+          "description": "Sets the collapsed state on the specified connector.",
+          "signature": "ConArraySetCollapsed(blockNumber, origConName, trueOrFalse)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "origConName", "type": "string", "description": "Owning connector name"},
+            {"name": "trueOrFalse", "type": "integer", "description": "TRUE to collapse, FALSE to uncollapse"}
+          ],
+          "returns": "V"
+        },
+        "ConArraySetNumCons": {
+          "description": "Sets the number of connectors in a variable connector array.",
+          "signature": "ConArraySetNumCons(blockNumber, origConNameStr, newNumCons, trueToIgnoreConnections)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "origConNameStr", "type": "string", "description": "Owning connector name as string"},
+            {"name": "newNumCons", "type": "integer", "description": "New number of connectors (1 = only original)"},
+            {"name": "trueToIgnoreConnections", "type": "integer", "description": "TRUE to delete connectors with connections, FALSE to preserve them"}
+          ],
+          "returns": "V"
+        },
+        "ConArraySetValue": {
+          "description": "Sets the value of the nth connector of the array owned by ConName.",
+          "signature": "ConArraySetValue(ConName, nthConn, value)",
+          "arguments": [
+            {"name": "ConName", "type": "name or integer", "description": "Connector name (without quotes) or index"},
+            {"name": "nthConn", "type": "integer", "description": "Index in array"},
+            {"name": "value", "type": "real", "description": "Value to set"}
+          ],
+          "returns": "V"
+        },
+        "ConnectorLabelsGet": {
+          "description": "Gets the connector labels for single connectors or connector arrays.",
+          "signature": "ConnectorLabelsGet(blockNumber, origConNum, labelsStrArray[])",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "origConNum", "type": "integer", "description": "Owning connector number"},
+            {"name": "labelsStrArray", "type": "string array", "description": "Array to receive labels"}
+          ],
+          "returns": "I",
+          "notes": "Returns number of labels retrieved"
+        },
+        "ConnectorLabelsSet": {
+          "description": "Sets the connector labels for single connectors or connector arrays.",
+          "signature": "ConnectorLabelsSet(blockNumber, origConNum, numLabels, labelsStrArray[], position, hue, saturation, value)",
+          "arguments": [
+            {"name": "blockNumber", "type": "integer", "description": "Block number"},
+            {"name": "origConNum", "type": "integer", "description": "Owning connector number"},
+            {"name": "numLabels", "type": "integer", "description": "Number of labels"},
+            {"name": "labelsStrArray", "type": "string array", "description": "Array containing labels"},
+            {"name": "position", "type": "integer", "description": "Position: 0=top, 1=right, 2=bottom, 3=left"},
+            {"name": "hue", "type": "integer", "description": "Hue value"},
+            {"name": "saturation", "type": "integer", "description": "Saturation value"},
+            {"name": "value", "type": "integer", "description": "Brightness value"}
+          ],
+          "returns": "V",
+          "notes": "Labels can contain style info like <biur> for bold, italics, underlined, right-adjusted"
+        }
+      }
+    },
+    "RandomAndStatistics": {
+      "description": "Random number generation, distribution sampling, and statistical functions",
+      "functions": {
+        "RandomCheckParam": {
+          "description": "Validates parameters for a distribution type. Returns 1 if valid, 0 if invalid.",
+          "args": [
+            {"name": "distType", "type": "integer", "description": "Distribution type number"},
+            {"name": "arg1", "type": "real", "description": "First argument"},
+            {"name": "arg2", "type": "real", "description": "Second argument"},
+            {"name": "arg3", "type": "real", "description": "Third argument"}
+          ],
+          "returns": "I"
+        },
+        "RandomCalculate": {
+          "description": "Generates a random value from the specified distribution.",
+          "args": [
+            {"name": "distType", "type": "integer", "description": "Distribution type number"},
+            {"name": "arg1", "type": "real", "description": "First argument"},
+            {"name": "arg2", "type": "real", "description": "Second argument"},
+            {"name": "arg3", "type": "real", "description": "Third argument"}
+          ],
+          "returns": "R"
+        },
+        "Mean": {
+          "description": "Returns the theoretical mean for a distribution given its parameters.",
+          "args": [
+            {"name": "distType", "type": "integer", "description": "Distribution type number"},
+            {"name": "arg1", "type": "real", "description": "First argument"},
+            {"name": "arg2", "type": "real", "description": "Second argument"},
+            {"name": "arg3", "type": "real", "description": "Third argument"}
+          ],
+          "returns": "R"
+        },
+        "StdDevSample": {
+          "description": "Returns the sample standard deviation of an array of values.",
+          "args": [
+            {"name": "arrayIndex", "type": "integer", "description": "Global array index containing the data"},
+            {"name": "numValues", "type": "integer", "description": "Number of values to include"}
+          ],
+          "returns": "R"
+        }
+      }
+    },
+    "FileIO": {
+      "description": "File input/output operations for reading and writing external files",
+      "functions": {
+        "FileNew": {
+          "description": "Creates a new file and returns a file reference number.",
+          "args": [
+            {"name": "fileName", "type": "string", "description": "Full path to the file to create"}
+          ],
+          "returns": "I"
+        },
+        "FileOpen": {
+          "description": "Opens an existing file for reading and returns a file reference number.",
+          "args": [
+            {"name": "fileName", "type": "string", "description": "Full path to the file to open"}
+          ],
+          "returns": "I"
+        },
+        "FileRead": {
+          "description": "Reads a line of text from an open file.",
+          "args": [
+            {"name": "fileRef", "type": "integer", "description": "File reference number from FileNew/FileOpen"},
+            {"name": "stringVar", "type": "string", "description": "Variable to store the read text"}
+          ],
+          "returns": "I",
+          "notes": "Returns 0 on success, non-zero on error or EOF"
+        },
+        "FileWrite": {
+          "description": "Writes a string to an open file.",
+          "args": [
+            {"name": "fileRef", "type": "integer", "description": "File reference number from FileNew/FileOpen"},
+            {"name": "text", "type": "string", "description": "Text to write"}
+          ],
+          "returns": "I"
+        },
+        "FileClose": {
+          "description": "Closes an open file.",
+          "args": [
+            {"name": "fileRef", "type": "integer", "description": "File reference number to close"}
+          ],
+          "returns": "V"
+        }
+      }
+    },
+    "DatabaseImportExport": {
+      "description": "Database import and export operations for bulk data transfer",
+      "functions": {
+        "DBTableImportData": {
+          "description": "Imports data from a delimited file into a database table. Use negative dbIdx to treat first row as field names.",
+          "args": [
+            {"name": "fileName", "type": "string", "description": "Full path to the import file"},
+            {"name": "reserved", "type": "string", "description": "Reserved, pass empty string"},
+            {"name": "delimiter", "type": "string", "description": "Field delimiter character (e.g. ',' or '\\t')"},
+            {"name": "dbIdx", "type": "integer", "description": "Database index (negative = first line is header)"},
+            {"name": "tblIdx", "type": "integer", "description": "Table index"}
+          ],
+          "returns": "I"
+        },
+        "DBTableExportData": {
+          "description": "Exports database table data to a delimited file. Use negative dbIdx to include field names as header.",
+          "args": [
+            {"name": "fileName", "type": "string", "description": "Full path for the export file"},
+            {"name": "reserved", "type": "string", "description": "Reserved, pass empty string"},
+            {"name": "delimiter", "type": "string", "description": "Field delimiter character"},
+            {"name": "dbIdx", "type": "integer", "description": "Database index (negative = include header)"},
+            {"name": "tblIdx", "type": "integer", "description": "Table index"},
+            {"name": "numRows", "type": "integer", "description": "Number of rows to export"},
+            {"name": "numCols", "type": "integer", "description": "Number of columns to export"}
+          ],
+          "returns": "I"
+        },
+        "DBDatabasesGetNum": {
+          "description": "Returns the total number of databases in the current model.",
+          "args": [],
+          "returns": "I"
+        },
+        "DBDatabaseGetName": {
+          "description": "Returns the name of a database given its index.",
+          "args": [
+            {"name": "dbIdx", "type": "integer", "description": "Database index (0-based)"}
+          ],
+          "returns": "S"
+        },
+        "DBTablesGetNum": {
+          "description": "Returns the number of tables in a database.",
+          "args": [
+            {"name": "dbIdx", "type": "integer", "description": "Database index"}
+          ],
+          "returns": "I"
+        },
+        "DBTableGetName": {
+          "description": "Returns the name of a table given its database and table indices.",
+          "args": [
+            {"name": "dbIdx", "type": "integer", "description": "Database index"},
+            {"name": "tblIdx", "type": "integer", "description": "Table index (0-based)"}
+          ],
+          "returns": "S"
+        },
+        "DBFieldGetName": {
+          "description": "Returns the name of a field given database, table, and field indices.",
+          "args": [
+            {"name": "dbIdx", "type": "integer", "description": "Database index"},
+            {"name": "tblIdx", "type": "integer", "description": "Table index"},
+            {"name": "fldIdx", "type": "integer", "description": "Field index (0-based)"}
+          ],
+          "returns": "S"
+        },
+        "DBFieldGetProperties": {
+          "description": "Returns a property of a database field. which=1 returns field type (0=real, 1=integer, 2=string, 3=boolean).",
+          "args": [
+            {"name": "dbIdx", "type": "integer", "description": "Database index"},
+            {"name": "tblIdx", "type": "integer", "description": "Table index"},
+            {"name": "fldIdx", "type": "integer", "description": "Field index"},
+            {"name": "which", "type": "integer", "description": "Property to return (1=type)"}
+          ],
+          "returns": "I"
+        },
+        "DBDatabaseCreate": {
+          "description": "Creates a new database and returns its index.",
+          "args": [
+            {"name": "dbName", "type": "string", "description": "Name for the new database"}
+          ],
+          "returns": "I"
+        },
+        "DBTableCreate": {
+          "description": "Creates a new table in a database and returns its index.",
+          "args": [
+            {"name": "dbIdx", "type": "integer", "description": "Database index"},
+            {"name": "tblName", "type": "string", "description": "Name for the new table"}
+          ],
+          "returns": "I"
+        },
+        "DBFieldCreate": {
+          "description": "Creates a new field in a table and returns its index.",
+          "args": [
+            {"name": "dbIdx", "type": "integer", "description": "Database index"},
+            {"name": "tblIdx", "type": "integer", "description": "Table index"},
+            {"name": "fldName", "type": "string", "description": "Field name"},
+            {"name": "fldType", "type": "integer", "description": "Field type (0=real, 1=integer, 2=string, 3=boolean)"}
+          ],
+          "returns": "I"
+        },
+        "DBRecordFind": {
+          "description": "Searches for a value in a database field and returns the record index, or -1 if not found.",
+          "args": [
+            {"name": "dbIdx", "type": "integer", "description": "Database index"},
+            {"name": "tblIdx", "type": "integer", "description": "Table index"},
+            {"name": "fldIdx", "type": "integer", "description": "Field index to search"},
+            {"name": "startRec", "type": "integer", "description": "Record to start searching from"},
+            {"name": "exactMatch", "type": "integer", "description": "1=exact match, 0=partial"},
+            {"name": "findValue", "type": "real", "description": "Value to search for"}
+          ],
+          "returns": "I"
+        },
+        "DBTableSort": {
+          "description": "Sorts a table by up to 3 fields.",
+          "args": [
+            {"name": "dbIdx", "type": "integer", "description": "Database index"},
+            {"name": "tblIdx", "type": "integer", "description": "Table index"},
+            {"name": "fld1", "type": "integer", "description": "Primary sort field index"},
+            {"name": "dir1", "type": "integer", "description": "Primary sort direction (0=ascending, 1=descending)"},
+            {"name": "fld2", "type": "integer", "description": "Secondary sort field (0=unused)"},
+            {"name": "dir2", "type": "integer", "description": "Secondary sort direction"},
+            {"name": "fld3", "type": "integer", "description": "Tertiary sort field (0=unused)"},
+            {"name": "dir3", "type": "integer", "description": "Tertiary sort direction"}
+          ],
+          "returns": "V"
+        },
+        "DBRelationsGetNum": {
+          "description": "Returns the number of relations in a database.",
+          "args": [
+            {"name": "dbIdx", "type": "integer", "description": "Database index"}
+          ],
+          "returns": "I"
+        },
+        "DBRelationCreate": {
+          "description": "Creates a relation between two tables.",
+          "args": [
+            {"name": "dbName", "type": "string", "description": "Database name"},
+            {"name": "childTable", "type": "string", "description": "Child table name"},
+            {"name": "childField", "type": "string", "description": "Child field name"},
+            {"name": "parentTable", "type": "string", "description": "Parent table name"},
+            {"name": "parentField", "type": "string", "description": "Parent field name"}
+          ],
+          "returns": "I"
+        }
+      }
+    },
+    "GlobalArrays": {
+      "description": "Global array creation, manipulation, and data access",
+      "functions": {
+        "GACreate": {
+          "description": "Creates a global array and returns its index.",
+          "args": [
+            {"name": "name", "type": "string", "description": "Array name"},
+            {"name": "type", "type": "integer", "description": "Data type (1=real, 2=integer, 3=string)"},
+            {"name": "cols", "type": "integer", "description": "Number of columns"}
+          ],
+          "returns": "I"
+        },
+        "GAResize": {
+          "description": "Resizes a global array to the specified number of rows.",
+          "args": [
+            {"name": "name", "type": "string", "description": "Array name"},
+            {"name": "rows", "type": "integer", "description": "New number of rows"}
+          ],
+          "returns": "V"
+        },
+        "GALastUsedIndex": {
+          "description": "Returns the index of the last used global array.",
+          "args": [],
+          "returns": "I"
+        },
+        "GAGetIndex": {
+          "description": "Returns the index of a global array by name.",
+          "args": [
+            {"name": "name", "type": "string", "description": "Array name"}
+          ],
+          "returns": "I"
+        },
+        "GAGetName": {
+          "description": "Returns the name of a global array by index.",
+          "args": [
+            {"name": "index", "type": "integer", "description": "Array index"}
+          ],
+          "returns": "S"
+        },
+        "GAGetRows": {
+          "description": "Returns the number of rows in a global array.",
+          "args": [
+            {"name": "index", "type": "integer", "description": "Array index"}
+          ],
+          "returns": "I"
+        },
+        "GAGetCols": {
+          "description": "Returns the number of columns in a global array.",
+          "args": [
+            {"name": "index", "type": "integer", "description": "Array index"}
+          ],
+          "returns": "I"
+        },
+        "GAGetType": {
+          "description": "Returns the type of a global array (1=real, 2=integer, 3=string).",
+          "args": [
+            {"name": "index", "type": "integer", "description": "Array index"}
+          ],
+          "returns": "I"
+        },
+        "GAGetReal": {
+          "description": "Reads a real value from a global array cell.",
+          "args": [
+            {"name": "index", "type": "integer", "description": "Array index"},
+            {"name": "row", "type": "integer", "description": "Row (0-based)"},
+            {"name": "col", "type": "integer", "description": "Column (0-based)"}
+          ],
+          "returns": "R"
+        },
+        "GAGetInteger": {
+          "description": "Reads an integer value from a global array cell.",
+          "args": [
+            {"name": "index", "type": "integer", "description": "Array index"},
+            {"name": "row", "type": "integer", "description": "Row (0-based)"},
+            {"name": "col", "type": "integer", "description": "Column (0-based)"}
+          ],
+          "returns": "I"
+        },
+        "GAGetString": {
+          "description": "Reads a string value from a global array cell.",
+          "args": [
+            {"name": "index", "type": "integer", "description": "Array index"},
+            {"name": "row", "type": "integer", "description": "Row (0-based)"},
+            {"name": "col", "type": "integer", "description": "Column (0-based)"}
+          ],
+          "returns": "S"
+        },
+        "GASetReal": {
+          "description": "Writes a real value to a global array cell.",
+          "args": [
+            {"name": "value", "type": "real", "description": "Value to write"},
+            {"name": "index", "type": "integer", "description": "Array index"},
+            {"name": "row", "type": "integer", "description": "Row (0-based)"},
+            {"name": "col", "type": "integer", "description": "Column (0-based)"}
+          ],
+          "returns": "V"
+        },
+        "GASetInteger": {
+          "description": "Writes an integer value to a global array cell.",
+          "args": [
+            {"name": "value", "type": "integer", "description": "Value to write"},
+            {"name": "index", "type": "integer", "description": "Array index"},
+            {"name": "row", "type": "integer", "description": "Row (0-based)"},
+            {"name": "col", "type": "integer", "description": "Column (0-based)"}
+          ],
+          "returns": "V"
+        },
+        "GASetString": {
+          "description": "Writes a string value to a global array cell.",
+          "args": [
+            {"name": "value", "type": "string", "description": "Value to write"},
+            {"name": "index", "type": "integer", "description": "Array index"},
+            {"name": "row", "type": "integer", "description": "Row (0-based)"},
+            {"name": "col", "type": "integer", "description": "Column (0-based)"}
+          ],
+          "returns": "V"
+        }
+      }
+    },
+    "TimeAndDate": {
+      "description": "Time unit conversion and date/simulation time mapping",
+      "functions": {
+        "ConvertTimeUnits": {
+          "description": "Converts a value between time unit types.",
+          "args": [
+            {"name": "value", "type": "real", "description": "Value to convert"},
+            {"name": "fromType", "type": "integer", "description": "Source time unit type"},
+            {"name": "toType", "type": "integer", "description": "Target time unit type"}
+          ],
+          "returns": "R"
+        },
+        "EDSimTimeToDate": {
+          "description": "Converts simulation time to a date string.",
+          "args": [
+            {"name": "simTime", "type": "real", "description": "Simulation time value"},
+            {"name": "timeUnits", "type": "integer", "description": "Time units setting"}
+          ],
+          "returns": "S"
+        },
+        "EDDateToSimTime": {
+          "description": "Converts a date string to simulation time.",
+          "args": [
+            {"name": "date", "type": "string", "description": "Date string"},
+            {"name": "timeUnits", "type": "integer", "description": "Time units setting"}
+          ],
+          "returns": "R"
+        },
+        "SetTimeUnits": {
+          "description": "Sets the simulation time units.",
+          "args": [
+            {"name": "units", "type": "integer", "description": "Time unit type"}
+          ],
+          "returns": "V"
+        }
+      }
+    },
+    "BlockLayout": {
+      "description": "Block positioning, alignment, and worksheet layout functions",
+      "functions": {
+        "MoveBlockTo": {
+          "description": "Moves a block to an absolute pixel position on the worksheet.",
+          "args": [
+            {"name": "blockId", "type": "integer", "description": "Block ID"},
+            {"name": "x", "type": "integer", "description": "X position in pixels"},
+            {"name": "y", "type": "integer", "description": "Y position in pixels"}
+          ],
+          "returns": "V"
+        },
+        "GetBlockTypePosition": {
+          "description": "Returns a position value for a block. which: 0=top, 1=left, 2=bottom, 3=right.",
+          "args": [
+            {"name": "blockId", "type": "integer", "description": "Block ID"},
+            {"name": "which", "type": "integer", "description": "Which value: 0=top, 1=left, 2=bottom, 3=right"}
+          ],
+          "returns": "R"
+        },
+        "AlignConnection": {
+          "description": "Moves the target block so the connection line is straight.",
+          "args": [
+            {"name": "srcBlock", "type": "integer", "description": "Source block ID"},
+            {"name": "srcCon", "type": "integer", "description": "Source connector index"},
+            {"name": "tgtBlock", "type": "integer", "description": "Target block ID"},
+            {"name": "tgtCon", "type": "integer", "description": "Target connector index"},
+            {"name": "vertical", "type": "integer", "description": "1=align vertically, 0=horizontally"}
+          ],
+          "returns": "V"
+        },
+        "DuplicateBlock": {
+          "description": "Duplicates a block with all its settings. Returns the new block ID.",
+          "args": [
+            {"name": "blockId", "type": "integer", "description": "Block ID to duplicate"}
+          ],
+          "returns": "I"
+        },
+        "FindBlock": {
+          "description": "Finds a block by label or name. Returns block ID or -1 if not found.",
+          "args": [
+            {"name": "searchStr", "type": "string", "description": "Text to search for"},
+            {"name": "which", "type": "integer", "description": "1=label, 2=block name"},
+            {"name": "startBlock", "type": "integer", "description": "Block to start searching from (0=beginning)"},
+            {"name": "endBlock", "type": "integer", "description": "Block to end searching at (0=end)"},
+            {"name": "wrapAround", "type": "integer", "description": "1=wrap around to beginning"}
+          ],
+          "returns": "I"
+        },
+        "GetConnectorType": {
+          "description": "Returns the type of a connector. 13=Value, 14=Item, 15=Universal, 25=Flow, 308=Reliability, -1=Array.",
+          "args": [
+            {"name": "blockId", "type": "integer", "description": "Block ID"},
+            {"name": "connIdx", "type": "integer", "description": "Connector index (0-based)"}
+          ],
+          "returns": "I"
+        },
+        "PlaceTextBlock": {
+          "description": "Places a text annotation on the worksheet.",
+          "args": [
+            {"name": "text", "type": "string", "description": "Text content"},
+            {"name": "x", "type": "integer", "description": "X position"},
+            {"name": "y", "type": "integer", "description": "Y position"},
+            {"name": "neighbor", "type": "integer", "description": "Neighbor block (-1 for absolute)"},
+            {"name": "side", "type": "integer", "description": "Side relative to neighbor"},
+            {"name": "width", "type": "integer", "description": "Text block width"}
+          ],
+          "returns": "I"
+        },
+        "SuppressWorksheetRedraw": {
+          "description": "Suppresses (1) or restores (0) worksheet redrawing for performance during batch operations.",
+          "args": [
+            {"name": "suppress", "type": "integer", "description": "1=suppress, 0=restore"}
+          ],
+          "returns": "V"
+        }
+      }
+    }
+  }
+}

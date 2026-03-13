@@ -1,0 +1,40 @@
+{
+  "name": "simulations-mcp-server",
+  "version": "1.19.1",
+  "description": "Simulations MCP Server - TypeScript with Python COM Backend",
+  "author": "Duke Systems AB",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "bin": {
+    "simulations-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc && npm run copy-files",
+    "copy-files": "node -e \"const fs=require('fs'); fs.copyFileSync('src/simulation_backend.py', 'dist/simulation_backend.py'); fs.copyFileSync('src/dialog_watcher.py', 'dist/dialog_watcher.py'); fs.copyFileSync('src/block_reference.json', 'dist/block_reference.json'); fs.copyFileSync('src/templates.json', 'dist/templates.json'); fs.copyFileSync('src/modl_reference.json', 'dist/modl_reference.json'); fs.copyFileSync('src/dialog_reference.json', 'dist/dialog_reference.json'); fs.copyFileSync('src/simulation_type_guide.json', 'dist/simulation_type_guide.json'); fs.copyFileSync('src/modeling_guides.json', 'dist/modeling_guides.json'); fs.copyFileSync('src/pattern_library.json', 'dist/pattern_library.json');\"",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:live": "python -m pytest tests/live/ -v --tb=short",
+    "clean": "rimraf dist",
+    "install-service": "node ../installer/scripts/install-service.js",
+    "uninstall-service": "node ../installer/scripts/uninstall-service.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "express": "^5.2.1",
+    "node-windows": "^1.0.0-beta.8",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^20.0.0",
+    "rimraf": "^5.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.6.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

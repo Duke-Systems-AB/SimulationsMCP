@@ -1,0 +1,696 @@
+{
+  "version": "1.12.0",
+  "description": "Modeling guides for common ExtendSim simulation scenarios. Each guide describes when to use the pattern, which blocks and connections to use, key parameters, and common mistakes.",
+  "categories": {
+    "queuing": { "label": "Queuing Systems", "scenarios": ["simple_queue", "multi_server", "priority_queue"] },
+    "manufacturing": { "label": "Manufacturing", "scenarios": ["serial_line", "inspection_rework", "batch_assembly"] },
+    "logistics": { "label": "Logistics & Supply Chain", "scenarios": ["supply_chain", "inventory_management"] },
+    "resources": { "label": "Resource Management", "scenarios": ["shared_resources", "shift_schedule"] },
+    "flow": { "label": "Continuous Flow (Rate)", "scenarios": ["tank_system"] },
+    "continuous": { "label": "Continuous (Value)", "scenarios": ["feedback_control"] }
+  },
+  "scenarios": {
+    "simple_queue": {
+      "name": "Simple Queue (M/M/1)",
+      "category": "queuing",
+      "description": "A single-server queuing system where items arrive randomly, wait in a queue, are processed by one server, and depart. This is the foundational discrete-event pattern for any service or processing system.",
+      "useWhen": [
+        "Modeling a single-server service point (cashier, machine, call agent)",
+        "Analyzing waiting times and queue lengths under variable demand",
+        "Estimating server utilization and throughput capacity",
+        "Baseline model before adding complexity like multiple servers or priorities",
+        "Teaching or demonstrating Little's Law and queuing theory concepts"
+      ],
+      "pattern": {
+        "blocks": [
+          { "name": "Create", "library": "Item.lbr", "label": "Arrivals", "purpose": "Generates items (customers, jobs) according to an inter-arrival time distribution" },
+          { "name": "Queue", "library": "Item.lbr", "label": "WaitingLine", "purpose": "Buffers items when the server is busy; tracks queue length and wait time statistics" },
+          { "name": "Activity", "library": "Item.lbr", "label": "Server", "purpose": "Processes one item at a time with a configurable service time distribution" },
+          { "name": "Exit", "library": "Item.lbr", "label": "Departures", "purpose": "Removes items from the model and records throughput and cycle time statistics" }
+        ],
+        "connections": [
+          "Arrivals (ItemOut) → WaitingLine (ItemIn)",
+          "WaitingLine (ItemOut) → Server (ItemIn)",
+          "Server (ItemOut) → Departures (ItemIn)"
+        ],
+        "template": "simple_process"
+      },
+      "keyParameters": [
+        { "block": "Create", "parameter": "distribution / arg1", "typical": "Exponential, mean=5 min", "description": "Inter-arrival time distribution. Exponential gives Poisson arrivals (M/M/1 assumption). Mean sets average time between arrivals." },
+        { "block": "Activity", "parameter": "distribution / arg1", "typical": "Exponential, mean=4 min", "description": "Service time distribution. Mean must be less than mean inter-arrival time to keep utilization below 100%." },
+        { "block": "Queue", "parameter": "rankType", "typical": "FIFO (0)", "description": "Item ranking rule. FIFO (first-in first-out) is standard for M/M/1. Change to attribute-based for priority queues." },
+        { "block": "Create", "parameter": "maxArrivals", "typical": "0 (unlimited)", "description": "Maximum number of items to generate. Set to 0 for unlimited (steady-state runs). Limit for finite-population studies." }
+      ],
+      "keyMetrics": [
+        "Average queue length (WaitingLine block statistics)",
+        "Average wait time in queue (WaitingLine block statistics)",
+        "Server utilization percentage (Server block statistics)",
+        "Throughput (items per time unit, from Departures block)",
+        "Average total cycle time (from Departures block)"
+      ],
+      "commonMistakes": [
+        "Forgetting to place a Queue before the Activity — without a Queue, items that arrive when the server is busy are destroyed rather than waiting, causing incorrect throughput and lost-item errors",
+        "Setting server utilization at or above 100% (mean service time >= mean inter-arrival time) — the queue grows without bound and the model never reaches steady state; always verify utilization = (mean service time / mean inter-arrival time) < 1",
+        "Running the simulation for too short a time — M/M/1 systems need a warm-up period before reaching steady state; results collected during transient phase are not representative",
+        "Using a constant (fixed) inter-arrival time instead of exponential when modeling Poisson arrivals — constant arrivals prevent realistic queue buildup and underestimate wait times"
+      ],
+      "variations": [
+        { "name": "Finite queue (blocking)", "scenario": null, "change": "Set Queue maximum capacity to limit queue length; items that arrive when queue is full are rejected or redirected" },
+        { "name": "Multiple servers", "scenario": "multi_server", "change": "Replace single Activity with Workstation (maxServers > 1) or add parallel Activities with Select Item Out/In routing" },
+        { "name": "Priority service", "scenario": "priority_queue", "change": "Add a Set block before Queue to assign priority attributes; change Queue rankType to attribute-based ranking" }
+      ],
+      "exampleModel": null
+    },
+
+    "multi_server": {
+      "name": "Multi-Server Queue (M/M/c)",
+      "category": "queuing",
+      "description": "A queuing system with multiple parallel servers sharing a single waiting line. Items wait in one queue and are routed to the next available server, modeling call centers, bank teller lines, or parallel machines.",
+      "useWhen": [
+        "Modeling multiple identical servers serving one shared waiting line (e.g., bank tellers, checkout lanes)",
+        "Finding the optimal number of servers to balance cost against customer wait time",
+        "Comparing single-queue/multi-server versus multi-queue/single-server configurations",
+        "Evaluating the impact of adding or removing servers on throughput and utilization",
+        "Modeling parallel machines or workstations in a manufacturing cell"
+      ],
+      "pattern": {
+        "blocks": [
+          { "name": "Create", "library": "Item.lbr", "label": "Arrivals", "purpose": "Generates arriving items according to inter-arrival distribution" },
+          { "name": "Queue", "library": "Item.lbr", "label": "SharedQueue", "purpose": "Single shared waiting line for all servers; items leave when any server becomes free" },
+          { "name": "Workstation", "library": "Item.lbr", "label": "Servers", "purpose": "Multi-server processing block with built-in queue and configurable maxServers parameter; simplest approach for M/M/c" },
+          { "name": "Exit", "library": "Item.lbr", "label": "Departures", "purpose": "Collects completed items and records throughput statistics" }
+        ],
+        "connections": [
+          "Arrivals (ItemOut) → Servers (ItemIn)",
+          "Servers (ItemOut) → Departures (ItemIn)"
+        ],
+        "template": "parallel_servers"
+      },
+      "keyParameters": [
+        { "block": "Workstation", "parameter": "maxServers", "typical": "2-5", "description": "Number of parallel server channels. This is the 'c' in M/M/c. The Workstation block includes its own internal queue, so no separate Queue block is needed when using Workstation." },
+        { "block": "Workstation", "parameter": "distribution / arg1", "typical": "Exponential, mean=8 min", "description": "Service time distribution per server. Each server independently samples from this distribution." },
+        { "block": "Create", "parameter": "distribution / arg1", "typical": "Exponential, mean=3 min", "description": "Inter-arrival time. Total offered load = mean service time / (c * mean inter-arrival time) must be < 1." },
+        { "block": "Workstation", "parameter": "maxQueueLength", "typical": "0 (unlimited)", "description": "Maximum internal queue capacity. Set to 0 for unlimited. When queue is full, new arrivals are blocked." }
+      ],
+      "keyMetrics": [
+        "Average number waiting in queue (Workstation internal queue statistics)",
+        "Average wait time before service begins",
+        "Individual server utilization (should be balanced across servers)",
+        "Overall throughput versus arrival rate",
+        "Probability that all servers are busy (P(delay))"
+      ],
+      "commonMistakes": [
+        "Using a Workstation block (which has an internal queue) and also placing a separate Queue block before it — this creates two queues in series, inflating wait times and misrepresenting system behavior; use Workstation alone or use separate Queue+Activity blocks",
+        "Setting maxServers on a Workstation but forgetting that Workstation service time is per item, not shared across servers — each server independently draws from the service distribution",
+        "Connecting parallel Activity blocks without Select Item Out/In routing — items will only flow to the first connected Activity; use Select Item Out (shortest queue mode) to distribute load correctly when using separate Activity blocks instead of Workstation",
+        "Not verifying offered load (lambda / (c * mu)) is below 1.0 — with multiple servers the stability condition is different from M/M/1 and is easy to miscalculate"
+      ],
+      "variations": [
+        { "name": "Heterogeneous servers", "scenario": null, "change": "Use separate Queue + multiple Activity blocks with different service time distributions; route via Select Item Out in shortest-queue mode" },
+        { "name": "Single server baseline", "scenario": "simple_queue", "change": "Set maxServers=1 on Workstation or use a single Activity to establish the M/M/1 baseline for comparison" },
+        { "name": "Priority multi-server", "scenario": "priority_queue", "change": "Add Set block to assign priorities; configure Workstation or Queue with attribute-based ranking" }
+      ],
+      "exampleModel": null
+    },
+
+    "priority_queue": {
+      "name": "Priority Queue",
+      "category": "queuing",
+      "description": "A queuing system where items are served in priority order rather than arrival order. High-priority items jump ahead of lower-priority items in the queue, modeling emergency services, VIP lanes, or job scheduling with urgency levels.",
+      "useWhen": [
+        "Modeling systems where certain customers or jobs must be served before others regardless of arrival order",
+        "Evaluating the impact of priority classes on wait time distribution across customer segments",
+        "Modeling preemptive or non-preemptive service disciplines in computer or manufacturing systems",
+        "Designing triage systems in healthcare, emergency response, or critical systems",
+        "Analyzing fairness trade-offs: high-priority items get fast service but low-priority items may wait excessively"
+      ],
+      "pattern": {
+        "blocks": [
+          { "name": "Create", "library": "Item.lbr", "label": "Arrivals", "purpose": "Generates all arriving items; may use multiple Create blocks for different priority classes" },
+          { "name": "Set", "library": "Item.lbr", "label": "AssignPriority", "purpose": "Assigns a numeric priority attribute value to each item (e.g., 1=high, 3=low); attribute name must match Queue sort attribute" },
+          { "name": "Queue", "library": "Item.lbr", "label": "PriorityQueue", "purpose": "Ranks waiting items by attribute value; lower attribute value = higher priority when ascending sort is used" },
+          { "name": "Activity", "library": "Item.lbr", "label": "Server", "purpose": "Processes items one at a time; always takes the highest-priority item from the Queue" },
+          { "name": "Exit", "library": "Item.lbr", "label": "Departures", "purpose": "Collects items and records statistics; add separate Exit blocks per priority class for segmented analysis" }
+        ],
+        "connections": [
+          "Arrivals (ItemOut) → AssignPriority (ItemIn)",
+          "AssignPriority (ItemOut) → PriorityQueue (ItemIn)",
+          "PriorityQueue (ItemOut) → Server (ItemIn)",
+          "Server (ItemOut) → Departures (ItemIn)"
+        ],
+        "template": "priority_routing"
+      },
+      "keyParameters": [
+        { "block": "Set", "parameter": "attributeName / value", "typical": "attribute='priority', value=1 (high) or 3 (low)", "description": "The attribute name used for ranking must exactly match the Queue's sort attribute name. Use lower numbers for higher priority with ascending sort." },
+        { "block": "Queue", "parameter": "rankType / sortAttribute / ascending", "typical": "rankType=attribute, sortAttribute='priority', ascending=true", "description": "Set rankType to attribute-based, specify the attribute name, and set ascending=true so items with smallest attribute value (highest priority) are served first." },
+        { "block": "Create", "parameter": "distribution / arg1", "typical": "Multiple Create blocks with different rates per priority class", "description": "Use one Create block per priority class, each with its own inter-arrival distribution, to control the mix of priority levels." },
+        { "block": "Activity", "parameter": "distribution / arg1", "typical": "Exponential, mean=4 min", "description": "Service time is typically the same regardless of priority (non-preemptive discipline). Preemptive requires custom logic." }
+      ],
+      "keyMetrics": [
+        "Average wait time per priority class (use separate Exit blocks or attribute-filtered statistics)",
+        "Queue length breakdown by priority level",
+        "Server utilization (shared across all priority classes)",
+        "Probability low-priority items wait longer than acceptable threshold",
+        "Throughput per priority class versus arrival rate"
+      ],
+      "commonMistakes": [
+        "Setting the Queue sort attribute name that does not exactly match the attribute name assigned by the Set block — the Queue will not recognize the attribute and will default to FIFO, silently ignoring priorities; attribute names are case-sensitive",
+        "Using ascending sort with higher numbers meaning higher priority — this sorts backwards; either use lower numbers for higher priority with ascending=true, or use descending=true with higher numbers for higher priority",
+        "Using a single Create block and trying to assign priorities probabilistically inside one Set block — it is cleaner and more accurate to use separate Create blocks with different rates for each priority class so arrival rates are independently controlled",
+        "Omitting the Set block and trying to assign priority in the Create block itself — Create block does not support attribute assignment; a Set block immediately after Create is required"
+      ],
+      "variations": [
+        { "name": "Two priority classes (high/normal)", "scenario": null, "change": "Use two Create blocks with different rates; Set assigns attribute=1 for high, attribute=2 for normal; single Queue with attribute ranking" },
+        { "name": "Priority with multiple servers", "scenario": "multi_server", "change": "Replace Activity with Workstation (maxServers > 1); Workstation respects Queue priority ranking when pulling items" },
+        { "name": "Simple FIFO baseline", "scenario": "simple_queue", "change": "Change Queue rankType to FIFO to compare priority discipline versus first-come-first-served performance" }
+      ],
+      "exampleModel": null
+    },
+
+    "serial_line": {
+      "name": "Serial Production Line",
+      "category": "manufacturing",
+      "description": "A sequential manufacturing line where items pass through multiple processing stages in order, with a queue before each stage to buffer work-in-process. Models assembly lines, pipeline processes, or multi-step production flows.",
+      "useWhen": [
+        "Modeling a manufacturing line with sequential operations (machining, assembly, inspection)",
+        "Identifying bottleneck stations that limit overall throughput",
+        "Evaluating the effect of buffer sizes between stations on line performance",
+        "Analyzing work-in-process inventory levels across the production line",
+        "Comparing alternative line configurations (rebalancing cycle times across stations)"
+      ],
+      "pattern": {
+        "blocks": [
+          { "name": "Create", "library": "Item.lbr", "label": "RawMaterial", "purpose": "Generates parts or jobs entering the production line" },
+          { "name": "Queue", "library": "Item.lbr", "label": "Buffer1", "purpose": "Holds work-in-process waiting for Stage 1; size represents physical buffer capacity" },
+          { "name": "Activity", "library": "Item.lbr", "label": "Stage1", "purpose": "First processing operation with its own cycle time distribution" },
+          { "name": "Queue", "library": "Item.lbr", "label": "Buffer2", "purpose": "Intermediate buffer between Stage 1 and Stage 2" },
+          { "name": "Activity", "library": "Item.lbr", "label": "Stage2", "purpose": "Second processing operation; if slower than Stage 1, becomes a bottleneck" },
+          { "name": "Queue", "library": "Item.lbr", "label": "Buffer3", "purpose": "Intermediate buffer between Stage 2 and Stage 3" },
+          { "name": "Activity", "library": "Item.lbr", "label": "Stage3", "purpose": "Third processing operation; final production step before exit" },
+          { "name": "Exit", "library": "Item.lbr", "label": "FinishedGoods", "purpose": "Collects completed parts and records overall throughput and cycle time" }
+        ],
+        "connections": [
+          "RawMaterial (ItemOut) → Buffer1 (ItemIn)",
+          "Buffer1 (ItemOut) → Stage1 (ItemIn)",
+          "Stage1 (ItemOut) → Buffer2 (ItemIn)",
+          "Buffer2 (ItemOut) → Stage2 (ItemIn)",
+          "Stage2 (ItemOut) → Buffer3 (ItemIn)",
+          "Buffer3 (ItemOut) → Stage3 (ItemIn)",
+          "Stage3 (ItemOut) → FinishedGoods (ItemIn)"
+        ],
+        "template": "manufacturing_line"
+      },
+      "keyParameters": [
+        { "block": "Activity (each stage)", "parameter": "distribution / arg1", "typical": "Triangular(min, mode, max) or constant per stage", "description": "Cycle time per stage. The slowest stage (highest mean cycle time) is the bottleneck and determines maximum line throughput." },
+        { "block": "Queue (each buffer)", "parameter": "maximum capacity", "typical": "5-20 items", "description": "Physical buffer size between stations. Larger buffers decouple stations and improve throughput but increase WIP inventory cost." },
+        { "block": "Create", "parameter": "distribution / arg1", "typical": "Constant, value = bottleneck cycle time or slightly faster", "description": "Release rate into the line. For push systems, set faster than bottleneck. For pull/kanban, use Gate blocks to control release." },
+        { "block": "Activity", "parameter": "delayType", "typical": "fixed or distribution", "description": "Use 'fixed' for deterministic lines; 'distribution' adds variability. Variability at any stage reduces effective throughput below theoretical maximum." }
+      ],
+      "keyMetrics": [
+        "Throughput rate (FinishedGoods items per hour)",
+        "Station utilization per stage (identify bottleneck as highest utilization)",
+        "Average WIP inventory in each buffer queue",
+        "Average total cycle time from raw material to finished goods",
+        "Buffer overflow frequency (if finite buffer capacity is set)"
+      ],
+      "commonMistakes": [
+        "Omitting Queue blocks between Activity blocks — without buffers, a blocked downstream Activity will also block upstream Activities through back-pressure, which may or may not be intended; always explicitly add Queue blocks and set their capacities to match physical reality",
+        "Making all stage cycle times equal and expecting perfect throughput — variability at any stage causes blocking and starving even when means are balanced; use realistic distributions (triangular or normal) rather than constants",
+        "Setting Create inter-arrival time faster than the bottleneck cycle time — the system never reaches steady state and buffers fill indefinitely; the Create rate should not exceed 1/bottleneck_cycle_time",
+        "Forgetting that the Activity block processes one item at a time by default — if a real machine processes batches, use Batch block before the Activity or set appropriate delay to reflect batch cycle time"
+      ],
+      "variations": [
+        { "name": "Two-stage line", "scenario": null, "change": "Remove Stage3 and Buffer3 for a simpler two-operation line; useful as a baseline before adding stages" },
+        { "name": "With inspection and rework", "scenario": "inspection_rework", "change": "Add a Select Item Out block after one or more Activity stages to route a percentage of items to a rework Activity" },
+        { "name": "With shared resources", "scenario": "shared_resources", "change": "Add Resource Pool and have Activity blocks request resources (operators, tools) that are shared across multiple stages" }
+      ],
+      "exampleModel": null
+    },
+
+    "inspection_rework": {
+      "name": "Inspection and Rework Loop",
+      "category": "manufacturing",
+      "description": "A quality control pattern where items are inspected after processing and defective items are routed to a rework operation before returning for re-inspection. Models any feedback loop where failures are reprocessed.",
+      "useWhen": [
+        "Modeling a production process with a quality gate and rework loop (non-zero defect rate)",
+        "Analyzing the capacity impact of rework on the main production line",
+        "Estimating effective throughput when accounting for rework cycles",
+        "Evaluating inspection station utilization and rework queue buildup",
+        "Modeling any retry or reprocessing loop (loan applications, document reviews, repair processes)"
+      ],
+      "pattern": {
+        "blocks": [
+          { "name": "Create", "library": "Item.lbr", "label": "Arrivals", "purpose": "Generates new items entering the process" },
+          { "name": "Queue", "library": "Item.lbr", "label": "ProcessQueue", "purpose": "Holds items waiting for initial processing" },
+          { "name": "Activity", "library": "Item.lbr", "label": "Processing", "purpose": "Main processing operation that items pass through before inspection" },
+          { "name": "Activity", "library": "Item.lbr", "label": "Inspection", "purpose": "Quality check operation; all items pass through regardless of outcome" },
+          { "name": "Select Item Out", "library": "Item.lbr", "label": "QCGate", "purpose": "Routes items probabilistically: pass percentage exits, fail percentage goes to rework" },
+          { "name": "Queue", "library": "Item.lbr", "label": "ReworkQueue", "purpose": "Holds defective items waiting for rework; may build up if defect rate is high" },
+          { "name": "Activity", "library": "Item.lbr", "label": "Rework", "purpose": "Rework or repair operation; items loop back to Inspection after rework" },
+          { "name": "Select Item In", "library": "Item.lbr", "label": "RejoinLine", "purpose": "Merges reworked items back into the inspection queue with new arrivals" },
+          { "name": "Exit", "library": "Item.lbr", "label": "PassedItems", "purpose": "Receives items that passed inspection; records final throughput" }
+        ],
+        "connections": [
+          "Arrivals (ItemOut) → ProcessQueue (ItemIn)",
+          "ProcessQueue (ItemOut) → Processing (ItemIn)",
+          "Processing (ItemOut) → RejoinLine (ItemIn[0])",
+          "RejoinLine (ItemOut) → Inspection (ItemIn)",
+          "Inspection (ItemOut) → QCGate (ItemIn)",
+          "QCGate (ItemOut[0]) → PassedItems (ItemIn)",
+          "QCGate (ItemOut[1]) → ReworkQueue (ItemIn)",
+          "ReworkQueue (ItemOut) → Rework (ItemIn)",
+          "Rework (ItemOut) → RejoinLine (ItemIn[1])"
+        ],
+        "template": "inspection_rework"
+      },
+      "keyParameters": [
+        { "block": "Select Item Out", "parameter": "mode / probabilities", "typical": "probability mode; [0.90, 0.10] for 10% defect rate", "description": "The pass/fail split. Probabilities must sum to 1.0. Output 0 = pass (to Exit), Output 1 = fail (to rework). A 10% defect rate means effective throughput is reduced." },
+        { "block": "Activity (Rework)", "parameter": "distribution / arg1", "typical": "Triangular(5, 10, 20) min", "description": "Rework time is typically longer and more variable than normal processing time. High rework time combined with high defect rate can saturate the system." },
+        { "block": "Activity (Inspection)", "parameter": "distribution / arg1", "typical": "Constant or triangular, short duration", "description": "Inspection time. All items pass through here, so inspection becomes a bottleneck if defect rate is high and rework items re-enter inspection." },
+        { "block": "Select Item Out", "parameter": "mode", "typical": "probability (mode=3 in ExtendSim)", "description": "Must use probability mode, not condition or attribute mode, for a simple defect rate split. Verify the mode integer value using block_configure or dialog_search." }
+      ],
+      "keyMetrics": [
+        "Effective throughput at PassedItems exit",
+        "Average number of rework cycles per item (average loops before passing)",
+        "Rework queue length and average wait time",
+        "Inspection station utilization (accounts for both first-pass and reworked items)",
+        "Total cycle time including rework (versus first-pass-only cycle time)"
+      ],
+      "commonMistakes": [
+        "Connecting the rework loop back to the main ProcessQueue instead of to a Select Item In before Inspection — reworked items should return to Inspection, not restart the full process from the beginning; routing to ProcessQueue inflates cycle time and processes items unnecessarily",
+        "Setting Select Item Out probabilities that do not sum to 1.0 — ExtendSim may reject items or route them incorrectly; always verify [pass_prob + fail_prob] = 1.0 exactly",
+        "Not accounting for the load multiplication effect: with a 20% defect rate and rework always passing on second try, each item consumes 1.2x inspection capacity on average — at high defect rates (>30%), inspection quickly becomes the bottleneck even with short inspection time",
+        "Forgetting to add a Select Item In block to merge rework flow back — without it, reworked items cannot re-enter the inspection Activity, causing connection errors or items being destroyed"
+      ],
+      "variations": [
+        { "name": "Scrap instead of rework", "scenario": null, "change": "Replace rework loop with a second Exit block (Scrap); items failing inspection exit as scrap rather than being reworked" },
+        { "name": "Maximum rework attempts", "scenario": null, "change": "Add a Set block to increment a rework-count attribute; add a Select Item Out after Rework to scrap items exceeding maximum allowed rework cycles" },
+        { "name": "In-line with serial production", "scenario": "serial_line", "change": "Insert the inspection and rework loop between two stages of a serial line to model in-process quality control" }
+      ],
+      "exampleModel": null
+    },
+
+    "batch_assembly": {
+      "name": "Batch Assembly (Two-Component)",
+      "category": "manufacturing",
+      "description": "An assembly model where two separate component streams must be joined before the assembly operation. A Batch block holds components until one of each type is available, then combines them for processing. Models kitting, assembly, or any multi-input synchronization.",
+      "useWhen": [
+        "Modeling an assembly operation that requires one item from each of two or more component streams",
+        "Synchronizing multiple input streams before a combined processing step",
+        "Analyzing the impact of component imbalance on assembly throughput and WIP",
+        "Modeling kitting operations where a kit of parts must be assembled before production begins",
+        "Any scenario where items from multiple sources must be matched before proceeding"
+      ],
+      "pattern": {
+        "blocks": [
+          { "name": "Create", "library": "Item.lbr", "label": "ComponentA", "purpose": "Generates component A items at the production or arrival rate for stream A" },
+          { "name": "Create", "library": "Item.lbr", "label": "ComponentB", "purpose": "Generates component B items at the production or arrival rate for stream B" },
+          { "name": "Queue", "library": "Item.lbr", "label": "BufferA", "purpose": "Holds component A items waiting to be matched with a component B item for batching" },
+          { "name": "Queue", "library": "Item.lbr", "label": "BufferB", "purpose": "Holds component B items waiting to be matched with a component A item for batching" },
+          { "name": "Batch", "library": "Item.lbr", "label": "Assembler", "purpose": "Collects one item from each connected input Queue and combines them into a single batched item for downstream processing" },
+          { "name": "Queue", "library": "Item.lbr", "label": "AssemblyQueue", "purpose": "Holds batched items waiting for the assembly Activity" },
+          { "name": "Activity", "library": "Item.lbr", "label": "Assembly", "purpose": "Performs the assembly operation on the combined batch item" },
+          { "name": "Exit", "library": "Item.lbr", "label": "FinishedProduct", "purpose": "Collects completed assemblies and records throughput" }
+        ],
+        "connections": [
+          "ComponentA (ItemOut) → BufferA (ItemIn)",
+          "ComponentB (ItemOut) → BufferB (ItemIn)",
+          "BufferA (ItemOut) → Assembler (ItemIn[0])",
+          "BufferB (ItemOut) → Assembler (ItemIn[1])",
+          "Assembler (ItemOut) → AssemblyQueue (ItemIn)",
+          "AssemblyQueue (ItemOut) → Assembly (ItemIn)",
+          "Assembly (ItemOut) → FinishedProduct (ItemIn)"
+        ],
+        "template": "assembly_join"
+      },
+      "keyParameters": [
+        { "block": "Batch", "parameter": "batchSize / batchType", "typical": "batchSize=1 per input (permanent batch of N=2), batchType=permanent", "description": "For assembly, use permanent batching (components are permanently combined). batchSize typically 1 per input connector. Temporary batching groups items that will be unbatched later." },
+        { "block": "Create (ComponentA)", "parameter": "distribution / arg1", "typical": "Exponential, mean=3 min", "description": "Component A arrival rate. If rate differs significantly from component B, the slower stream becomes the bottleneck and the faster stream builds up in its buffer." },
+        { "block": "Create (ComponentB)", "parameter": "distribution / arg1", "typical": "Exponential, mean=3 min", "description": "Component B arrival rate. Ideally balanced with component A rate. Imbalance causes one buffer to grow without bound." },
+        { "block": "Batch", "parameter": "matchAttribute", "typical": "null (no matching) or attribute name", "description": "If components must be matched by a specific attribute (e.g., serial number or order ID), set matchAttribute. Without matching, Batch combines any available item from each input." }
+      ],
+      "keyMetrics": [
+        "Assembly throughput (limited by slower component stream)",
+        "Buffer length for each component stream (imbalance indicator)",
+        "Batch wait time (how long until matching component arrives)",
+        "Assembly Activity utilization",
+        "WIP ratio between BufferA and BufferB (large ratio indicates flow imbalance)"
+      ],
+      "commonMistakes": [
+        "Connecting component Create blocks directly to the Batch block without Queue buffers — the Batch block needs Queue blocks on each input because it pulls from Queue outputs, not directly from Create outputs; without Queues, components cannot accumulate and Batch will stall",
+        "Setting mismatched component arrival rates and not accounting for the resulting buffer imbalance — if component A arrives twice as fast as component B, the BufferA will grow indefinitely while BufferB stays near empty; always balance mean arrival rates across all component streams",
+        "Using temporary batch mode when permanent assembly is intended — temporary batching allows items to be unbatched later (via Unbatch block), which is wrong for assembly; use permanent batch mode when components are physically combined",
+        "Expecting Batch block throughput to exceed the rate of the slowest component stream — the assembly rate is limited by min(rateA, rateB); adding more Assembly Activities downstream cannot compensate for a slow component supplier"
+      ],
+      "variations": [
+        { "name": "Three-component assembly", "scenario": null, "change": "Add a third Create+Queue pair; connect third Queue to Batch third input. Batch waits for one item from each of three inputs before releasing" },
+        { "name": "Variable batch size", "scenario": null, "change": "Collect N identical items before processing (e.g., packaging): single Create→Queue→Batch with batchSize=N from one input" },
+        { "name": "With serial line downstream", "scenario": "serial_line", "change": "Route assembled items through multiple processing stages after the Batch+Assembly step for post-assembly operations" }
+      ],
+      "exampleModel": null
+    },
+
+    "supply_chain": {
+      "name": "Multi-Stage Supply Chain",
+      "category": "logistics",
+      "description": "A sequential supply chain model with warehouse, transportation, and retail stages. Each stage has its own processing time and queue, representing the flow of goods from supplier through distribution to end customer.",
+      "useWhen": [
+        "Modeling end-to-end supply chain flows from supplier to customer across multiple stages",
+        "Analyzing lead times and inventory levels at each stage of the supply chain",
+        "Identifying bottleneck stages that constrain delivery performance",
+        "Evaluating the bullwhip effect and demand variability amplification upstream",
+        "Comparing supply chain configurations (number of distribution centers, transport modes)"
+      ],
+      "pattern": {
+        "blocks": [
+          { "name": "Create", "library": "Item.lbr", "label": "CustomerOrders", "purpose": "Generates customer orders or demand events according to demand distribution" },
+          { "name": "Queue", "library": "Item.lbr", "label": "WarehouseQueue", "purpose": "Order backlog at warehouse stage; represents orders waiting to be picked and packed" },
+          { "name": "Activity", "library": "Item.lbr", "label": "Warehouse", "purpose": "Warehouse processing: picking, packing, and staging for shipment" },
+          { "name": "Queue", "library": "Item.lbr", "label": "TransportQueue", "purpose": "Shipments waiting for transport (staging area); represents consolidation or loading time" },
+          { "name": "Activity", "library": "Item.lbr", "label": "Transport", "purpose": "Transportation leg from warehouse to distribution center or retail; models transit time" },
+          { "name": "Queue", "library": "Item.lbr", "label": "RetailQueue", "purpose": "Inbound goods waiting to be received and processed at retail or delivery point" },
+          { "name": "Activity", "library": "Item.lbr", "label": "Retail", "purpose": "Final delivery or retail processing step; represents last-mile or store receiving" },
+          { "name": "Exit", "library": "Item.lbr", "label": "FulfilledOrders", "purpose": "Records fulfilled orders; cycle time from Create to Exit represents total order lead time" }
+        ],
+        "connections": [
+          "CustomerOrders (ItemOut) → WarehouseQueue (ItemIn)",
+          "WarehouseQueue (ItemOut) → Warehouse (ItemIn)",
+          "Warehouse (ItemOut) → TransportQueue (ItemIn)",
+          "TransportQueue (ItemOut) → Transport (ItemIn)",
+          "Transport (ItemOut) → RetailQueue (ItemIn)",
+          "RetailQueue (ItemOut) → Retail (ItemIn)",
+          "Retail (ItemOut) → FulfilledOrders (ItemIn)"
+        ],
+        "template": null
+      },
+      "keyParameters": [
+        { "block": "Activity (Transport)", "parameter": "distribution / arg1", "typical": "Constant or triangular (1-3 days)", "description": "Transit time between supply chain stages. This is often the largest component of total lead time and is typically modeled as a constant or slightly variable duration." },
+        { "block": "Activity (Warehouse)", "parameter": "distribution / arg1", "typical": "Exponential or triangular (2-8 hours)", "description": "Order processing time at warehouse. Highly variable processing times cause queue buildup and increase order lead time variability." },
+        { "block": "Create", "parameter": "distribution / arg1", "typical": "Poisson arrivals (exponential inter-arrival) or scheduled demand", "description": "Customer order arrival pattern. Seasonal or bursty demand causes temporary queue buildup at each stage." },
+        { "block": "Activity (Retail)", "parameter": "distribution / arg1", "typical": "Constant or triangular (1-4 hours)", "description": "Receiving and processing time at final destination. Often much shorter than transport time but still contributes to total lead time." }
+      ],
+      "keyMetrics": [
+        "Total order lead time from placement to fulfillment (Create to Exit cycle time)",
+        "Stage-by-stage queue lengths (indicator of bottleneck location)",
+        "Utilization at each processing stage",
+        "On-time delivery rate (fraction of orders fulfilled within target lead time)",
+        "WIP inventory value at each stage (queue length * average item value)"
+      ],
+      "commonMistakes": [
+        "Modeling supply chain stages with constant (zero-variability) processing times — real supply chains have significant variability in picking, transport, and receiving times; constant times underestimate queue buildup and lead time variability",
+        "Not including Queue blocks between stages — items would flow straight through without buffering, preventing the model from capturing queuing and delay effects that are the primary source of supply chain variability",
+        "Treating the model as a single flow without modeling stockouts or capacity limits — if any stage has finite capacity (e.g., truck capacity), add Queue maximum capacity limits and handle overflow items explicitly",
+        "Using the same time units for all stages without conversion — warehouse operations may be in hours while transport is in days; ensure simulation time units are consistent or use time_convert tool to align"
+      ],
+      "variations": [
+        { "name": "With inventory control (reorder point)", "scenario": "inventory_management", "change": "Add Gate blocks at each stage to hold orders when inventory is below reorder point; model replenishment as a separate item stream" },
+        { "name": "With shared transport resources", "scenario": "shared_resources", "change": "Add Resource Pool for trucks or transport capacity; Transport Activity requests from pool, limiting how many shipments can be in transit simultaneously" },
+        { "name": "With shift-based warehouse operations", "scenario": "shift_schedule", "change": "Add Shift block to Warehouse Activity to restrict processing to working hours; queue accumulates during off-hours" }
+      ],
+      "exampleModel": null
+    },
+
+    "inventory_management": {
+      "name": "Inventory Management (Reorder Point)",
+      "category": "logistics",
+      "description": "A reorder-point inventory model where a Gate block checks stock level and either fulfills demand immediately from stock or places a replenishment order. Models the classic (s, S) or (R, Q) inventory policy.",
+      "useWhen": [
+        "Modeling an inventory system with a defined reorder point and order quantity policy",
+        "Analyzing service level (fill rate) and stockout frequency under variable demand",
+        "Evaluating the trade-off between safety stock levels and holding costs",
+        "Modeling any threshold-triggered replenishment system (kanban, min-max, reorder point)",
+        "Determining optimal reorder point and order quantity for a given service level target"
+      ],
+      "pattern": {
+        "blocks": [
+          { "name": "Create", "library": "Item.lbr", "label": "DemandOrders", "purpose": "Generates customer demand events (orders); each item represents one demand unit" },
+          { "name": "Queue", "library": "Item.lbr", "label": "OrderBacklog", "purpose": "Holds demand orders that cannot be immediately fulfilled due to stockout; represents backorders" },
+          { "name": "Gate", "library": "Item.lbr", "label": "StockCheck", "purpose": "Opens when stock is available; closes when stock is depleted below reorder point, triggering replenishment" },
+          { "name": "Activity", "library": "Item.lbr", "label": "Fulfill", "purpose": "Order fulfillment processing time (picking, packing); represents the time to fulfill from available stock" },
+          { "name": "Create", "library": "Item.lbr", "label": "Replenishment", "purpose": "Generates replenishment arrivals after lead time; represents supplier delivery" },
+          { "name": "Activity", "library": "Item.lbr", "label": "ReplenishLead", "purpose": "Models replenishment lead time from order placement to stock arrival" },
+          { "name": "Exit", "library": "Item.lbr", "label": "FulfilledDemand", "purpose": "Records fulfilled orders; throughput versus DemandOrders rate gives fill rate" }
+        ],
+        "connections": [
+          "DemandOrders (ItemOut) → OrderBacklog (ItemIn)",
+          "OrderBacklog (ItemOut) → StockCheck (ItemIn)",
+          "StockCheck (ItemOut) → Fulfill (ItemIn)",
+          "Fulfill (ItemOut) → FulfilledDemand (ItemIn)",
+          "Replenishment (ItemOut) → ReplenishLead (ItemIn)",
+          "ReplenishLead (ItemOut) → StockCheck (value connector to open/close)"
+        ],
+        "template": "kanban_pull"
+      },
+      "keyParameters": [
+        { "block": "Gate", "parameter": "initialState / openValue / closeValue", "typical": "initialState=open (stock available), controlled by inventory level signal", "description": "Gate opens when stock is available and closes on stockout. In practice, link a Value connector from an inventory counter to the Gate to implement the reorder-point check." },
+        { "block": "Create (Replenishment)", "parameter": "distribution / arg1", "typical": "Triggered by stockout event, not time-based", "description": "Replenishment orders are triggered when stock hits the reorder point. Model as scheduled or use an Equation block to trigger replenishment based on inventory level." },
+        { "block": "Activity (ReplenishLead)", "parameter": "distribution / arg1", "typical": "Constant or triangular (1-5 days)", "description": "Supplier lead time from order placement to stock receipt. Longer and more variable lead times require higher safety stock to maintain the same service level." },
+        { "block": "Activity (Fulfill)", "parameter": "distribution / arg1", "typical": "Constant or short exponential (0.5-2 hours)", "description": "Order fulfillment processing time. This is typically much shorter than replenishment lead time and contributes minimally to stockout duration." }
+      ],
+      "keyMetrics": [
+        "Fill rate: fraction of orders fulfilled without backorder (FulfilledDemand throughput / DemandOrders throughput)",
+        "Average backorder level (OrderBacklog queue length over time)",
+        "Average stockout duration per cycle",
+        "Average on-hand inventory level (between replenishment cycles)",
+        "Replenishment frequency (number of orders placed per time period)"
+      ],
+      "commonMistakes": [
+        "Modeling inventory as item count without a Gate — without a Gate to block demand when stock is zero, items flow through freely regardless of stock level, making stockouts invisible in the model",
+        "Using a single Create block for both demand and replenishment instead of modeling the reorder trigger explicitly — replenishment should only occur when stock falls below the reorder point, not on a fixed schedule independent of demand",
+        "Not modeling backorders separately from lost sales — if the model routes unfulfilled demand to Exit rather than OrderBacklog Queue, it is modeling lost sales (not backorders); choose the correct stockout behavior for your scenario",
+        "Ignoring the variability in replenishment lead time — using a constant lead time when real lead times are variable underestimates required safety stock and overestimates achievable service levels"
+      ],
+      "variations": [
+        { "name": "Lost sales (no backorder)", "scenario": null, "change": "Remove OrderBacklog Queue; add a second Exit for LostSales; route excess demand directly to LostSales when Gate is closed" },
+        { "name": "Periodic review (R, S) policy", "scenario": null, "change": "Replace continuous Gate monitoring with a scheduled Create that triggers inventory review at fixed intervals; order up to S when inventory falls below s" },
+        { "name": "Multi-echelon supply chain", "scenario": "supply_chain", "change": "Chain multiple inventory stages (retail, distribution center, supplier) with each stage having its own reorder logic and lead time" }
+      ],
+      "exampleModel": null
+    },
+
+    "shared_resources": {
+      "name": "Shared Resources",
+      "category": "resources",
+      "description": "Multiple processes compete for a limited pool of shared resources (operators, tools, vehicles). Each process requests resources when needed, uses them during processing, and releases them for other processes to use.",
+      "useWhen": [
+        "Modeling operators, technicians, or vehicles shared across multiple production lines or service points",
+        "Analyzing resource contention and its impact on throughput and waiting time",
+        "Determining the minimum number of shared resources to achieve a target utilization or wait time",
+        "Modeling tool cribs, forklifts, or test equipment shared by multiple work centers",
+        "Any scenario where a finite pool of resources is the primary constraint on system throughput"
+      ],
+      "pattern": {
+        "blocks": [
+          { "name": "Create", "library": "Item.lbr", "label": "ArrivalsA", "purpose": "Generates items for process A that will compete for shared resources" },
+          { "name": "Create", "library": "Item.lbr", "label": "ArrivalsB", "purpose": "Generates items for process B that will also compete for the same shared resource pool" },
+          { "name": "Queue", "library": "Item.lbr", "label": "QueueA", "purpose": "Holds process A items waiting for resource availability; wait time reflects resource contention" },
+          { "name": "Queue", "library": "Item.lbr", "label": "QueueB", "purpose": "Holds process B items waiting for resource availability from the same pool" },
+          { "name": "Activity", "library": "Item.lbr", "label": "ProcessA", "purpose": "Process A activity; requests and holds resources from the Resource Pool during processing" },
+          { "name": "Activity", "library": "Item.lbr", "label": "ProcessB", "purpose": "Process B activity; competes with Process A for resources from the same Resource Pool" },
+          { "name": "Resource Pool", "library": "Item.lbr", "label": "SharedPool", "purpose": "Defines the total number of available shared resources; Activity blocks request from and release to this pool" },
+          { "name": "Exit", "library": "Item.lbr", "label": "CompletedA", "purpose": "Collects completed process A items" },
+          { "name": "Exit", "library": "Item.lbr", "label": "CompletedB", "purpose": "Collects completed process B items" }
+        ],
+        "connections": [
+          "ArrivalsA (ItemOut) → QueueA (ItemIn)",
+          "QueueA (ItemOut) → ProcessA (ItemIn)",
+          "ProcessA (ItemOut) → CompletedA (ItemIn)",
+          "ArrivalsB (ItemOut) → QueueB (ItemIn)",
+          "QueueB (ItemOut) → ProcessB (ItemIn)",
+          "ProcessB (ItemOut) → CompletedB (ItemIn)",
+          "SharedPool (Resource) → QueueA (Resource request)",
+          "SharedPool (Resource) → QueueB (Resource request)"
+        ],
+        "template": "resource_pool_shared"
+      },
+      "keyParameters": [
+        { "block": "Resource Pool", "parameter": "initialResources", "typical": "2-5 (start with theoretical minimum, then increase)", "description": "Total number of available shared resources. This is the key decision variable. Too few causes excessive waiting; too many wastes capacity." },
+        { "block": "Queue", "parameter": "resourcePoolBlockId / resourcesNeeded", "typical": "resourcePoolBlockId = ID of SharedPool, resourcesNeeded = 1", "description": "Each Queue must be linked to the Resource Pool. Items wait in queue until both a downstream Activity is free AND the required number of resources are available." },
+        { "block": "Activity (ProcessA)", "parameter": "distribution / arg1", "typical": "Triangular(5, 10, 20) min", "description": "Resource holding time. Resources are held for the entire activity duration, so longer service times mean resources are unavailable to other processes for longer." },
+        { "block": "Resource Pool", "parameter": "allocationRule", "typical": "FIFO or priority-based", "description": "Rule for allocating resources when multiple queues compete. FIFO allocates to the longest-waiting request. Priority allocation favors higher-priority processes." }
+      ],
+      "keyMetrics": [
+        "Resource pool utilization (average fraction of resources in use)",
+        "Average wait time in each queue due to resource unavailability",
+        "Average queue length for each process (resource contention indicator)",
+        "Throughput of each process versus arrival rate",
+        "Resource allocation fairness across competing processes"
+      ],
+      "commonMistakes": [
+        "Forgetting to link the Queue block to the Resource Pool — in ExtendSim, the Queue block (not the Activity block) requests resources; if the Queue's resourcePoolBlockId is not set, resources are never requested and items flow through without resource constraint",
+        "Connecting the Resource Pool directly to the Activity block instead of to the Queue block — resources must be requested at the Queue so items wait for both server availability AND resource availability; resource request at Activity happens too late",
+        "Setting resourcesNeeded to a number larger than initialResources — if any process needs more resources than exist in the pool, those items will wait forever and the simulation will deadlock",
+        "Not including a Queue block before each Activity when using Resource Pool — without a Queue, the resource request linkage cannot be established and resources will not be properly requested or released"
+      ],
+      "variations": [
+        { "name": "Priority resource allocation", "scenario": "priority_queue", "change": "Set Queue allocationRule to priority-based and assign priority attributes to items; high-priority items get resources before low-priority items when pool is contended" },
+        { "name": "Multiple resource types", "scenario": null, "change": "Add a second Resource Pool for a different resource type (e.g., operator pool + tool pool); Queue requests resources from both pools simultaneously" },
+        { "name": "With shift schedule", "scenario": "shift_schedule", "change": "Add Shift block to Resource Pool to vary resource availability over time (e.g., more operators during day shift than night shift)" }
+      ],
+      "exampleModel": null
+    },
+
+    "shift_schedule": {
+      "name": "Shift Schedule",
+      "category": "resources",
+      "description": "A model where processing capacity changes over time according to a work shift schedule. Activity capacity is linked to a Shift block that defines working hours, breaks, and off-shift periods. Models any operation with scheduled capacity variation.",
+      "useWhen": [
+        "Modeling a facility that operates on defined shifts (8-hour, 12-hour, or custom shift patterns)",
+        "Analyzing queue buildup during off-hours and the clearing time at shift start",
+        "Evaluating the impact of adding overtime or an additional shift on throughput and backlog",
+        "Modeling scheduled maintenance windows that take capacity offline periodically",
+        "Any system where server capacity is a time-varying schedule rather than a fixed number"
+      ],
+      "pattern": {
+        "blocks": [
+          { "name": "Create", "library": "Item.lbr", "label": "Arrivals", "purpose": "Generates items continuously (24/7 demand even when processing is offline during off-shift)" },
+          { "name": "Queue", "library": "Item.lbr", "label": "WorkQueue", "purpose": "Accumulates items during off-shift periods; drains when shift starts and capacity comes online" },
+          { "name": "Activity", "library": "Item.lbr", "label": "ShiftedServer", "purpose": "Processing activity whose capacity is controlled by the Shift block; capacity drops to zero off-shift" },
+          { "name": "Shift", "library": "Item.lbr", "label": "WorkSchedule", "purpose": "Defines the shift pattern: start times, end times, and capacity for each shift period; drives Activity capacity" },
+          { "name": "Exit", "library": "Item.lbr", "label": "Completions", "purpose": "Records completed items; throughput reflects the shift-constrained effective capacity" }
+        ],
+        "connections": [
+          "Arrivals (ItemOut) → WorkQueue (ItemIn)",
+          "WorkQueue (ItemOut) → ShiftedServer (ItemIn)",
+          "ShiftedServer (ItemOut) → Completions (ItemIn)",
+          "WorkSchedule (Value output) → ShiftedServer (capacity connector)"
+        ],
+        "template": "shift_schedule"
+      },
+      "keyParameters": [
+        { "block": "Shift", "parameter": "schedule", "typical": "[{startTime: 0, endTime: 8, capacity: 1}, {startTime: 8, endTime: 16, capacity: 3}, {startTime: 16, endTime: 24, capacity: 2}]", "description": "Defines capacity at each time period. Times are in simulation time units. Capacity=0 means off-shift. Multiple rows define multiple shift periods in one 24-hour cycle." },
+        { "block": "Activity", "parameter": "distribution / arg1", "typical": "Triangular(3, 5, 8) min", "description": "Processing time per item during active shift. Items in the Activity when a shift ends continue processing; items in Queue wait until next shift starts." },
+        { "block": "Create", "parameter": "distribution / arg1", "typical": "Exponential, mean matching peak capacity utilization target", "description": "Arrival rate should be set so that total daily arrivals match expected daily throughput; if arrivals exceed daily capacity, backlog grows without bound." },
+        { "block": "Shift", "parameter": "schedule capacity values", "typical": "Integer values (1, 2, 3) representing number of simultaneous servers", "description": "Shift capacity values set the maximum concurrent items being processed by the linked Activity. Ensure Activity can handle the specified parallel capacity." }
+      ],
+      "keyMetrics": [
+        "Queue length at shift start (backlog carryover from previous off-period)",
+        "Time to clear overnight or off-shift backlog after shift starts",
+        "Effective throughput per shift period",
+        "Activity utilization during on-shift hours (not counting off-shift time)",
+        "Peak queue length during off-shift accumulation"
+      ],
+      "commonMistakes": [
+        "Not connecting the Shift block output to the Activity capacity connector — the Shift block has no effect on the Activity unless its value output connector is wired to the Activity's capacity input; without this connection the Activity runs at full capacity 24/7",
+        "Setting shift schedule times in wrong time units — if the simulation runs in minutes but shift start/end times are entered as hours (e.g., 8 instead of 480), the shift pattern will be wildly incorrect; always confirm simulation time units before entering schedule times",
+        "Forgetting that items already in the Activity when a shift ends continue processing to completion — the shift controls how many new items can start, not whether in-progress items finish; this is usually correct behavior but must be understood when analyzing shift boundary effects",
+        "Making total daily arrival volume exceed total daily capacity — if arrivals per day consistently exceed (capacity_per_shift * hours_per_shift / mean_service_time), the queue grows unboundedly across days; always verify that daily capacity exceeds daily demand"
+      ],
+      "variations": [
+        { "name": "Weekend/weekday schedule", "scenario": null, "change": "Extend Shift schedule to cover a 168-hour (7-day) cycle with different capacities on weekdays versus weekends" },
+        { "name": "Shift schedule with shared resources", "scenario": "shared_resources", "change": "Add Shift block to Resource Pool instead of Activity to control the number of available shared resources by shift period" },
+        { "name": "Overtime trigger", "scenario": null, "change": "Add an Equation block that monitors queue length and sends a signal to increase Shift capacity above the normal level when backlog exceeds a threshold" }
+      ],
+      "exampleModel": null
+    },
+
+    "tank_system": {
+      "name": "Tank Pipeline System",
+      "category": "flow",
+      "description": "A continuous flow model using Rate library blocks where material flows through a series of tanks connected by valves. Each tank stores fluid volume and each valve controls flow rate between tanks. Models liquid pipelines, chemical processes, or any continuous fluid system.",
+      "useWhen": [
+        "Modeling continuous fluid or material flow (liquids, gases, bulk solids, chemicals)",
+        "Analyzing tank levels, overflow conditions, and flow rates in a pipeline",
+        "Simulating filling, draining, and steady-state flow in multi-tank systems",
+        "Modeling hydraulic systems, water distribution networks, or chemical processing",
+        "Any scenario where the quantity of interest is a continuously changing volume or rate"
+      ],
+      "pattern": {
+        "blocks": [
+          { "name": "Tank", "library": "Rate.lbr", "label": "SourceTank", "purpose": "First tank in the pipeline; represents the source or supply reservoir with initial fluid level" },
+          { "name": "Valve", "library": "Rate.lbr", "label": "Valve1", "purpose": "Controls flow rate from SourceTank to MidTank; rate can be fixed or controlled by a Value connector" },
+          { "name": "Tank", "library": "Rate.lbr", "label": "MidTank", "purpose": "Intermediate storage tank; level rises or falls based on inflow from Valve1 versus outflow through Valve2" },
+          { "name": "Valve", "library": "Rate.lbr", "label": "Valve2", "purpose": "Controls flow rate from MidTank to SinkTank; enables independent control of each pipeline segment" },
+          { "name": "Tank", "library": "Rate.lbr", "label": "SinkTank", "purpose": "Terminal receiving tank; accumulates material flowing through the system" }
+        ],
+        "connections": [
+          "SourceTank (FlowOut) → Valve1 (FlowIn)",
+          "Valve1 (FlowOut) → MidTank (FlowIn)",
+          "MidTank (FlowOut) → Valve2 (FlowIn)",
+          "Valve2 (FlowOut) → SinkTank (FlowIn)"
+        ],
+        "template": "flow_supply_chain"
+      },
+      "keyParameters": [
+        { "block": "Tank", "parameter": "capacity / initialLevel", "typical": "capacity=1000 units, initialLevel=500 units (50% full)", "description": "Tank capacity sets the maximum volume. Initial level determines starting conditions. When level hits capacity, tank overflows; when level hits 0, tank empties and downstream valves close automatically." },
+        { "block": "Valve", "parameter": "maxRate / goal", "typical": "maxRate=100 units/hour, goal=100 (constant flow)", "description": "maxRate sets the maximum possible flow rate. goal sets the desired flow rate. Actual flow is min(goal, available flow from upstream, capacity in downstream). Connect a Value connector to goal for dynamic control." },
+        { "block": "Tank", "parameter": "maxInputRate / maxOutputRate", "typical": "0 (unlimited) or pipe capacity limit", "description": "Physical rate limits at the tank inlet and outlet. Set to 0 to allow unlimited flow rate (limited only by connected valves). Use to model pipe capacity constraints." },
+        { "block": "Valve", "parameter": "goal (via Value connector)", "typical": "Equation block output or Constant block", "description": "For dynamic valve control, connect an Equation or Constant Value.lbr block to the Valve goal connector. This enables level-based control, schedules, or feedback regulation." }
+      ],
+      "keyMetrics": [
+        "Tank level over time for each tank (fill/drain curves)",
+        "Flow rate through each valve (actual versus requested)",
+        "Time to empty or fill each tank under current flow rates",
+        "Overflow events (when any tank reaches capacity)",
+        "Steady-state flow rate through the system (when inflow equals outflow)"
+      ],
+      "commonMistakes": [
+        "Mixing Rate.lbr blocks with Item.lbr blocks in the same flow path — Tank and Valve are Rate library blocks and connect via flow connectors (not item connectors); attempting to connect a Create or Activity block directly to a Tank will fail; keep discrete item flow and continuous flow in separate model sections",
+        "Setting Valve maxRate higher than the Tank's maxOutputRate or the upstream Tank's available volume — the valve cannot push more flow than physically possible; actual flow is always limited by the most constrained element in the path",
+        "Not setting initial Tank levels — if all tanks start empty and the source tank has no inflow, the model starts with zero flow; set SourceTank initialLevel to a realistic starting value to avoid a trivially empty simulation",
+        "Forgetting that when a Tank empties, downstream valves automatically reduce to zero flow — this is correct physical behavior but can be mistaken for a model error; verify tank levels before investigating unexpected flow shutdowns"
+      ],
+      "variations": [
+        { "name": "With feedback level control", "scenario": "feedback_control", "change": "Add Equation and Math blocks to compute a control signal based on MidTank level; feed control signal to Valve goal connector to maintain constant tank level" },
+        { "name": "Parallel tanks (blending)", "scenario": null, "change": "Use Merge block to combine flows from two parallel Valve+Tank branches into one output stream" },
+        { "name": "With flow divergence", "scenario": null, "change": "Add Diverge block after Valve1 to split flow between two downstream tanks at a configurable ratio" }
+      ],
+      "exampleModel": null
+    },
+
+    "feedback_control": {
+      "name": "Feedback Control System",
+      "category": "continuous",
+      "description": "A continuous-time feedback control loop modeled with Value library blocks. A setpoint is compared against a measured output to compute an error signal, which drives a controller that adjusts the process input to minimize the error. Models PID controllers, thermostats, or any closed-loop regulation system.",
+      "useWhen": [
+        "Modeling a closed-loop control system (thermostat, speed controller, inventory level controller)",
+        "Analyzing control system stability, overshoot, and settling time",
+        "Designing or tuning PID controller gains for a simulated process",
+        "Modeling any system where an output is continuously measured and used to adjust an input",
+        "Evaluating control system response to disturbances or setpoint changes"
+      ],
+      "pattern": {
+        "blocks": [
+          { "name": "Constant", "library": "Value.lbr", "label": "Setpoint", "purpose": "Provides the desired target value (setpoint) that the controller tries to achieve" },
+          { "name": "Math", "library": "Value.lbr", "label": "ErrorCalc", "purpose": "Computes the error signal as (Setpoint - MeasuredOutput); provides the feedback comparison" },
+          { "name": "Equation", "library": "Value.lbr", "label": "Controller", "purpose": "Implements the control law (proportional, integral, or PID); takes error as input and outputs control action" },
+          { "name": "Holding Tank", "library": "Value.lbr", "label": "Process", "purpose": "Integrates the control action over time to produce the process output (state variable); represents system dynamics" },
+          { "name": "Equation", "library": "Value.lbr", "label": "FeedbackSensor", "purpose": "Reads the current Holding Tank level (process output) and feeds it back to the ErrorCalc block to close the loop" }
+        ],
+        "connections": [
+          "Setpoint (V) → ErrorCalc (V[0])",
+          "FeedbackSensor (V) → ErrorCalc (V[1])",
+          "ErrorCalc (V) → Controller (V)",
+          "Controller (V) → Process (FlowIn)",
+          "Process (V) → FeedbackSensor (V)"
+        ],
+        "template": "continuous_feedback"
+      },
+      "keyParameters": [
+        { "block": "Constant (Setpoint)", "parameter": "value", "typical": "100 (target level, temperature, speed, etc.)", "description": "The desired steady-state value the controller attempts to maintain. The controller drives error (Setpoint - Output) toward zero." },
+        { "block": "Equation (Controller)", "parameter": "equation", "typical": "Kp * e (proportional only) or Kp*e + Ki*integral(e) + Kd*derivative(e)", "description": "The control law. Proportional-only (Kp*e) is simplest but may have steady-state offset. Add integral term (Ki) to eliminate offset. Add derivative term (Kd) to reduce overshoot. Typical Kp=1-10, Ki=0.01-0.1, Kd=0-1." },
+        { "block": "Holding Tank", "parameter": "capacity / initialLevel", "typical": "capacity=1000, initialLevel=0 (or near setpoint)", "description": "The Holding Tank acts as an integrator: its level changes at the rate set by the inflow (control action). Initial level sets the starting condition. Capacity must be large enough to accommodate the full operating range." },
+        { "block": "Math", "parameter": "equation (error = setpoint - feedback)", "typical": "V[0] - V[1]", "description": "The error signal. Positive error means output is below setpoint (controller should increase input). Negative error means output is above setpoint (controller should decrease input or flow is reversed)." }
+      ],
+      "keyMetrics": [
+        "Settling time: time for Process output to reach within 5% of setpoint",
+        "Overshoot: peak deviation above setpoint as percentage of setpoint value",
+        "Steady-state error: remaining error after system settles (should be near zero with integral control)",
+        "Rise time: time for output to go from 10% to 90% of final value",
+        "Control effort: magnitude and variability of Controller output signal"
+      ],
+      "commonMistakes": [
+        "Forgetting to close the feedback loop by connecting the Holding Tank output back to the ErrorCalc block — without this connection the model is open-loop (no feedback); the output will drift without correction and the controller has no effect",
+        "Setting controller gain Kp too high — proportional gains that are too large cause oscillation or instability; start with a low gain (Kp=0.1) and increase gradually while observing the step response in the Holding Tank level",
+        "Using Equation block instead of Holding Tank for the process state — the process must be a dynamic element (integrator) to have meaningful control dynamics; an Equation block computes an algebraic (instantaneous) value, not a time-integrated state, which eliminates the dynamics the controller is designed to regulate",
+        "Not accounting for the sign of the feedback — if the Math block computes (Feedback - Setpoint) instead of (Setpoint - Feedback), the error signal is inverted and the controller drives the output in the wrong direction, causing instability; always verify error = setpoint minus measured output"
+      ],
+      "variations": [
+        { "name": "Proportional only (P controller)", "scenario": null, "change": "Set Controller equation to Kp * error; accept small steady-state offset in exchange for simplicity and stability" },
+        { "name": "PI controller (eliminate offset)", "scenario": null, "change": "Add a second Holding Tank to integrate the error signal; add Ki * integral_error term to Controller equation to eliminate steady-state error" },
+        { "name": "Tank level control", "scenario": "tank_system", "change": "Replace the Holding Tank Process block with actual Rate.lbr Tank+Valve blocks; feed Controller output to Valve goal connector to regulate tank level at setpoint" }
+      ],
+      "exampleModel": null
+    }
+  }
+}
