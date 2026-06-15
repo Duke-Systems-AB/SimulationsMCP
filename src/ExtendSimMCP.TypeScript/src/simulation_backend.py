@@ -1726,30 +1726,46 @@ def connection_list(model_id: Optional[str] = None) -> dict:
                 num_cons = int(parse_float(app.Request("System", "global0+:0:0:0")))
 
                 for conn_idx in range(num_cons):
-                    app.Execute(f"global0 = NodeGetIDIndex({next_id}, {conn_idx});")
-                    node_index = int(parse_float(app.Request("System", "global0+:0:0:0")))
-
-                    # Skip unconnected (nodeIndex = 0)
-                    if node_index == 0:
-                        continue
-
-                    # Get connector name
+                    # Get connector name (needed for array detection and direction)
                     try:
                         app.Execute(f'globalStr0 = GetConName({next_id}, {conn_idx});')
                         con_name = app.Request("System", "globalStr0+:0:0:0") or ""
                     except Exception:
                         con_name = ""
 
-                    # Determine direction
+                    # Array connectors expose additional connections on extra slots
+                    # (slot N>0 lives at connector index 256-N). The base loop only
+                    # visits range(num_cons), so without this a 2nd+ connection into
+                    # an array input (e.g. Queue ItemIn) would be silently dropped.
+                    slot_con_indices = [conn_idx]
+                    if con_name:
+                        try:
+                            app.Execute(f'global0 = ConArrayGetNumCons({next_id}, "{con_name}");')
+                            num_slots = int(parse_float(app.Request("System", "global0+:0:0:0")))
+                        except Exception:
+                            num_slots = -1
+                        if num_slots > 1:
+                            slot_con_indices += [_get_array_connector_index(s, conn_idx)
+                                                 for s in range(1, num_slots)]
+
+                    # Determine direction (same for every slot of this connector)
                     direction = "unknown"
                     if "in" in con_name.lower():
                         direction = "in"
                     elif "out" in con_name.lower():
                         direction = "out"
 
-                    if node_index not in node_map:
-                        node_map[node_index] = []
-                    node_map[node_index].append((next_id, conn_idx, direction, con_name))
+                    for slot_con_idx in slot_con_indices:
+                        app.Execute(f"global0 = NodeGetIDIndex({next_id}, {slot_con_idx});")
+                        node_index = int(parse_float(app.Request("System", "global0+:0:0:0")))
+
+                        # Skip unconnected (nodeIndex = 0)
+                        if node_index == 0:
+                            continue
+
+                        if node_index not in node_map:
+                            node_map[node_index] = []
+                        node_map[node_index].append((next_id, slot_con_idx, direction, con_name))
             except Exception:
                 pass
 
@@ -1757,6 +1773,7 @@ def connection_list(model_id: Optional[str] = None) -> dict:
 
         # Build connections from node_map
         connections = []
+        dangling = []
         for ni, endpoints in node_map.items():
             if len(endpoints) == 2:
                 ep0, ep1 = endpoints[0], endpoints[1]
@@ -1775,8 +1792,20 @@ def connection_list(model_id: Optional[str] = None) -> dict:
                     "type": "shared",
                     "endpoints": [{"blockId": ep[0], "connector": ep[1], "name": ep[3], "direction": ep[2]} for ep in endpoints]
                 })
+            else:
+                # Single endpoint: a node is wired here but its other end is not
+                # enumerable at this level (e.g. a line into a hierarchical block).
+                # Surface it instead of dropping it silently.
+                ep = endpoints[0]
+                dangling.append({
+                    "nodeIndex": ni,
+                    "endpoint": {"blockId": ep[0], "connector": ep[1], "name": ep[3], "direction": ep[2]}
+                })
 
-        return {"connections": connections, "count": len(connections)}
+        result = {"connections": connections, "count": len(connections)}
+        if dangling:
+            result["danglingNodes"] = dangling
+        return result
     except Exception as e:
         return {"connections": [], "errorCode": ErrorCode.COM_ERROR, "error": str(e)}
 
