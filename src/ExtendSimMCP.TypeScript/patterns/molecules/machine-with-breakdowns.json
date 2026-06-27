@@ -8,6 +8,7 @@
     "mtbf":         { "type": "number", "required": true },
     "mttr":         { "type": "number", "required": true }
   },
+  "attributes": { "reads": [], "writes": [] },
   "nodes": [
     { "ref": "q",   "lib": "Item.lbr", "type": "Queue" },
     { "ref": "act", "lib": "Item.lbr", "type": "Activity", "seed": true, "params": { "D": "{{process_time}}" } },

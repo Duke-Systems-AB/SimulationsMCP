@@ -4,6 +4,7 @@
   "kind": "molecule",
   "intent": "Trivial molekyl: en kö som buffrar items",
   "params": {},
+  "attributes": { "reads": [], "writes": [] },
   "nodes": [
     { "ref": "q", "lib": "Item.lbr", "type": "Queue", "seed": true }
   ],
