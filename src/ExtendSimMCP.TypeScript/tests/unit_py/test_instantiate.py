@@ -90,6 +90,9 @@ class FakeOps:
     def outlet_connector(self, hblock_id):
         return self._hblocks[hblock_id]["outlet"]
 
+    def outer_index(self, hblock_id, direction):
+        return 1 if direction == "in" else 0
+
     def node_of(self, block_id, con_index):
         return self._nodes.get((block_id, con_index), 0)
 
@@ -109,13 +112,13 @@ def test_flow_chain_uses_disconnect_first_and_clean_nodes():
     ops = FakeOps()
     result = build_molecule(load("machine-with-breakdowns.json"), {"process_time": 3, "mtbf": 120, "mttr": 8}, ops)
 
-    # The non-seed flow node (act) is placed inside, then inserted at the outlet
-    # with disconnect-FIRST (krav 8): disconnect(outlet<->seed.out) BEFORE reconnect.
+    # The non-seed flow node (q) is placed inside, then prepended at the inlet
+    # with disconnect-FIRST (krav 8): disconnect(inlet<->seed.in) BEFORE reconnect.
     kinds = [c for c in ops.calls if c[0] in ("place_in_hblock", "disconnect", "connect")]
-    assert any(c[0] == "place_in_hblock" and c[2] == "Activity" for c in ops.calls)
+    assert any(c[0] == "place_in_hblock" and c[2] == "Queue" for c in ops.calls)
     dis_idx = next(i for i, c in enumerate(kinds) if c[0] == "disconnect")
     con_after = [c for c in kinds[dis_idx + 1:] if c[0] == "connect"]
-    assert len(con_after) >= 2          # reconnect seed->new and new->outlet after disconnect
+    assert len(con_after) >= 2          # reconnect inlet->new and new->seed after disconnect
 
     # internal ids recorded for every node ref
     assert set(result["internalBlockIds"]).issuperset({"q", "act"})

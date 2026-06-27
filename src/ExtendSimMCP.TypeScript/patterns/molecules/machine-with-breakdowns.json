@@ -9,8 +9,8 @@
     "mttr":         { "type": "number", "required": true }
   },
   "nodes": [
-    { "ref": "q",   "lib": "Item.lbr", "type": "Queue",    "seed": true },
-    { "ref": "act", "lib": "Item.lbr", "type": "Activity", "params": { "D": "{{process_time}}" } },
+    { "ref": "q",   "lib": "Item.lbr", "type": "Queue" },
+    { "ref": "act", "lib": "Item.lbr", "type": "Activity", "seed": true, "params": { "D": "{{process_time}}" } },
     { "ref": "sd",  "lib": "Item.lbr", "type": "Shutdown",
       "params": { "SF_TBF_Arg1_prm": "{{mtbf}}", "SF_TTR_Arg1_prm": "{{mttr}}" } }
   ],

@@ -20,10 +20,16 @@ def _node(molecule, ref):
     raise BuildError(f"unknown node ref: {ref}")
 
 
-def _flow_order(seed_ref, flow_edges):
-    """Return the flow node refs in chain order starting at seed_ref."""
+def _flow_chain(flow_edges):
+    """Flow node refs from chain head to tail (single linear chain assumed)."""
+    if not flow_edges:
+        return []
     nxt = {e["from"].split(".")[0]: e["to"].split(".")[0] for e in flow_edges}
-    order, cur = [seed_ref], seed_ref
+    tos = set(nxt.values())
+    heads = [f for f in nxt if f not in tos]
+    if len(heads) != 1:
+        raise BuildError(f"flow must be a single linear chain; heads={heads}")
+    order, cur = [heads[0]], heads[0]
     while cur in nxt:
         cur = nxt[cur]
         order.append(cur)
@@ -56,21 +62,26 @@ def build_molecule(molecule: Dict[str, Any], params: Dict[str, Any], ops) -> Dic
 
     internal = {seed["ref"]: seed_id}
 
-    # Phase 2: append remaining flow nodes at the outlet, disconnect-first.
-    flow_edges = [e for e in molecule["edges"] if e["kind"] == "flow"]
-    order = _flow_order(seed["ref"], flow_edges)     # seed first, then downstream
-    last_ref, last_id = seed["ref"], seed_id
-    for ref in order[1:]:
-        node = _node(molecule, ref)
-        new_id = ops.place_in_hblock(node["lib"], node["type"], hblock_id)
-        internal[ref] = new_id
-        outlet = ops.outlet_connector(hblock_id)
-        # disconnect last.out <-> outlet, then last.out -> new.in, new.out -> outlet
-        ops.disconnect(last_id, ops.con_index(last_id, "ItemOut"), outlet, 0)
-        ops.connect(last_id, ops.con_index(last_id, "ItemOut"), new_id, ops.con_index(new_id, "ItemIn"))
-        ops.connect(new_id, ops.con_index(new_id, "ItemOut"), outlet, 0)
-        _assert_clean(ops, last_id, new_id)
-        last_ref, last_id = ref, new_id
+    # Phase 2: prepend earlier flow nodes at the inlet, disconnect-first.
+    # Uses only proven COM ops (connect inlet-boundary->inner and inner->inner);
+    # the seed must be the chain TAIL (bound to the outlet). Connecting an inner
+    # block INTO the outlet boundary is unreliable, so we grow from the tail.
+    chain = _flow_chain([e for e in molecule["edges"] if e["kind"] == "flow"])
+    if chain:
+        if chain[-1] != seed["ref"]:
+            raise BuildError(f"seed must be the flow-chain tail; chain={chain}, seed={seed['ref']}")
+        first_id = seed_id
+        for ref in reversed(chain[:-1]):
+            node = _node(molecule, ref)
+            new_id = ops.place_in_hblock(node["lib"], node["type"], hblock_id)
+            internal[ref] = new_id
+            inlet = ops.inlet_connector(hblock_id)
+            # disconnect inlet <-> current-first.in, then inlet -> new.in, new.out -> current-first.in
+            ops.disconnect(inlet, 0, first_id, ops.con_index(first_id, "ItemIn"))
+            ops.connect(inlet, 0, new_id, ops.con_index(new_id, "ItemIn"))
+            ops.connect(new_id, ops.con_index(new_id, "ItemOut"), first_id, ops.con_index(first_id, "ItemIn"))
+            _assert_clean(ops, new_id, first_id)
+            first_id = new_id
 
     # Phase 3: place + wire side nodes (non-flow blocks), by name, node-verified.
     flow_refs = set(internal)
@@ -97,10 +108,10 @@ def build_molecule(molecule: Dict[str, Any], params: Dict[str, Any], ops) -> Dic
     iface = {}
     for port in molecule["interface"].get("inlets", []):
         ref, con = port["binds"].split(".")
-        iface[port["port"]] = {"blockId": internal[ref], "outerCon": ops.inlet_connector(hblock_id)}
+        iface[port["port"]] = {"blockId": internal[ref], "outerCon": ops.outer_index(hblock_id, "in")}
     for port in molecule["interface"].get("outlets", []):
         ref, con = port["binds"].split(".")
-        iface[port["port"]] = {"blockId": internal[ref], "outerCon": ops.outlet_connector(hblock_id)}
+        iface[port["port"]] = {"blockId": internal[ref], "outerCon": ops.outer_index(hblock_id, "out")}
 
     return {"hblockId": hblock_id, "internalBlockIds": internal, "interfaceMap": iface}
 
@@ -129,10 +140,15 @@ class RealOps:
         return int(r["result"])
 
     def connect(self, a_id, a_con, b_id, b_con):
-        before = self.node_of(b_id, b_con)
         self._b.execute_command(f"MakeConnection({a_id}, {a_con}, {b_id}, {b_con});")
-        if self.node_of(a_id, a_con) != self.node_of(b_id, b_con) or self.node_of(b_id, b_con) == 0:
-            raise BuildError(f"connect did not take: ({a_id},{a_con})->({b_id},{b_con})")
+        # Boundary connector-objects do not report their node via NodeGetIDIndex
+        # (they read 0). So a connect is valid if at least one endpoint shows a
+        # node; if BOTH are real connectors their nodes must match (no collapse).
+        na, nb = self.node_of(a_id, a_con), self.node_of(b_id, b_con)
+        if na == 0 and nb == 0:
+            raise BuildError(f"connect did not take (both endpoints unconnected): ({a_id},{a_con})->({b_id},{b_con})")
+        if na != 0 and nb != 0 and na != nb:
+            raise BuildError(f"connect collapsed/mismatched: ({a_id},{a_con})->({b_id},{b_con})")
 
     def disconnect(self, a_id, a_con, b_id, b_con):
         r = self._b.block_disconnect(a_id, a_con, b_id, b_con)
@@ -160,6 +176,16 @@ class RealOps:
     def set_value(self, block_id, var, value):
         self._b.block_set_value(block_id, var, value)
 
+    def _outer_connector(self, hblock_id, direction):
+        """The H-block's outer connector dict for a direction (in/out).
+        Connector-object names (Con0In/Con0Out/...) vary per build, so match
+        on direction, not name. M3 molecules expose exactly one item inlet
+        (direction 'in') and one item outlet (direction 'out')."""
+        for c in self._b.block_info(block_id=hblock_id).get("connectors", []):
+            if c.get("direction") == direction:
+                return c
+        raise BuildError(f"no '{direction}' outer connector on H-block {hblock_id}")
+
     def _connector_obj(self, hblock_id, name):
         for blk in self._b.hierarchy_get_contents(hblock_id).get("blocks", []):
             if blk.get("blockName") == name:
@@ -167,12 +193,39 @@ class RealOps:
         raise BuildError(f"connector-object {name} not found in H-block {hblock_id}")
 
     def inlet_connector(self, hblock_id):
-        return self._connector_obj(hblock_id, "Con0In")
+        return self._connector_obj(hblock_id, self._outer_connector(hblock_id, "in")["name"])
 
     def outlet_connector(self, hblock_id):
-        return self._connector_obj(hblock_id, "Con1Out")
+        return self._connector_obj(hblock_id, self._outer_connector(hblock_id, "out")["name"])
+
+    def outer_index(self, hblock_id, direction):
+        return self._outer_connector(hblock_id, direction)["connectorIndex"]
 
     def node_of(self, block_id, con_index):
         r = self._b.execute_command(
             f"global0 = NodeGetIDIndex({block_id}, {con_index});", get_result=True)
         return int(r.get("result") or 0)
+
+
+import json as _json
+import os as _os
+
+_MOLECULE_DIR = _os.path.join(_os.path.dirname(__file__), "..", "patterns", "molecules")
+
+
+def _load_molecule(molecule_id):
+    path = _os.path.join(_MOLECULE_DIR, f"{molecule_id}.json")
+    if not _os.path.exists(path):
+        raise BuildError(f"unknown molecule: {molecule_id}")
+    with open(path, encoding="utf-8") as f:
+        return _json.load(f)
+
+
+def instantiate_pattern(molecule_id, params, model_id=None):
+    """MCP entry point: build a molecule as an H-block in the live model."""
+    import simulation_backend as backend
+    molecule = _load_molecule(molecule_id)
+    try:
+        return {"success": True, **build_molecule(molecule, params or {}, RealOps(backend))}
+    except Exception as e:
+        return {"success": False, "errorCode": "INSTANTIATE_FAILED", "error": str(e)}

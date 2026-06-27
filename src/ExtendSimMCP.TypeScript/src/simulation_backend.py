@@ -10096,6 +10096,8 @@ COMMANDS = {
     ),
     "block_list": lambda p: block_list(p.get("modelId"), p.get("detail", "summary")),
     "connection_list": lambda p: connection_list(p.get("modelId")),
+    "instantiate_pattern": lambda p: __import__("instantiate").instantiate_pattern(
+        p.get("moleculeId"), p.get("params"), p.get("modelId")),
     "block_info": lambda p: block_info(
         query=p.get("query"), block_id=p.get("blockId"),
         model_id=p.get("modelId")
