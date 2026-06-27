@@ -1232,6 +1232,26 @@ server.tool(
 );
 
 server.tool(
+  "compose_flow",
+  "Build a whole process flow from molecule instances. Args: flow = { id, instances:[{ref, pattern, params}], wiring:[{from:'m1.out', to:'m2.in'}] }.",
+  {
+    flow: z.object({
+      id: z.string().optional(),
+      instances: z.array(z.object({
+        ref: z.string(),
+        pattern: z.string(),
+        params: z.record(z.any()).optional(),
+      })),
+      wiring: z.array(z.object({ from: z.string(), to: z.string() })).optional(),
+    }),
+    modelId: z.string().optional(),
+  },
+  async ({ flow, modelId }) => {
+    return safeToolCall("compose_flow", () => backend.composeFlow({ flow, modelId }), { flow, modelId });
+  }
+);
+
+server.tool(
   "block_info",
   "Get info about a block. Use blockId for live info from model (connectors, current values). Use query for reference info about a block type.",
   {

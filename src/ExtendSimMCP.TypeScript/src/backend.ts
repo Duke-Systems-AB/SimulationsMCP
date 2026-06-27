@@ -1666,3 +1666,14 @@ export async function instantiatePattern(params: {
   return await sendCommand("instantiate_pattern", params);
 }
 
+export async function composeFlow(params: {
+  flow: {
+    id?: string;
+    instances: { ref: string; pattern: string; params?: Record<string, unknown> }[];
+    wiring?: { from: string; to: string }[];
+  };
+  modelId?: string;
+}) {
+  return await sendCommand("compose_flow", params);
+}
+

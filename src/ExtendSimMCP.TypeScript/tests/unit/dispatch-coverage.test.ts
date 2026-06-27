@@ -57,8 +57,8 @@ beforeAll(() => {
 });
 
 describe("Tool Registration Coverage", () => {
-  it("should have exactly 93 registered tools", () => {
-    expect(toolNames.length).toBe(93);
+  it("should have exactly 94 registered tools", () => {
+    expect(toolNames.length).toBe(94);
   });
 
   it("should have no duplicate tool names in index.ts", () => {
