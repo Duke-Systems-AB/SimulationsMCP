@@ -54,7 +54,7 @@ Allt nedan är empiriskt verifierat mot live-ExtendSim — det styr designen som
 2.  expandera placeholders ({{mtbf}} → bundet värde)
 3.  ActivateApplication()                                   [krav 1]
 4.  bygg seed-i-kontext:
-      upstreamStub=Create, downstreamStub=Exit, seed=molekylens första flödesnod
+      upstreamStub=Create, downstreamStub=Exit, seed=molekylens SISTA flödesnod (svans, bunden till utloppet)
       MakeConnection(upstreamStub→seed.in); MakeConnection(seed.out→downstreamStub.in)
 5.  UnselectAll(); AddBlockToSelection(seedId); CreateHblock(namn)        [krav 3,4,5]
 6.  verifiera H-block finns (hierarchy_list-count), hämta hblockId        [krav 12]

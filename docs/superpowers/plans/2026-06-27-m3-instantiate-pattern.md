@@ -10,6 +10,13 @@
 
 **Reference:** Design spec `docs/superpowers/specs/2026-06-27-m3-instantiate-pattern-design.md` (14 proven COM facts in §2).
 
+> **Corrections made during execution (the live test caught them):**
+> - Trivial molecule is `buffer` (single Queue), not `source-sink` — the seed must have both ItemIn and ItemOut.
+> - The flow chain is built by **prepending** earlier nodes at the **inlet** (seed = chain **tail**, bound to the outlet), NOT appending at the outlet. Connecting an inner block *into* the outlet boundary is unreliable; only inlet-boundary→inner and inner→inner connects are proven. So `machine-with-breakdowns` seed is `act`, not `q`.
+> - Connector lookup is **direction-based** (`block_info` direction in/out), not by hardcoded name — Con0In/Con0Out names vary per build. Added `outer_index(hblock_id, direction)` for the interfaceMap's outer connector index.
+> - `RealOps.connect` verification: boundary connector-objects read node 0 via NodeGetIDIndex, so accept when one endpoint shows a node; require matching nodes only when both are real connectors.
+> - All `RealOps` mutations (set_value/remove_block/place_in_hblock) effect-verify; the live test targets the specific Exit block. See the final code in `src/instantiate.py`.
+
 ---
 
 ### Task 1: Molecule definitions (data)
