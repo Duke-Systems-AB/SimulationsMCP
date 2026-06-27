@@ -72,4 +72,34 @@ def build_molecule(molecule: Dict[str, Any], params: Dict[str, Any], ops) -> Dic
         _assert_clean(ops, last_id, new_id)
         last_ref, last_id = ref, new_id
 
-    return {"hblockId": hblock_id, "internalBlockIds": internal}
+    # Phase 3: place + wire side nodes (non-flow blocks), by name, node-verified.
+    flow_refs = set(internal)
+    for node in molecule["nodes"]:
+        if node["ref"] in flow_refs:
+            continue
+        internal[node["ref"]] = ops.place_in_hblock(node["lib"], node["type"], hblock_id)
+    for e in molecule["edges"]:
+        if e["kind"] != "side":
+            continue
+        a_ref, a_con = e["from"].split(".")
+        b_ref, b_con = e["to"].split(".")
+        a_id, b_id = internal[a_ref], internal[b_ref]
+        ops.connect(a_id, ops.con_index(a_id, a_con), b_id, ops.con_index(b_id, b_con))
+        if ops.node_of(a_id, ops.con_index(a_id, a_con)) != ops.node_of(b_id, ops.con_index(b_id, b_con)):
+            raise BuildError(f"side connection failed (not on shared node): {e['from']} -> {e['to']}")
+
+    # Phase 4: set parameters (placeholders resolved).
+    for node in molecule["nodes"]:
+        for var, value in resolve_params(node, params).items():
+            ops.set_value(internal[node["ref"]], var, value)
+
+    # Phase 5: interface map (molecule port -> inner block + outer connector).
+    iface = {}
+    for port in molecule["interface"].get("inlets", []):
+        ref, con = port["binds"].split(".")
+        iface[port["port"]] = {"blockId": internal[ref], "outerCon": ops.inlet_connector(hblock_id)}
+    for port in molecule["interface"].get("outlets", []):
+        ref, con = port["binds"].split(".")
+        iface[port["port"]] = {"blockId": internal[ref], "outerCon": ops.outlet_connector(hblock_id)}
+
+    return {"hblockId": hblock_id, "internalBlockIds": internal, "interfaceMap": iface}

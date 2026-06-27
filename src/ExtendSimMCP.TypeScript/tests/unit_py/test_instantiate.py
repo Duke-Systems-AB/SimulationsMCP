@@ -125,3 +125,23 @@ def test_flow_chain_uses_disconnect_first_and_clean_nodes():
     qid = result["internalBlockIds"]["q"]
     aid = result["internalBlockIds"]["act"]
     assert ops.node_of(qid, 1) == ops.node_of(aid, 0) != 0
+
+
+def test_side_connections_params_and_interface():
+    ops = FakeOps()
+    result = build_molecule(load("machine-with-breakdowns.json"), {"process_time": 3, "mtbf": 120, "mttr": 8}, ops)
+
+    # Shutdown placed inside and side-connected by name (krav 10), node-verified.
+    sd = result["internalBlockIds"]["sd"]
+    act = result["internalBlockIds"]["act"]
+    assert ops.node_of(sd, ops.con_index(sd, "SD_ValueOut")) == ops.node_of(act, ops.con_index(act, "SDV_In")) != 0
+
+    # Params resolved and set: process_time on act, mtbf/mttr on sd.
+    sets = {(c[1], c[2]): c[3] for c in ops.calls if c[0] == "set_value"}
+    assert sets[(act, "D")] == 3
+    assert sets[(sd, "SF_TBF_Arg1_prm")] == 120
+    assert sets[(sd, "SF_TTR_Arg1_prm")] == 8
+
+    # Interface map binds molecule ports to inner block + outer connector.
+    assert result["interfaceMap"]["in"]["blockId"] == result["internalBlockIds"]["q"]
+    assert result["interfaceMap"]["out"]["blockId"] == act
