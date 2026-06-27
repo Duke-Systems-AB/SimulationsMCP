@@ -1219,6 +1219,19 @@ server.tool(
 );
 
 server.tool(
+  "instantiate_pattern",
+  "Build a reusable molecule as an H-block in the open model. Args: moleculeId (e.g. 'machine-with-breakdowns' or 'buffer'), params (object of param bindings such as process_time/mtbf/mttr).",
+  {
+    moleculeId: z.string().describe("Molecule ID (e.g. 'machine-with-breakdowns' or 'buffer')"),
+    params: z.record(z.any()).optional().describe("Parameter bindings (e.g. { process_time: 5, mtbf: 100 })"),
+    modelId: z.string().optional().describe("Model ID")
+  },
+  async ({ moleculeId, params, modelId }) => {
+    return safeToolCall("instantiate_pattern", () => backend.instantiatePattern({ moleculeId, params, modelId }), { moleculeId, params, modelId });
+  }
+);
+
+server.tool(
   "block_info",
   "Get info about a block. Use blockId for live info from model (connectors, current values). Use query for reference info about a block type.",
   {

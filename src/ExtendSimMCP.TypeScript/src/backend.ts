@@ -1658,3 +1658,11 @@ export async function timeConvert(params: {
   return await sendCommand("time_convert", params);
 }
 
+export async function instantiatePattern(params: {
+  moleculeId: string;
+  params?: Record<string, unknown>;
+  modelId?: string;
+}) {
+  return await sendCommand("instantiate_pattern", params);
+}
+
