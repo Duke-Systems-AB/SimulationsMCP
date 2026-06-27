@@ -80,3 +80,28 @@ def _check_attribute_contract(ref_to_pattern, molecules, edges):
         if missing:
             raise FlowError(
                 f"instance {ref} reads {sorted(missing)} but no upstream instance writes them")
+
+
+def build_flow(flow_def, ops):
+    """Instantiate every molecule instance and wire them per the flow definition.
+
+    Reuses the M3 engine; `ops` is the injected EsOps interface.
+    """
+    from instantiate import build_molecule, _load_molecule
+    molecules = {i["pattern"]: _load_molecule(i["pattern"]) for i in flow_def["instances"]}
+    validate_flow(flow_def, molecules)
+
+    instances = {}
+    for i in flow_def["instances"]:
+        res = build_molecule(molecules[i["pattern"]], i.get("params") or {}, ops)
+        instances[i["ref"]] = {"hblockId": res["hblockId"], "interfaceMap": res["interfaceMap"]}
+
+    for w in flow_def.get("wiring", []):
+        a_ref, a_port = w["from"].split(".", 1)
+        b_ref, b_port = w["to"].split(".", 1)
+        a, b = instances[a_ref], instances[b_ref]
+        ops.connect(a["hblockId"], a["interfaceMap"][a_port]["outerCon"],
+                    b["hblockId"], b["interfaceMap"][b_port]["outerCon"])
+
+    return {"flowId": flow_def.get("id"), "instances": instances,
+            "wiring": flow_def.get("wiring", [])}
