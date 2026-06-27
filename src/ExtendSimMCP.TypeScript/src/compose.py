@@ -66,7 +66,8 @@ def _check_attribute_contract(ref_to_pattern, molecules, edges):
             if p not in seen:
                 seen.add(p)
                 stack.extend(preds[p])
-        return seen
+        # An instance is never its own upstream writer (e.g. via a self-loop or cycle).
+        return seen - {node}
 
     for ref, pattern in ref_to_pattern.items():
         reads, _ = _attrs(molecules[pattern])
@@ -87,8 +88,14 @@ def build_flow(flow_def, ops):
 
     Reuses the M3 engine; `ops` is the injected EsOps interface.
     """
-    from instantiate import build_molecule, _load_molecule
-    molecules = {i["pattern"]: _load_molecule(i["pattern"]) for i in flow_def["instances"]}
+    from instantiate import build_molecule, _load_molecule, BuildError
+    molecules = {}
+    for i in flow_def["instances"]:
+        if i["pattern"] not in molecules:
+            try:
+                molecules[i["pattern"]] = _load_molecule(i["pattern"])
+            except BuildError as e:
+                raise FlowError(str(e))      # unknown pattern -> INVALID_FLOW, not generic
     validate_flow(flow_def, molecules)
 
     instances = {}

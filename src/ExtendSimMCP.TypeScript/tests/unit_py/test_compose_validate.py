@@ -66,3 +66,11 @@ def test_attribute_contract_satisfied_by_upstream_writer():
          "instances": [{"ref": "m1", "pattern": "writer"}, {"ref": "m2", "pattern": "reader"}],
          "wiring": [{"from": "m1.out", "to": "m2.in"}]}
     validate_flow(f, {"writer": mol(writes=["partType"]), "reader": mol(reads=["partType"])})  # no raise
+
+def test_self_loop_does_not_satisfy_own_read():
+    # An instance must not satisfy its own attribute read via a self-loop.
+    f = {"id": "f",
+         "instances": [{"ref": "m1", "pattern": "rw"}],
+         "wiring": [{"from": "m1.out", "to": "m1.in"}]}
+    with pytest.raises(FlowError, match="partType"):
+        validate_flow(f, {"rw": mol(reads=["partType"], writes=["partType"])})
