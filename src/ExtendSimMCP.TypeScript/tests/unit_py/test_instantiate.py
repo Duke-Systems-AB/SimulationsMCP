@@ -96,7 +96,7 @@ class FakeOps:
 
 def test_seed_is_wrapped_in_context_then_stubs_removed():
     ops = FakeOps()
-    result = build_molecule(load("source-sink.json"), {}, ops)
+    result = build_molecule(load("buffer.json"), {}, ops)
     kinds = [c[0] for c in ops.calls]
     # activates, builds stub-seed-stub, wraps the seed, removes both stubs
     assert kinds[0] == "activate"

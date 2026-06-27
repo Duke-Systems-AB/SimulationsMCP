@@ -30,15 +30,8 @@ def build_molecule(molecule: Dict[str, Any], params: Dict[str, Any], ops) -> Dic
     up = ops.add_block("Item.lbr", "Create")
     seed_id = ops.add_block(seed["lib"], seed["type"])
     down = ops.add_block("Item.lbr", "Exit")
-    # Connect stubs only for connectors the seed actually exposes.
-    try:
-        ops.connect(up, ops.con_index(up, "ItemOut"), seed_id, ops.con_index(seed_id, "ItemIn"))
-    except (KeyError, AttributeError):
-        pass  # seed has no ItemIn (e.g. a Create/source block)
-    try:
-        ops.connect(seed_id, ops.con_index(seed_id, "ItemOut"), down, ops.con_index(down, "ItemIn"))
-    except (KeyError, AttributeError):
-        pass  # seed has no ItemOut (e.g. an Exit/sink block)
+    ops.connect(up, ops.con_index(up, "ItemOut"), seed_id, ops.con_index(seed_id, "ItemIn"))
+    ops.connect(seed_id, ops.con_index(seed_id, "ItemOut"), down, ops.con_index(down, "ItemIn"))
     hblock_id = ops.create_hblock(seed_id, molecule["id"])
     ops.remove_block(up)
     ops.remove_block(down)
