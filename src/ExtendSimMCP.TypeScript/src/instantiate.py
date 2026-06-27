@@ -103,3 +103,76 @@ def build_molecule(molecule: Dict[str, Any], params: Dict[str, Any], ops) -> Dic
         iface[port["port"]] = {"blockId": internal[ref], "outerCon": ops.outlet_connector(hblock_id)}
 
     return {"hblockId": hblock_id, "internalBlockIds": internal, "interfaceMap": iface}
+
+
+class RealOps:
+    """EsOps backed by the live simulation_backend COM primitives.
+
+    Every state-changing call effect-verifies (krav 12): success flags are
+    necessary but never sufficient.
+    """
+    def __init__(self, backend):
+        self._b = backend
+
+    def activate(self):
+        self._b.execute_command("ActivateApplication();")
+
+    def add_block(self, lib, type_):
+        r = self._b.block_add(lib, type_)
+        if not r.get("success") or "blockId" not in r:
+            raise BuildError(f"add_block failed: {lib}/{type_}: {r}")
+        return r["blockId"]
+
+    def con_index(self, block_id, con_name):
+        r = self._b.execute_command(
+            f'global0 = getConNumber({block_id}, "{con_name}");', get_result=True)
+        return int(r["result"])
+
+    def connect(self, a_id, a_con, b_id, b_con):
+        before = self.node_of(b_id, b_con)
+        self._b.execute_command(f"MakeConnection({a_id}, {a_con}, {b_id}, {b_con});")
+        if self.node_of(a_id, a_con) != self.node_of(b_id, b_con) or self.node_of(b_id, b_con) == 0:
+            raise BuildError(f"connect did not take: ({a_id},{a_con})->({b_id},{b_con})")
+
+    def disconnect(self, a_id, a_con, b_id, b_con):
+        r = self._b.block_disconnect(a_id, a_con, b_id, b_con)
+        if not r.get("success"):
+            raise BuildError(f"disconnect failed: ({a_id},{a_con})->({b_id},{b_con})")
+
+    def create_hblock(self, seed_id, name):
+        before = self._b.hierarchy_list().get("count", 0)
+        self._b.execute_command(
+            f'UnselectAll(); AddBlockToSelection({seed_id}); CreateHblock("{name}");')
+        hl = self._b.hierarchy_list()
+        if hl.get("count", 0) <= before:
+            raise BuildError(f"CreateHblock produced no H-block (name={name})")
+        return [h for h in hl["hierarchies"] if h.get("blockName") == name][-1]["blockId"]
+
+    def place_in_hblock(self, lib, type_, hblock_id):
+        r = self._b.execute_command(
+            f'global0 = PlaceBlockInHblock("{type_}", "{lib}", 200, 200, {hblock_id});',
+            get_result=True)
+        return int(r["result"])
+
+    def remove_block(self, block_id):
+        self._b.block_remove(block_id)
+
+    def set_value(self, block_id, var, value):
+        self._b.block_set_value(block_id, var, value)
+
+    def _connector_obj(self, hblock_id, name):
+        for blk in self._b.hierarchy_get_contents(hblock_id).get("blocks", []):
+            if blk.get("blockName") == name:
+                return blk["blockId"]
+        raise BuildError(f"connector-object {name} not found in H-block {hblock_id}")
+
+    def inlet_connector(self, hblock_id):
+        return self._connector_obj(hblock_id, "Con0In")
+
+    def outlet_connector(self, hblock_id):
+        return self._connector_obj(hblock_id, "Con1Out")
+
+    def node_of(self, block_id, con_index):
+        r = self._b.execute_command(
+            f"global0 = NodeGetIDIndex({block_id}, {con_index});", get_result=True)
+        return int(r.get("result") or 0)

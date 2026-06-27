@@ -145,3 +145,33 @@ def test_side_connections_params_and_interface():
     # Interface map binds molecule ports to inner block + outer connector.
     assert result["interfaceMap"]["in"]["blockId"] == result["internalBlockIds"]["q"]
     assert result["interfaceMap"]["out"]["blockId"] == act
+
+
+from unittest import mock
+
+def test_realops_create_hblock_verifies_effect():
+    import instantiate as inst
+    fake_backend = mock.Mock()
+    fake_backend.execute_command.return_value = {"success": True}
+    # hierarchy_list count goes 0 -> 1 after CreateHblock; new H-block named after seed
+    fake_backend.hierarchy_list.side_effect = [
+        {"count": 0, "hierarchies": []},
+        {"count": 1, "hierarchies": [{"blockId": 57, "blockName": "m"}]},
+    ]
+    ops = inst.RealOps(fake_backend)
+    hid = ops.create_hblock(seed_id=10, name="m")
+    assert hid == 57
+    # it must NOT trust success:true alone — it called hierarchy_list to verify
+    assert fake_backend.hierarchy_list.call_count == 2
+
+def test_realops_create_hblock_raises_when_not_created():
+    import instantiate as inst
+    fake_backend = mock.Mock()
+    fake_backend.execute_command.return_value = {"success": True}
+    fake_backend.hierarchy_list.side_effect = [
+        {"count": 0, "hierarchies": []},
+        {"count": 0, "hierarchies": []},   # nothing created despite success:true
+    ]
+    ops = inst.RealOps(fake_backend)
+    with pytest.raises(inst.BuildError, match="H-block"):
+        ops.create_hblock(seed_id=10, name="m")
