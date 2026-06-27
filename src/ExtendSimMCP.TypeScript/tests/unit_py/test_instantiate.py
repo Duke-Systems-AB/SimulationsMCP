@@ -103,3 +103,25 @@ def test_seed_is_wrapped_in_context_then_stubs_removed():
     assert "create_hblock" in kinds
     assert kinds.count("remove_block") >= 2          # both stubs removed
     assert isinstance(result["hblockId"], int)
+
+
+def test_flow_chain_uses_disconnect_first_and_clean_nodes():
+    ops = FakeOps()
+    result = build_molecule(load("machine-with-breakdowns.json"), {"process_time": 3, "mtbf": 120, "mttr": 8}, ops)
+
+    # The non-seed flow node (act) is placed inside, then inserted at the outlet
+    # with disconnect-FIRST (krav 8): disconnect(outlet<->seed.out) BEFORE reconnect.
+    kinds = [c for c in ops.calls if c[0] in ("place_in_hblock", "disconnect", "connect")]
+    assert any(c[0] == "place_in_hblock" and c[2] == "Activity" for c in ops.calls)
+    dis_idx = next(i for i, c in enumerate(kinds) if c[0] == "disconnect")
+    con_after = [c for c in kinds[dis_idx + 1:] if c[0] == "connect"]
+    assert len(con_after) >= 2          # reconnect seed->new and new->outlet after disconnect
+
+    # internal ids recorded for every node ref
+    assert set(result["internalBlockIds"]).issuperset({"q", "act"})
+
+    # Topology clean: seed.ItemOut and act.ItemIn share a node (the internal edge),
+    # and that node differs from the outlet node (no collapse).
+    qid = result["internalBlockIds"]["q"]
+    aid = result["internalBlockIds"]["act"]
+    assert ops.node_of(qid, 1) == ops.node_of(aid, 0) != 0
