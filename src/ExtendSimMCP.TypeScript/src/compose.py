@@ -105,3 +105,21 @@ def build_flow(flow_def, ops):
 
     return {"flowId": flow_def.get("id"), "instances": instances,
             "wiring": flow_def.get("wiring", [])}
+
+
+def compose_flow(flow_def, model_id=None):
+    """MCP entry point: build a whole flow in the live model.
+
+    model_id accepted for forward-compatibility but currently ignored.
+    """
+    import simulation_backend as backend
+    from instantiate import RealOps
+    from molecule_schema import MoleculeError
+    try:
+        return {"success": True, **build_flow(flow_def, RealOps(backend))}
+    except FlowError as e:
+        return {"success": False, "errorCode": "INVALID_FLOW", "error": str(e)}
+    except MoleculeError as e:
+        return {"success": False, "errorCode": "INVALID_MOLECULE", "error": str(e)}
+    except Exception as e:
+        return {"success": False, "errorCode": "COMPOSE_FAILED", "error": str(e)}

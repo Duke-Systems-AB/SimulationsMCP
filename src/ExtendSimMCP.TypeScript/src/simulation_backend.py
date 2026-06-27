@@ -10098,6 +10098,8 @@ COMMANDS = {
     "connection_list": lambda p: connection_list(p.get("modelId")),
     "instantiate_pattern": lambda p: __import__("instantiate").instantiate_pattern(
         p.get("moleculeId"), p.get("params"), p.get("modelId")),
+    "compose_flow": lambda p: __import__("compose").compose_flow(
+        p.get("flow"), p.get("modelId")),
     "block_info": lambda p: block_info(
         query=p.get("query"), block_id=p.get("blockId"),
         model_id=p.get("modelId")
