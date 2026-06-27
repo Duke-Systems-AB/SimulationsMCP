@@ -6,7 +6,7 @@ is testable. Every COM-affecting step is effect-verified, never trusting a
 success flag (krav 12). See spec 2026-06-27-m3-instantiate-pattern-design.md.
 """
 from typing import Any, Dict
-from molecule_schema import validate_molecule, resolve_params
+from molecule_schema import validate_molecule, resolve_params, MoleculeError
 
 
 class BuildError(Exception):
@@ -107,10 +107,10 @@ def build_molecule(molecule: Dict[str, Any], params: Dict[str, Any], ops) -> Dic
     # Phase 5: interface map (molecule port -> inner block + outer connector).
     iface = {}
     for port in molecule["interface"].get("inlets", []):
-        ref, con = port["binds"].split(".")
+        ref = port["binds"].split(".")[0]
         iface[port["port"]] = {"blockId": internal[ref], "outerCon": ops.outer_index(hblock_id, "in")}
     for port in molecule["interface"].get("outlets", []):
-        ref, con = port["binds"].split(".")
+        ref = port["binds"].split(".")[0]
         iface[port["port"]] = {"blockId": internal[ref], "outerCon": ops.outer_index(hblock_id, "out")}
 
     return {"hblockId": hblock_id, "internalBlockIds": internal, "interfaceMap": iface}
@@ -168,13 +168,23 @@ class RealOps:
         r = self._b.execute_command(
             f'global0 = PlaceBlockInHblock("{type_}", "{lib}", 200, 200, {hblock_id});',
             get_result=True)
-        return int(r["result"])
+        if not r.get("success"):
+            raise BuildError(f"place_in_hblock failed: {lib}/{type_} in {hblock_id}: {r}")
+        new_id = int(r["result"])
+        ids = [b.get("blockId") for b in self._b.hierarchy_get_contents(hblock_id).get("blocks", [])]
+        if new_id not in ids:
+            raise BuildError(f"place_in_hblock: block {new_id} not inside H-block {hblock_id}")
+        return new_id
 
     def remove_block(self, block_id):
-        self._b.block_remove(block_id)
+        r = self._b.block_remove(block_id)
+        if not r.get("success"):
+            raise BuildError(f"remove_block failed: {block_id}: {r}")
 
     def set_value(self, block_id, var, value):
-        self._b.block_set_value(block_id, var, value)
+        r = self._b.block_set_value(block_id, var, value)
+        if not r.get("success"):
+            raise BuildError(f"set_value failed: block {block_id} {var}={value}: {r}")
 
     def _outer_connector(self, hblock_id, direction):
         """The H-block's outer connector dict for a direction (in/out).
@@ -194,9 +204,6 @@ class RealOps:
 
     def inlet_connector(self, hblock_id):
         return self._connector_obj(hblock_id, self._outer_connector(hblock_id, "in")["name"])
-
-    def outlet_connector(self, hblock_id):
-        return self._connector_obj(hblock_id, self._outer_connector(hblock_id, "out")["name"])
 
     def outer_index(self, hblock_id, direction):
         return self._outer_connector(hblock_id, direction)["connectorIndex"]
@@ -222,10 +229,16 @@ def _load_molecule(molecule_id):
 
 
 def instantiate_pattern(molecule_id, params, model_id=None):
-    """MCP entry point: build a molecule as an H-block in the live model."""
+    """MCP entry point: build a molecule as an H-block in the live model.
+
+    model_id is accepted for API forward-compatibility but currently ignored:
+    the molecule is always built in the active model.
+    """
     import simulation_backend as backend
-    molecule = _load_molecule(molecule_id)
     try:
+        molecule = _load_molecule(molecule_id)
         return {"success": True, **build_molecule(molecule, params or {}, RealOps(backend))}
+    except MoleculeError as e:
+        return {"success": False, "errorCode": "INVALID_MOLECULE", "error": str(e)}
     except Exception as e:
         return {"success": False, "errorCode": "INSTANTIATE_FAILED", "error": str(e)}

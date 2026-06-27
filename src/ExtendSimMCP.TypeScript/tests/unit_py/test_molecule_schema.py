@@ -44,3 +44,16 @@ def test_interface_binds_unknown_node_fails():
 def test_resolve_params_substitutes_placeholders():
     node = {"ref": "act", "params": {"D": "{{process_time}}", "fixed": 5}}
     assert resolve_params(node, {"process_time": 3}) == {"D": 3, "fixed": 5}
+
+def test_edge_kind_must_be_flow_or_side():
+    m = {**VALID, "edges": [{"kind": "bogus", "from": "q.ItemOut", "to": "act.ItemIn"}]}
+    with pytest.raises(MoleculeError, match="kind"):
+        validate_molecule(m, {"process_time": 3})
+
+def test_at_most_one_inlet_and_outlet():
+    m = {**VALID, "interface": {
+        "inlets": [{"port": "in1", "binds": "q.ItemIn", "role": "item"},
+                   {"port": "in2", "binds": "act.ItemIn", "role": "item"}],
+        "outlets": []}}
+    with pytest.raises(MoleculeError, match="at most one"):
+        validate_molecule(m, {"process_time": 3})

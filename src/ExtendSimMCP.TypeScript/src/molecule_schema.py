@@ -25,15 +25,19 @@ def validate_molecule(molecule: Dict[str, Any], params: Dict[str, Any]) -> None:
         if spec.get("required") and name not in params:
             raise MoleculeError(f"missing required param: {name}")
 
-    # edges reference known nodes
+    # edges: known kind + reference known nodes
     for e in molecule.get("edges", []):
+        if e.get("kind") not in ("flow", "side"):
+            raise MoleculeError(f"edge kind must be 'flow' or 'side': {e}")
         for side in ("from", "to"):
             ref = e[side].split(".", 1)[0]
             if ref not in refs:
                 raise MoleculeError(f"edge {side} references unknown node: {ref}")
 
-    # interface binds reference known nodes
+    # interface: at most one inlet/outlet (M3 builds a single linear flow), binds known
     iface = molecule.get("interface", {})
+    if len(iface.get("inlets", [])) > 1 or len(iface.get("outlets", [])) > 1:
+        raise MoleculeError("interface must have at most one inlet and one outlet")
     for port in (iface.get("inlets", []) + iface.get("outlets", [])):
         ref = port["binds"].split(".", 1)[0]
         if ref not in refs:

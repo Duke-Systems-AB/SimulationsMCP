@@ -87,9 +87,6 @@ class FakeOps:
     def inlet_connector(self, hblock_id):
         return self._hblocks[hblock_id]["inlet"]
 
-    def outlet_connector(self, hblock_id):
-        return self._hblocks[hblock_id]["outlet"]
-
     def outer_index(self, hblock_id, direction):
         return 1 if direction == "in" else 0
 
