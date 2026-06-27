@@ -15,28 +15,27 @@
 ### Task 1: Molecule definitions (data)
 
 **Files:**
-- Create: `src/ExtendSimMCP.TypeScript/patterns/molecules/source-sink.json`
+- Create: `src/ExtendSimMCP.TypeScript/patterns/molecules/buffer.json`
 - Create: `src/ExtendSimMCP.TypeScript/patterns/molecules/machine-with-breakdowns.json`
 
-- [ ] **Step 1: Create `source-sink.json`**
+> The trivial molecule is `buffer` (a single Queue) rather than a source→sink: the seed must be a mid-flow block with both `ItemIn` and `ItemOut` so the seed-wrap-in-context creates a clean inlet+outlet interface. A `Create` seed has no `ItemIn` and does not fit this strategy.
+
+- [ ] **Step 1: Create `buffer.json`**
 
 ```json
 {
-  "id": "source-sink",
+  "id": "buffer",
   "version": "1.0",
   "kind": "molecule",
-  "intent": "Trivial molekyl: skapa items och avsluta",
+  "intent": "Trivial molekyl: en kö som buffrar items",
   "params": {},
   "nodes": [
-    { "ref": "create", "lib": "Item.lbr", "type": "Create", "seed": true },
-    { "ref": "exit",   "lib": "Item.lbr", "type": "Exit" }
+    { "ref": "q", "lib": "Item.lbr", "type": "Queue", "seed": true }
   ],
-  "edges": [
-    { "kind": "flow", "from": "create.ItemOut", "to": "exit.ItemIn" }
-  ],
+  "edges": [],
   "interface": {
-    "inlets":  [],
-    "outlets": []
+    "inlets":  [ { "port": "in",  "binds": "q.ItemIn",  "role": "item" } ],
+    "outlets": [ { "port": "out", "binds": "q.ItemOut", "role": "item" } ]
   }
 }
 ```
@@ -341,7 +340,7 @@ class FakeOps:
 
 def test_seed_is_wrapped_in_context_then_stubs_removed():
     ops = FakeOps()
-    result = build_molecule(load("source-sink.json"), {}, ops)
+    result = build_molecule(load("buffer.json"), {}, ops)
     kinds = [c[0] for c in ops.calls]
     # activates, builds stub-seed-stub, wraps the seed, removes both stubs
     assert kinds[0] == "activate"

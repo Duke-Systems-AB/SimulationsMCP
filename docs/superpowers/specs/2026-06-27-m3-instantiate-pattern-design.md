@@ -83,7 +83,7 @@ Format = PRD §7.1, med två tillägg motiverade av Väg 1:
 
 Två handskrivna molekyler:
 1. **`machine-with-breakdowns`** — Queue→Activity (flow) + Shutdown→Activity (side). Bevisad end-to-end (§2).
-2. **`source-sink`** — Create→Exit (trivial, verifierar motorn på enklast möjliga fall).
+2. **`buffer`** — en enda Queue (trivial; seed måste vara ett mid-flödesblock med både ItemIn och ItemOut för att seed-wrap ska skapa rent inlopp+utlopp — en Create-seed saknar ItemIn och passar inte strategin).
 
 ## 6. Felhantering (fail-closed, FR-19)
 
