@@ -1,0 +1,18 @@
+{
+  "id": "source-sink",
+  "version": "1.0",
+  "kind": "molecule",
+  "intent": "Trivial molekyl: skapa items och avsluta",
+  "params": {},
+  "nodes": [
+    { "ref": "create", "lib": "Item.lbr", "type": "Create", "seed": true },
+    { "ref": "exit",   "lib": "Item.lbr", "type": "Exit" }
+  ],
+  "edges": [
+    { "kind": "flow", "from": "create.ItemOut", "to": "exit.ItemIn" }
+  ],
+  "interface": {
+    "inlets":  [],
+    "outlets": []
+  }
+}

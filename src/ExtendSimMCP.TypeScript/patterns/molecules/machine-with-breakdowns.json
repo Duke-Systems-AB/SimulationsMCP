@@ -1,0 +1,25 @@
+{
+  "id": "machine-with-breakdowns",
+  "version": "1.0",
+  "kind": "molecule",
+  "intent": "Maskin som processar items med stokastiska haverier",
+  "params": {
+    "process_time": { "type": "number", "required": true },
+    "mtbf":         { "type": "number", "required": true },
+    "mttr":         { "type": "number", "required": true }
+  },
+  "nodes": [
+    { "ref": "q",   "lib": "Item.lbr", "type": "Queue",    "seed": true },
+    { "ref": "act", "lib": "Item.lbr", "type": "Activity", "params": { "D": "{{process_time}}" } },
+    { "ref": "sd",  "lib": "Item.lbr", "type": "Shutdown",
+      "params": { "SF_TBF_Arg1_prm": "{{mtbf}}", "SF_TTR_Arg1_prm": "{{mttr}}" } }
+  ],
+  "edges": [
+    { "kind": "flow", "from": "q.ItemOut",      "to": "act.ItemIn" },
+    { "kind": "side", "from": "sd.SD_ValueOut", "to": "act.SDV_In" }
+  ],
+  "interface": {
+    "inlets":  [ { "port": "in",  "binds": "q.ItemIn",   "role": "item" } ],
+    "outlets": [ { "port": "out", "binds": "act.ItemOut", "role": "item" } ]
+  }
+}
