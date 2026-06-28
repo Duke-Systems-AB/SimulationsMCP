@@ -19,12 +19,13 @@ class FakeOps:
     shared node id when two connectors have been connect()-ed.
     """
     CONS = {
-        "Create":   {"ItemOut": 0},
-        "Exit":     {"ItemIn": 0},
-        "Queue":    {"ItemIn": 0, "ItemOut": 1},
-        "Activity": {"ItemIn": 0, "ItemOut": 1, "SDV_In": 6},
-        "Shutdown": {"SD_ValueOut": 1},
-        "Set":      {"ItemIn": 0, "ItemOut": 1},
+        "Create":        {"ItemOut": 0},
+        "Exit":          {"ItemIn": 0},
+        "Queue":         {"ItemIn": 0, "ItemOut": 1, "ResourcePoolQuantityIn": 5},
+        "Activity":      {"ItemIn": 0, "ItemOut": 1, "SDV_In": 6},
+        "Shutdown":      {"SD_ValueOut": 1},
+        "Set":           {"ItemIn": 0, "ItemOut": 1},
+        "Resource Pool": {"ValuesOut": 1},
     }
 
     def __init__(self):
