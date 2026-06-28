@@ -24,18 +24,22 @@ På ett `Equation(I)`-block:
 - `GetDialogVariable(block, "IVars_ttbl", 0, 1)` → `'inCon0'` — **sträng-läsning fungerar.**
 - `SetDialogVariable(block, "OVars_ttbl", "testAttr", 0, 1)` följt av återläsning → `'outCon0'` — **skrivningen persisterade INTE** på den auto-namngivna cellen (cellen var blockstyrd/skrivskyddad).
 
-Slutsats som formar designen: läsning är rättfram; **skrivning får aldrig antas lyckas** bara för att COM-anropet returnerar utan fel. Cellen kan vara blockstyrd och tyst förkasta värdet. Därför är `table_set` skriv-läs-tillbaka-verifierat och fail-closed (samma hårda regel som genomsyrar M3/M4: *lita aldrig på COM `success` — effekt-verifiera*).
+Slutsats som formar designen: läsning är rättfram; **skrivning får aldrig antas lyckas** bara för att anropet returnerar utan fel. Cellen kan vara blockstyrd och tyst förkasta värdet. Därför är `table_set` skriv-läs-tillbaka-verifierat och fail-closed (samma hårda regel som genomsyrar M3/M4: *lita aldrig på COM `success` — effekt-verifiera*).
 
-COM-signaturer som används (ExtendSim-API):
-- Läs: `GetDialogVariable(blockNumber, dialogItemName, row, col)` → sträng.
-- Skriv: `SetDialogVariableNoMsg(blockNumber, dialogItemName, value, row, col)` (NoMsg-varianten undviker blockerande dialogrutor under automation; faller tillbaka på `SetDialogVariable` om NoMsg saknas i builden).
+**Mekanism (korrigerad efter live-test 2026-06-28):** `GetDialogVariable`/`SetDialogVariable` är **MODL-språkfunktioner**, INTE direkta COM-metoder. De anropas via `app.Execute("<modl>;")` och resultat hämtas via `app.Request("System", "globalStr0+:0:0:0")`. (Ett tidigt utkast antog direkta COM-metoder + `SetDialogVariableNoMsg`; ett live-test gav `AttributeError` — den vägen finns inte.)
+
+**Befintliga hjälpfunktioner återanvänds** — `simulation_backend.py` har redan precis denna routing (rad ~101–147):
+- `_get_var(app, block_id, var_name, row, col)` — för `_ttbl`/`_dtbl`/`_dtxt`-suffix kör den `globalStr0 = GetDialogVariable(...)` + `Request` och returnerar strängen. **Detta är kärnan i `table_get`.**
+- `_set_var_string(app, block_id, var_name, value, row, col)` — kör `SetDialogVariable(..., "value", row, col)` (MODL-sträng-escapad). **Detta är kärnan i `table_set`.**
+
+`table_get`/`table_set` blir alltså **tunna wrappers** runt dessa befintliga hjälpfunktioner, där `table_set` lägger till läs-tillbaka-verifieringen.
 
 ## 3. Komponenter
 
 | Enhet | Ansvar | Beroende | Ny/återanvänd |
 |---|---|---|---|
-| `dialog_table.py: table_get_entry(block_id, var, row, col)` | MCP-entry: läs sträng-cell via COM; success/error-dict | `simulation_backend` (COM-app) | Ny |
-| `dialog_table.py: table_set_entry(block_id, var, value, row, col)` | MCP-entry: skriv → läs tillbaka → verifiera; fail-closed | `simulation_backend` (COM-app) | Ny |
+| `dialog_table.py: table_get_entry(block_id, var, row, col)` | MCP-entry: läs sträng-cell via `_get_var`; success/error-dict | `simulation_backend._get_var` | Ny |
+| `dialog_table.py: table_set_entry(block_id, var, value, row, col)` | MCP-entry: `_set_var_string` → `_get_var` (läs tillbaka) → verifiera; fail-closed | `simulation_backend._set_var_string` + `_get_var` | Ny |
 | `simulation_backend.py: COMMANDS` | Dispatch: `"table_get"`, `"table_set"` → entries | — | Modifierad |
 | `index.ts` + `backend.ts` | MCP-verktygsregistrering `table_get`, `table_set` + zod-scheman + backend-helpers | — | Modifierad |
 
@@ -46,23 +50,22 @@ Designprincip: `dialog_table.py` är en **tunn, fokuserad** modul som bara gör 
 ### `table_get(block_id, var, row, col)`
 ```
 1. hämta COM-app (befintlig backend-koppling)
-2. value = app.GetDialogVariable(block_id, var, row, col)
+2. value = _get_var(app, block_id, var, row, col)   # MODL GetDialogVariable + Request
 3. returnera {success: true, value: str(value)}
-4. vid COM-fel → {success: false, errorCode: "TABLE_READ_FAILED", error: <meddelande>}
+4. vid COM/MODL-fel → {success: false, errorCode: "TABLE_READ_FAILED", error: <meddelande>}
 ```
 
 ### `table_set(block_id, var, value, row, col)`
 ```
 1. hämta COM-app
-2. app.SetDialogVariableNoMsg(block_id, var, value, row, col)
-   (fallback: app.SetDialogVariable(...) om NoMsg ej finns)
-3. readback = app.GetDialogVariable(block_id, var, row, col)   # effekt-verifiering
+2. _set_var_string(app, block_id, var, value, row, col)   # MODL SetDialogVariable (escapad)
+3. readback = _get_var(app, block_id, var, row, col)       # effekt-verifiering (MODL)
 4. om str(readback) == str(value):
        returnera {success: true, value: str(readback)}
    annars:
        returnera {success: false, errorCode: "TABLE_WRITE_REJECTED",
                   requested: str(value), actual: str(readback)}
-5. vid COM-fel → {success: false, errorCode: "TABLE_WRITE_FAILED", error: <meddelande>}
+5. vid COM/MODL-fel → {success: false, errorCode: "TABLE_WRITE_FAILED", error: <meddelande>}
 ```
 
 ## 5. Fel-hantering & fail-closed (FR-22)
@@ -77,7 +80,7 @@ Designprincip: `dialog_table.py` är en **tunn, fokuserad** modul som bara gör 
 2. **Enhet, `table_set` lyckad (mock-backend):** mock där `GetDialogVariable` efter skrivning returnerar det skrivna värdet → `{success:true, value:...}`; assert att `SetDialogVariableNoMsg` anropades med rätt argument **och** att readback skedde.
 3. **Enhet, `table_set` förkastad (mock-backend):** mock där readback ≠ skrivet värde → `{success:false, errorCode:"TABLE_WRITE_REJECTED", requested, actual}`.
 4. **Enhet, `table_set` COM-fel:** mock där `SetDialogVariableNoMsg` kastar → `{success:false, errorCode:"TABLE_WRITE_FAILED"}`.
-5. **Enhet, NoMsg-fallback:** mock utan `SetDialogVariableNoMsg` → faller tillbaka på `SetDialogVariable`.
+5. **Enhet, MODL-escaping:** `table_set` med ett värde som innehåller `"` → assert att `_set_var_string` escapar strängen korrekt (ingen trasig MODL).
 6. **Live (skippas utan ExtendSim):**
    - Läs en känd cell på ett `Equation(I)`-block (`IVars_ttbl[0,1]`) → assert sträng tillbaka.
    - Skriv en **skrivbar** cell och assert readback == värdet.
@@ -95,5 +98,5 @@ Designprincip: `dialog_table.py` är en **tunn, fokuserad** modul som bara gör 
 ## 8. Öppna frågor
 
 1. Vilka celler i `Equation(I)`-tabellerna är skrivbara vs blockstyrda — kartläggs i live-steget; påverkar inte API:t (fail-closed hanterar båda).
-2. `SetDialogVariableNoMsg`-tillgänglighet varierar mellan ExtendSim-builds — fallback till `SetDialogVariable` täcker detta; bekräftas live.
+2. Verktygen återanvänder backendens `_get_var`/`_set_var_string` (MODL via `Execute`/`Request`). Inga nya COM-metoder behövs — den vägen är redan beprövad i produktion.
 3. Värdejämförelsen är sträng-exakt (`str(readback) == str(value)`). Om ExtendSim normaliserar värden (trimmar blanksteg, ändrar skiftläge) kan en korrekt skrivning rapporteras som förkastad — bevakas i live-steget; vid behov införs en normaliserande jämförelse, men default är exakt (konservativt/fail-closed).
