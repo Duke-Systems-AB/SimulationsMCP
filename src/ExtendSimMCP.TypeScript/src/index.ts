@@ -1266,6 +1266,35 @@ server.tool(
 );
 
 server.tool(
+  "table_get",
+  "Read a string-table cell (e.g. *_ttbl dialog tables like IVars_ttbl/OVars_ttbl) from a block. Returns the cell as a string. Use this for cells that block_get_value cannot read (it is numeric and returns 'ERR' on string cells).",
+  {
+    blockId: z.number().describe("Block ID"),
+    variableName: z.string().describe("Dialog table variable name, e.g. 'IVars_ttbl'"),
+    row: z.number().optional().describe("Row index (0-based, default 0)"),
+    col: z.number().optional().describe("Column index (0-based, default 0)"),
+  },
+  async ({ blockId, variableName, row, col }) =>
+    safeToolCall("table_get", () => backend.tableGet({ blockId, variableName, row, col }),
+      { blockId, variableName, row, col }),
+);
+
+server.tool(
+  "table_set",
+  "Write a string value into a string-table cell (e.g. *_ttbl). The write is read-back verified: it succeeds only if reading the cell returns the written value, otherwise it fails closed with errorCode TABLE_WRITE_REJECTED (block-controlled cells silently reject writes).",
+  {
+    blockId: z.number().describe("Block ID"),
+    variableName: z.string().describe("Dialog table variable name, e.g. 'AttribsTable_ttbl'"),
+    value: z.string().describe("String value to write into the cell"),
+    row: z.number().optional().describe("Row index (0-based, default 0)"),
+    col: z.number().optional().describe("Column index (0-based, default 0)"),
+  },
+  async ({ blockId, variableName, value, row, col }) =>
+    safeToolCall("table_set", () => backend.tableSet({ blockId, variableName, value, row, col }),
+      { blockId, variableName, value, row, col }),
+);
+
+server.tool(
   "block_info",
   "Get info about a block. Use blockId for live info from model (connectors, current values). Use query for reference info about a block type.",
   {

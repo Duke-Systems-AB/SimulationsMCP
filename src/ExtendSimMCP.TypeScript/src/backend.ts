@@ -1689,3 +1689,22 @@ export async function getPattern(params: {
   return await sendCommand("get_pattern", params);
 }
 
+export async function tableGet(params: {
+  blockId: number;
+  variableName: string;
+  row?: number;
+  col?: number;
+}) {
+  return await sendCommand("table_get", params);
+}
+
+export async function tableSet(params: {
+  blockId: number;
+  variableName: string;
+  value: string;
+  row?: number;
+  col?: number;
+}) {
+  return await sendCommand("table_set", params);
+}
+
