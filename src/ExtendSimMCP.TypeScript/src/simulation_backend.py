@@ -10100,6 +10100,8 @@ COMMANDS = {
         p.get("moleculeId"), p.get("params"), p.get("modelId")),
     "compose_flow": lambda p: __import__("compose").compose_flow(
         p.get("flow"), p.get("modelId")),
+    "list_patterns": lambda p: __import__("patterns").list_patterns(p.get("intent")),
+    "get_pattern": lambda p: __import__("patterns").get_pattern(p.get("patternId")),
     "block_info": lambda p: block_info(
         query=p.get("query"), block_id=p.get("blockId"),
         model_id=p.get("modelId")

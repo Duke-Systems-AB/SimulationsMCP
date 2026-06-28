@@ -1677,3 +1677,15 @@ export async function composeFlow(params: {
   return await sendCommand("compose_flow", params);
 }
 
+export async function listPatterns(params: {
+  intent?: string;
+}) {
+  return await sendCommand("list_patterns", params);
+}
+
+export async function getPattern(params: {
+  patternId: string;
+}) {
+  return await sendCommand("get_pattern", params);
+}
+

@@ -1252,6 +1252,20 @@ server.tool(
 );
 
 server.tool(
+  "list_patterns",
+  "List available molecule/flow patterns. Optional intent substring filter. Returns id, kind, intent, params, interface.",
+  { intent: z.string().optional() },
+  async (args) => safeToolCall("list_patterns", () => backend.listPatterns(args), args),
+);
+
+server.tool(
+  "get_pattern",
+  "Get the full definition of a molecule or flow pattern by id.",
+  { patternId: z.string() },
+  async (args) => safeToolCall("get_pattern", () => backend.getPattern(args), args),
+);
+
+server.tool(
   "block_info",
   "Get info about a block. Use blockId for live info from model (connectors, current values). Use query for reference info about a block type.",
   {
