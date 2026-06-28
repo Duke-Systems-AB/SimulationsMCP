@@ -1,0 +1,10 @@
+{
+  "id": "two-stage-line",
+  "kind": "flow",
+  "intent": "Två maskiner med haveri i serie",
+  "instances": [
+    { "ref": "s1", "pattern": "machine-with-breakdowns", "params": { "process_time": 2, "mtbf": 120, "mttr": 8 } },
+    { "ref": "s2", "pattern": "machine-with-breakdowns", "params": { "process_time": 3, "mtbf": 90,  "mttr": 6 } }
+  ],
+  "wiring": [ { "from": "s1.out", "to": "s2.in" } ]
+}
