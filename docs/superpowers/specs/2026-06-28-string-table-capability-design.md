@@ -59,19 +59,22 @@ Designprincip: `dialog_table.py` är en **tunn, fokuserad** modul som bara gör 
 ```
 1. hämta COM-app
 2. _set_var_string(app, block_id, var, value, row, col)   # MODL SetDialogVariable (escapad)
+   vid fel här → {success: false, errorCode: "TABLE_WRITE_FAILED", error: <meddelande>}
 3. readback = _get_var(app, block_id, var, row, col)       # effekt-verifiering (MODL)
+   vid fel här → {success: false, errorCode: "TABLE_READ_FAILED", error: <meddelande>}
 4. om str(readback) == str(value):
        returnera {success: true, value: str(readback)}
    annars:
        returnera {success: false, errorCode: "TABLE_WRITE_REJECTED",
                   requested: str(value), actual: str(readback)}
-5. vid COM/MODL-fel → {success: false, errorCode: "TABLE_WRITE_FAILED", error: <meddelande>}
 ```
+
+> Skriv- och verifierings-läsningen ligger i **separata** try-block: ett skrivfel ger `TABLE_WRITE_FAILED`, ett fel under den efterföljande verifieringsläsningen ger `TABLE_READ_FAILED`. Då rapporteras inte en redan persisterad skrivning felaktigt som "write failed" (vilket annars kunde få anroparen att dubbel-skriva vid retry).
 
 ## 5. Fel-hantering & fail-closed (FR-22)
 
 - **`table_set` lyckas bara om återläsningen matchar det skrivna värdet.** En blockstyrd/skrivskyddad cell (som den bevisade `OVars_ttbl`-cellen) ger `TABLE_WRITE_REJECTED` med både `requested` och `actual` — anroparen får veta exakt att och varför skrivningen inte tog.
-- Felkoder: `TABLE_READ_FAILED`, `TABLE_WRITE_FAILED` (COM kastade), `TABLE_WRITE_REJECTED` (COM tyst, värdet fastnade inte).
+- Felkoder: `TABLE_READ_FAILED` (läsning, eller verifieringsläsning efter skrivning, kastade), `TABLE_WRITE_FAILED` (själva skrivningen kastade), `TABLE_WRITE_REJECTED` (skrivning tyst, värdet fastnade inte).
 - Inga tysta tomma svar: ett misslyckande är alltid en explicit `success:false` med felkod.
 
 ## 6. Testning (TDD)
