@@ -93,6 +93,7 @@ def test_table_set_com_failure_is_fail_closed():
     res = table_set(be, 3, "OVars_ttbl", "x", 0, 0)
     assert res["success"] is False
     assert res["errorCode"] == "TABLE_WRITE_FAILED"
+    assert res["blockId"] == 3
 
 
 def test_table_set_forwards_value_to_set_var_string():
@@ -103,3 +104,15 @@ def test_table_set_forwards_value_to_set_var_string():
     assert res["success"] is True
     set_call = [c for c in be.calls if c[0] == "set"][0]
     assert set_call == ("set", 7, "Equation_dtxt", 'a"b', 1, 2)
+
+
+def test_table_set_readback_failure_is_distinct_from_write_failure():
+    # Write succeeds, but the verification read raises. The write may have
+    # persisted, so this must NOT be reported as TABLE_WRITE_FAILED.
+    be = FakeBackend(raise_on="get")
+    res = table_set(be, 3, "OVars_ttbl", "x", 0, 0)
+    assert res["success"] is False
+    assert res["errorCode"] == "TABLE_READ_FAILED"
+    # the write was attempted before the failing readback
+    assert be.calls[0] == ("set", 3, "OVars_ttbl", "x", 0, 0)
+    assert res["blockId"] == 3

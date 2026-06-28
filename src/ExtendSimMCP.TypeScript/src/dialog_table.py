@@ -34,9 +34,13 @@ def table_set(backend, block_id, var_name, value, row=0, col=0):
         return model_check
     try:
         backend._set_var_string(app, block_id, var_name, str(value), row, col)
-        readback = backend._get_var(app, block_id, var_name, row, col)
     except Exception as e:
         return _err("TABLE_WRITE_FAILED", str(e),
+                    blockId=block_id, variableName=var_name, row=row, col=col)
+    try:
+        readback = backend._get_var(app, block_id, var_name, row, col)
+    except Exception as e:
+        return _err("TABLE_READ_FAILED", str(e),
                     blockId=block_id, variableName=var_name, row=row, col=col)
     if str(readback) == str(value):
         return {"success": True, "blockId": block_id, "variableName": var_name,
