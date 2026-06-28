@@ -1,0 +1,19 @@
+{
+  "id": "simple-machine",
+  "version": "1.0",
+  "kind": "molecule",
+  "intent": "Maskin: en kö följd av en aktivitet med konfigurerbar processtid",
+  "params": { "process_time": { "type": "number", "required": true } },
+  "attributes": { "reads": [], "writes": [] },
+  "nodes": [
+    { "ref": "q",   "lib": "Item.lbr", "type": "Queue" },
+    { "ref": "act", "lib": "Item.lbr", "type": "Activity", "seed": true, "params": { "D": "{{process_time}}" } }
+  ],
+  "edges": [
+    { "kind": "flow", "from": "q.ItemOut", "to": "act.ItemIn" }
+  ],
+  "interface": {
+    "inlets":  [ { "port": "in",  "binds": "q.ItemIn",    "role": "item" } ],
+    "outlets": [ { "port": "out", "binds": "act.ItemOut", "role": "item" } ]
+  }
+}
