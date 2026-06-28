@@ -28,7 +28,7 @@ def test_live_read_string_cell():
     from dialog_table import table_get_entry
     res = table_get_entry(int(BLOCK_ID), "IVars_ttbl", 0, 1)
     assert res["success"] is True
-    assert isinstance(res["value"], str)
+    assert res["value"]  # non-empty: col 1 holds the connector/variable name in Equation(I) IVars
 
 
 def test_live_write_writable_cell_roundtrips():
@@ -40,7 +40,8 @@ def test_live_write_writable_cell_roundtrips():
         assert res["success"] is True
         assert res["value"] == "// table_set probe"
     finally:
-        table_set_entry(int(BLOCK_ID), "Equation_dtxt", original, 0, 0)
+        restore = table_set_entry(int(BLOCK_ID), "Equation_dtxt", original, 0, 0)
+        assert restore["success"] is True, f"Restore failed, ExtendSim left mutated: {restore}"
 
 
 def test_live_block_controlled_cell_fails_closed():
