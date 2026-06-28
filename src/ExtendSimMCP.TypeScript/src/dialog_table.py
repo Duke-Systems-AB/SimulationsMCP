@@ -28,4 +28,20 @@ def table_get(backend, block_id, var_name, row=0, col=0):
 
 
 def table_set(backend, block_id, var_name, value, row=0, col=0):
-    raise NotImplementedError("table_set is implemented in Task 2")
+    app = backend.get_extendsim_app()
+    model_check = backend._validate_model_open(app)
+    if not model_check.get("success"):
+        return model_check
+    try:
+        backend._set_var_string(app, block_id, var_name, str(value), row, col)
+        readback = backend._get_var(app, block_id, var_name, row, col)
+    except Exception as e:
+        return _err("TABLE_WRITE_FAILED", str(e),
+                    blockId=block_id, variableName=var_name, row=row, col=col)
+    if str(readback) == str(value):
+        return {"success": True, "blockId": block_id, "variableName": var_name,
+                "row": row, "col": col, "value": str(readback)}
+    return _err("TABLE_WRITE_REJECTED",
+                f"write to {var_name}[{row},{col}] on block {block_id} did not persist",
+                blockId=block_id, variableName=var_name, row=row, col=col,
+                requested=str(value), actual=str(readback))
