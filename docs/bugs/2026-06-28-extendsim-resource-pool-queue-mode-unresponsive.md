@@ -40,6 +40,12 @@ Expected behaviour: ExtendSim should either ignore the unused Resource Pool conn
 
 We build hierarchical "molecule" blocks via COM automation. A molecule wired a Resource Pool to a Queue's `ResourcePoolQuantityIn` but did not set `QueueType_pop` to Resource Pool mode. On `RunSimulation`, ExtendSim went unresponsive and COM died with RPC-server-unavailable; the application had to be restarted. A reproduction snippet is in `repro-resource-pool-queue-unresponsive.py` (same directory) — **do not run it against a live ExtendSim you care about; it makes ExtendSim unresponsive.**
 
+## Workaround confirmed + a telling contrast (2026-06-28)
+
+Setting the Queue's `QueueType_pop` to the **Resource Pool** value (index **2** in this build) *before* running avoids the hang entirely — the simulation completes normally (COM stays alive).
+
+Tellingly, the **related** misconfiguration "Resource Pool connected, mode = Resource Pool, but no resource pool *defined*" produces a **graceful warning** ("Resource Pool must specify at least one valid resource pool") and the run completes (0 items through) — ExtendSim does **not** crash there. So ExtendSim is capable of warning gracefully about Resource-Pool misconfiguration; the fact that the *mode-mismatch* case (pool connected to a non-Resource-Pool-mode Queue) **hangs/crashes instead of warning** is therefore clearly a defect, not an inherent limitation.
+
 ## Severity / impact
 
 High for automation: a single mis-configured (but structurally legal) connection takes down the whole application with no recoverable error — only a force-restart. Even interactively, a user who connects a Resource Pool before switching the Queue to Resource Pool mode loses their session.
