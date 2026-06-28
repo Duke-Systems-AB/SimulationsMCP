@@ -10102,6 +10102,10 @@ COMMANDS = {
         p.get("flow"), p.get("modelId")),
     "list_patterns": lambda p: __import__("patterns").list_patterns(p.get("intent")),
     "get_pattern": lambda p: __import__("patterns").get_pattern(p.get("patternId")),
+    "table_get": lambda p: __import__("dialog_table").table_get_entry(
+        p.get("blockId"), p.get("variableName"), p.get("row", 0), p.get("col", 0)),
+    "table_set": lambda p: __import__("dialog_table").table_set_entry(
+        p.get("blockId"), p.get("variableName"), p.get("value"), p.get("row", 0), p.get("col", 0)),
     "block_info": lambda p: block_info(
         query=p.get("query"), block_id=p.get("blockId"),
         model_id=p.get("modelId")

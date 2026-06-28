@@ -49,3 +49,13 @@ def table_set(backend, block_id, var_name, value, row=0, col=0):
                 f"write to {var_name}[{row},{col}] on block {block_id} did not persist",
                 blockId=block_id, variableName=var_name, row=row, col=col,
                 requested=str(value), actual=str(readback))
+
+
+def table_get_entry(block_id, var_name, row=0, col=0):
+    import simulation_backend as backend
+    return table_get(backend, block_id, var_name, row, col)
+
+
+def table_set_entry(block_id, var_name, value, row=0, col=0):
+    import simulation_backend as backend
+    return table_set(backend, block_id, var_name, value, row, col)

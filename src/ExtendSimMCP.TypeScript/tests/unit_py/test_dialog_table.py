@@ -116,3 +116,17 @@ def test_table_set_readback_failure_is_distinct_from_write_failure():
     # the write was attempted before the failing readback
     assert be.calls[0] == ("set", 3, "OVars_ttbl", "x", 0, 0)
     assert res["blockId"] == 3
+
+
+def test_entries_are_callable_and_lazy_import_backend():
+    # The entry functions must exist and accept the documented arguments.
+    # We don't call them here (they touch COM); we only assert their presence
+    # and arity so the dispatch wiring has real targets.
+    import inspect
+    import dialog_table
+    assert callable(dialog_table.table_get_entry)
+    assert callable(dialog_table.table_set_entry)
+    get_params = list(inspect.signature(dialog_table.table_get_entry).parameters)
+    set_params = list(inspect.signature(dialog_table.table_set_entry).parameters)
+    assert get_params == ["block_id", "var_name", "row", "col"]
+    assert set_params == ["block_id", "var_name", "value", "row", "col"]
