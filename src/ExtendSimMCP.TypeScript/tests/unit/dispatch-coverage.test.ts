@@ -1,5 +1,5 @@
 /**
- * Dispatch coverage tests — verify all 84 tools have complete wiring.
+ * Dispatch coverage tests — verify all 98 tools have complete wiring.
  *
  * Reads index.ts, backend.ts, and simulation_backend.py as text and uses
  * regex to extract tool names, export names, and COMMANDS keys.
