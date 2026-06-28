@@ -1,0 +1,16 @@
+{
+  "id": "tag-items",
+  "version": "1.0",
+  "kind": "molecule",
+  "intent": "Märk items med attributet partType",
+  "params": {},
+  "attributes": { "reads": [], "writes": ["partType"] },
+  "nodes": [
+    { "ref": "set", "lib": "Item.lbr", "type": "Set", "seed": true }
+  ],
+  "edges": [],
+  "interface": {
+    "inlets":  [ { "port": "in",  "binds": "set.ItemIn",  "role": "item" } ],
+    "outlets": [ { "port": "out", "binds": "set.ItemOut", "role": "item" } ]
+  }
+}

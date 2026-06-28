@@ -24,6 +24,7 @@ class FakeOps:
         "Queue":    {"ItemIn": 0, "ItemOut": 1},
         "Activity": {"ItemIn": 0, "ItemOut": 1, "SDV_In": 6},
         "Shutdown": {"SD_ValueOut": 1},
+        "Set":      {"ItemIn": 0, "ItemOut": 1},
     }
 
     def __init__(self):
