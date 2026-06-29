@@ -42,3 +42,12 @@ def test_non_equation_block_is_confidence_none():
     r = FakeReader("Queue")
     res = detect_attributes(7, r)
     assert res == {"reads": [], "writes": [], "confidence": "none"}
+
+def test_query_equation_with_space_is_treated_as_equation():
+    # Real ExtendSim block type name has a space: "Query Equation (I)"
+    r = FakeReader("Query Equation (I)",
+                   ivars=[{"variable": "v_in", "attribute": "partType"}],
+                   ovars=[])
+    res = detect_attributes(7, r)
+    assert res["reads"] == ["partType"]
+    assert res["confidence"] == "high"
