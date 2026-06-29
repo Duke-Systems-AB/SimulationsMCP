@@ -10106,6 +10106,8 @@ COMMANDS = {
         p.get("blockId"), p.get("variableName"), p.get("row", 0), p.get("col", 0)),
     "table_set": lambda p: __import__("dialog_table").table_set_entry(
         p.get("blockId"), p.get("variableName"), p.get("value"), p.get("row", 0), p.get("col", 0)),
+    "detect_attributes": lambda p: __import__("attribute_detect").detect_attributes_entry(
+        p.get("blockId"), p.get("modelId")),
     "block_info": lambda p: block_info(
         query=p.get("query"), block_id=p.get("blockId"),
         model_id=p.get("modelId")

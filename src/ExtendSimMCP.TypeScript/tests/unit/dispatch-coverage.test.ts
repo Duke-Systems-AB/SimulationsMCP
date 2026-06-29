@@ -1,5 +1,5 @@
 /**
- * Dispatch coverage tests — verify all 98 tools have complete wiring.
+ * Dispatch coverage tests — verify all 99 tools have complete wiring.
  *
  * Reads index.ts, backend.ts, and simulation_backend.py as text and uses
  * regex to extract tool names, export names, and COMMANDS keys.
@@ -57,8 +57,8 @@ beforeAll(() => {
 });
 
 describe("Tool Registration Coverage", () => {
-  it("should have exactly 98 registered tools", () => {
-    expect(toolNames.length).toBe(98);
+  it("should have exactly 99 registered tools", () => {
+    expect(toolNames.length).toBe(99);
   });
 
   it("should have no duplicate tool names in index.ts", () => {

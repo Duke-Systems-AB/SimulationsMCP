@@ -35,6 +35,15 @@ def detect_attributes(block_id, reader):
     return {"reads": reads, "writes": writes, "confidence": confidence}
 
 
+def detect_attributes_entry(block_id, model_id=None):
+    """MCP entry point: detect read/written attributes of a block in the live model."""
+    import simulation_backend as backend
+    try:
+        return {"success": True, **detect_attributes(block_id, RealReader(backend))}
+    except Exception as e:
+        return {"success": False, "errorCode": "DETECT_FAILED", "error": str(e)}
+
+
 # Columns holding the variable name / bound attribute name in IVars_ttbl/OVars_ttbl.
 # PLACEHOLDERS (0/1) pending live discovery against a configured Equation(I) block —
 # the live test (Task 4) confirms these before they ship.

@@ -1295,6 +1295,13 @@ server.tool(
 );
 
 server.tool(
+  "detect_attributes",
+  "Detect which item attributes a block reads/writes (equation blocks: from their in/out variable tables). Returns { reads, writes, confidence }.",
+  { blockId: z.number(), modelId: z.string().optional() },
+  async (args) => safeToolCall("detect_attributes", () => backend.detectAttributes(args), args),
+);
+
+server.tool(
   "block_info",
   "Get info about a block. Use blockId for live info from model (connectors, current values). Use query for reference info about a block type.",
   {

@@ -83,3 +83,38 @@ def test_realreader_table_rows_maps_variable_and_attribute_columns():
     rr = ad.RealReader(backend)
     rows = rr.table_rows(9, "IVars_ttbl")
     assert rows == [{"variable": "v_in", "attribute": "partType"}]
+
+
+def test_detect_attributes_entry_wraps_detect(monkeypatch):
+    import sys, types
+    # Avoid importing the real COM backend: inject a dummy module the entry will import.
+    monkeypatch.setitem(sys.modules, "simulation_backend", types.ModuleType("simulation_backend"))
+    import attribute_detect as ad
+
+    class FakeRR:
+        def __init__(self, backend): pass
+        def block_type(self, b): return "Equation(I)"
+        def table_rows(self, b, t):
+            return [{"variable": "v", "attribute": "partType"}] if t == "IVars_ttbl" else []
+
+    monkeypatch.setattr(ad, "RealReader", FakeRR)
+    res = ad.detect_attributes_entry(5)
+    assert res["success"] is True
+    assert res["reads"] == ["partType"]
+    assert res["writes"] == []
+    assert res["confidence"] == "high"
+
+
+def test_detect_attributes_entry_maps_exceptions_to_DETECT_FAILED(monkeypatch):
+    import sys, types
+    monkeypatch.setitem(sys.modules, "simulation_backend", types.ModuleType("simulation_backend"))
+    import attribute_detect as ad
+
+    class BoomRR:
+        def __init__(self, backend): pass
+        def block_type(self, b): raise RuntimeError("boom")
+
+    monkeypatch.setattr(ad, "RealReader", BoomRR)
+    res = ad.detect_attributes_entry(5)
+    assert res["success"] is False
+    assert res["errorCode"] == "DETECT_FAILED"

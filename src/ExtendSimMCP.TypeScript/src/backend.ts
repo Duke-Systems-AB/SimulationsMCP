@@ -1708,3 +1708,10 @@ export async function tableSet(params: {
   return await sendCommand("table_set", params);
 }
 
+export async function detectAttributes(params: {
+  blockId: number;
+  modelId?: string;
+}) {
+  return await sendCommand("detect_attributes", params);
+}
+
