@@ -117,7 +117,7 @@ Pure mapping over an injected reader; RealReader wraps the live COM backend.
 A block's in-variable table (IVars_ttbl) yields reads, the out-variable table
 (OVars_ttbl) yields writes. See spec 2026-06-28-m6-attribute-detection-design.md.
 """
-_EQUATION_TYPES = {"Equation(I)", "Query Equation(I)", "Queue Equation"}
+_EQUATION_TYPES = {"Equation(I)", "Query Equation (I)", "Queue Equation"}
 
 
 def _attrs_from_rows(rows):

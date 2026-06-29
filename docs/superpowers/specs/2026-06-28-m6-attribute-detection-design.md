@@ -31,7 +31,7 @@ Tabeller läses cell-för-cell via befintliga `block_get_value(blockId, tableVar
 | `attribute_detect.py: detect_attributes(block_id, reader)` | Ren mappningslogik: equation-tabeller → {reads, writes, confidence}. **Ingen direkt COM** (injicerad reader). | — | Ny |
 | `attribute_detect.py: RealReader` | COM-baserad reader: blocktyp + tabell-rad/cell via `simulation_backend` (effekt-verifierad) | `simulation_backend` | Ny |
 | `attribute_detect.py: detect_attributes_entry(block_id)` | MCP-entry: RealReader + success/error-dict | — | Ny |
-| `_EQUATION_TYPES` | Writer-katalog: `{Equation(I), Query Equation(I), Queue Equation}` | — | Ny |
+| `_EQUATION_TYPES` | Writer-katalog: `{Equation(I), Query Equation (I), Queue Equation}` | — | Ny |
 
 Reader-gränssnittet (implementeras av RealReader + FakeReader i test): `block_type(block_id) -> str`; `table_rows(block_id, table_name) -> list[dict]` (varje rad = en variabel med dess namn + bundet attribut + ev. typ).
 
@@ -70,4 +70,4 @@ Reader-gränssnittet (implementeras av RealReader + FakeReader i test): `block_t
 
 1. Exakt kolumn-layout i IVars_ttbl/OVars_ttbl (var attributnamnet ligger, hur "ingen bindning" ser ut) — upptäcks i Steg 1.
 2. Live-fixturen är manuell (tabell-skrivning saknas) — samma rot som tag-items/resource-machine. En framtida "skriv dialog-tabell"-kapabilitet skulle göra fixturen automatisk.
-3. Andra equation-blocktyper (`Query Equation(I)`, `Queue Equation`) antas ha samma IVars/OVars-tabeller — bekräftas vid behov; katalogen är utbyggbar.
+3. Andra equation-blocktyper (`Query Equation (I)`, `Queue Equation`) antas ha samma IVars/OVars-tabeller — bekräftas vid behov; katalogen är utbyggbar.
