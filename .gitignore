@@ -24,3 +24,7 @@ nul
 
 # Claude Code local config
 .claude/
+
+# Release/build artifacts & one-off scripts
+*.zip
+live_verify_*.py

@@ -13,7 +13,7 @@ AI Client (Claude, Gemini, Cursor, ChatGPT)
     │
     │  MCP Protocol (JSON-RPC 2.0)
     ▼
-TypeScript MCP Server (92 tools)
+TypeScript MCP Server (99 tools)
     │
     │  JSON over stdin/stdout
     ▼
@@ -24,7 +24,7 @@ Python COM Backend (pywin32)
 ExtendSim Application
 ```
 
-The server exposes **92 tools** across 17 categories:
+The server exposes **99 tools** across 17 categories:
 
 | Category | Tools |
 |----------|-------|
@@ -66,6 +66,8 @@ npm run build
 ### Install from Installer
 
 Download `SimulationsMCP-Setup-1.19.2.exe` from the `installer/` directory and run it.
+
+> **Note:** the prebuilt installer (`1.19.2`) predates the latest tools. For the current **1.20.0** server (99 tools, incl. `table_get`/`table_set`/`detect_attributes`), install from source (above) until the installer is rebuilt.
 
 ### Configure Your AI Client
 

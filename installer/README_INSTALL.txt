@@ -1,7 +1,8 @@
 Simulations MCP Server - Installation Guide
 ============================================
 Duke Systems AB
-Version 1.19.1 — 92 tools
+Version 1.20.0 — 99 tools
+(Prebuilt installer SimulationsMCP-Setup-1.19.2.exe predates the 1.20.0 tools; rebuild pending.)
 
 PREREQUISITES
 -------------
@@ -140,7 +141,7 @@ FIRST SESSION — IMPORTANT
 When your AI client connects, it should call MCP_init first.
 This returns critical usage rules, available tools, and workflow guidance.
 
-The server provides 92 tools across these categories:
+The server provides 99 tools across these categories:
   Model, Block, Block Layout, Values, Config, Attributes,
   Simulation, Statistics, Multi-run, Database, DB Relations,
   Global Arrays, Hierarchy, Analysis (Optimizer, Scenario Manager),
