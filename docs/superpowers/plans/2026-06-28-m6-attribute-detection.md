@@ -6,9 +6,16 @@
 
 **Architecture:** A pure `detect_attributes(block_id, reader)` mapping function over an injected `reader` interface (block type + table rows), a `RealReader` wrapping `simulation_backend` (effect-verified `block_get_value`), and a `detect_attributes` MCP entry. Equation block types come from a static writer-catalog; non-equation blocks return `confidence: "none"`.
 
-**Tech Stack:** Python 3.13, pytest, `simulation_backend.block_get_value(id, table, row, col)` (supports row/col), the TS MCP server.
+**Tech Stack:** Python 3.13, pytest, `simulation_backend.block_get_value(id, table, row, col, as_string=True)` (string-table cells MUST be read with `as_string=True` — see note below), the TS MCP server.
 
 **Reference:** Spec `docs/superpowers/specs/2026-06-28-m6-attribute-detection-design.md`. Equation(I) tables: `IVars_ttbl` (reads), `OVars_ttbl` (writes). Reader interface: `block_type(block_id)->str`, `table_rows(block_id, table_name)->list[dict]` where each dict has at least `{"variable": str, "attribute": str|None}`.
+
+> **String-read correction (post string-table capability, 2026-06-29):** `IVars_ttbl`/`OVars_ttbl` cells are STRING cells. `block_get_value(...)` with its default `as_string=False` runs `parse_float` on the string and fails (`GET_VALUE_FAILED`, the `'ERR'` we saw). Reading with **`as_string=True`** routes through `_get_var`→`GetDialogVariable` and returns the raw string. `RealReader` therefore reads cells with `as_string=True`. (The dedicated `table_get` tool from the string-table capability is an alternative, but `block_get_value(..., as_string=True)` lives in the same `simulation_backend` module `RealReader` already holds, so it is the smaller, more cohesive choice.)
+
+## Execution sequencing (2026-06-29)
+
+- **COM-free, do now (ExtendSim not required):** Task 2 (pure `detect_attributes` + FakeReader), Task 3 (`RealReader` + mocked tests), Task 5 (MCP registration). `VAR_COL`/`ATTR_COL` in Task 3 stay as clearly-marked placeholders until Task 1 confirms them.
+- **Live, do when ExtendSim is responsive:** Task 1 (column discovery) → confirm/fix `VAR_COL`/`ATTR_COL` → Task 4 (live test). Bound-attribute live verification may now be possible by writing a binding via `table_set` first IF the IVars/OVars cells are user-writable (unknown until Task 1 — OVars auto-named connector cells are block-controlled and reject writes).
 
 ---
 
@@ -29,13 +36,13 @@ for tbl in ('IVars_ttbl','OVars_ttbl'):
     for row in range(3):
         cells=[]
         for col in range(6):
-            r=sb.block_get_value(b, tbl, row, col)
+            r=sb.block_get_value(b, tbl, row, col, as_string=True)
             cells.append((col, r.get('value') if r.get('success') else 'ERR'))
         print(' row', row, cells)
 sb.block_remove(b)
 "
 ```
-Note: a default block may have empty tables. If so, also inspect a **manually-configured** Equation(I) (ask the user to bind one in-var to an attribute and one out-var to an attribute in the UI, leave the block) and re-read to see which column holds the attribute string. **Record the column indices** (e.g. "variable name = col 0, bound attribute = col 2") — they are needed for `RealReader` in Task 3. If string cells read as `-nan`/numbers rather than text, note it (RealReader will need a string read path; `block_get_value` returns `readBack` — prefer a string-returning read).
+Note: a default block may have empty tables. If so, also inspect a **manually-configured** Equation(I) (ask the user to bind one in-var to an attribute and one out-var to an attribute in the UI, leave the block) and re-read to see which column holds the attribute string. **Record the column indices** (e.g. "variable name = col 0, bound attribute = col 2") — they are needed for `RealReader` in Task 3. The snippet already uses `as_string=True` so string cells return text; if any cell still reads as `''`/`-nan`, note which (an unbound binding may legitimately be empty).
 
 - [ ] **Step 2:** No commit (investigation). Carry the column indices forward to Task 3.
 
@@ -182,7 +189,10 @@ def test_realreader_table_rows_maps_variable_and_attribute_columns():
         (0, ad.ATTR_COL): {"success": True, "value": "partType"},
         (1, ad.VAR_COL): {"success": True, "value": ""},     # empty row terminates
     }
-    backend.block_get_value.side_effect = lambda bid, tbl, row, col: cells.get((row, col), {"success": True, "value": ""})
+    # RealReader reads string cells with as_string=True; the mock accepts the kwarg.
+    backend.block_get_value.side_effect = (
+        lambda bid, tbl, row, col, as_string=False: cells.get((row, col), {"success": True, "value": ""})
+    )
     rr = ad.RealReader(backend)
     rows = rr.table_rows(9, "IVars_ttbl")
     assert rows == [{"variable": "v_in", "attribute": "partType"}]
@@ -215,13 +225,13 @@ class RealReader:
     def table_rows(self, block_id, table_name):
         rows, row = [], 0
         while True:
-            var_cell = self._b.block_get_value(block_id, table_name, row, VAR_COL)
+            var_cell = self._b.block_get_value(block_id, table_name, row, VAR_COL, as_string=True)
             if not var_cell.get("success"):
                 break
             var = (str(var_cell.get("value")) if var_cell.get("value") is not None else "").strip()
             if var == "" or var == "nan":          # empty row terminates the table
                 break
-            attr_cell = self._b.block_get_value(block_id, table_name, row, ATTR_COL)
+            attr_cell = self._b.block_get_value(block_id, table_name, row, ATTR_COL, as_string=True)
             attr = (str(attr_cell.get("value")).strip()
                     if attr_cell.get("success") and attr_cell.get("value") not in (None, "", "nan")
                     else None)
@@ -230,7 +240,7 @@ class RealReader:
         return rows
 ```
 
-> If Task 1 found that string cells don't read cleanly via `block_get_value` (e.g. `-nan`), adjust `table_rows` to use the discovered string-read path before finalizing; the test mocks the values so it stays green, but the live test (Task 4) is the real check.
+> Cells are read with `as_string=True` (string-table cells; see the String-read correction at the top). If Task 1's live discovery shows the binding lives somewhere other than a plain `ATTR_COL` cell, adjust `table_rows`/`ATTR_COL` before finalizing; the mocked test stays green, but the live test (Task 4) is the real check.
 
 - [ ] **Step 4: Run — expect PASS**, then full suite green
 
@@ -339,7 +349,7 @@ git commit -m "feat(m6): detect_attributes entry + dispatch + live test"
 **Files:**
 - Modify: `src/ExtendSimMCP.TypeScript/src/index.ts`
 - Modify: `src/ExtendSimMCP.TypeScript/src/backend.ts`
-- Modify: `src/ExtendSimMCP.TypeScript/tests/unit/dispatch-coverage.test.ts` (96 -> 97)
+- Modify: `src/ExtendSimMCP.TypeScript/tests/unit/dispatch-coverage.test.ts` (98 -> 99)
 
 - [ ] **Step 1: Study + match the pattern.** Run `grep -n "get_pattern\|getPattern" src/index.ts src/backend.ts` and match the exact `server.tool` + `safeToolCall` + `backend.<helper>` + `sendCommand` shape used there.
 
@@ -357,7 +367,7 @@ server.tool(
 ```
 > Match the local pattern if it differs from this snippet.
 
-- [ ] **Step 4: Bump the tool-count assertion** in `tests/unit/dispatch-coverage.test.ts` from `96` to `97`.
+- [ ] **Step 4: Bump the tool-count assertion** in `tests/unit/dispatch-coverage.test.ts` from `98` to `99` (both the `it("should have exactly 98 ...")` title and the `toBe(98)` number), and update the header comment on line 2 (`verify all 98 tools`) to `99`.
 
 - [ ] **Step 5: Build and test**
 
@@ -379,4 +389,4 @@ git commit -m "feat(m6): register detect_attributes MCP tool"
 - **`VAR_COL`/`ATTR_COL` come from Task 1's live discovery** — do not ship the `0`/`1` placeholders unverified; the live test (Task 4) confirms them.
 - **Detecting *bound* attributes live needs a manually-configured equation block** (we cannot write the variable table programmatically yet — same wall as tag-items/resource-machine). The live tests therefore only assert the fresh-block (empty) and non-equation (none) cases; bound-attribute detection is verified by hand against a user-configured block.
 - **Never trust `success`** — `RealReader` checks each `block_get_value`/`execute_command` result.
-- **Tool count**: M6 adds one tool (`detect_attributes`) → 96 to 97.
+- **Tool count**: M6 adds one tool (`detect_attributes`) → 98 to 99 (main already shipped string-table's `table_get`/`table_set` at 98).
