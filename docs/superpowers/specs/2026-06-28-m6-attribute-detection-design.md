@@ -66,8 +66,12 @@ Reader-gränssnittet (implementeras av RealReader + FakeReader i test): `block_t
 - **Steg 4:** `detect_attributes_entry` + dispatch + live-test (manuellt fixtur).
 - **Steg 5:** MCP-verktygsregistrering `detect_attributes`.
 
-## 8. Öppna frågor
+## 8. Öppna frågor — uppdaterat efter live-discovery 2026-06-29
 
-1. Exakt kolumn-layout i IVars_ttbl/OVars_ttbl (var attributnamnet ligger, hur "ingen bindning" ser ut) — upptäcks i Steg 1.
-2. Live-fixturen är manuell (tabell-skrivning saknas) — samma rot som tag-items/resource-machine. En framtida "skriv dialog-tabell"-kapabilitet skulle göra fixturen automatisk.
-3. Andra equation-blocktyper (`Query Equation (I)`, `Queue Equation`) antas ha samma IVars/OVars-tabeller — bekräftas vid behov; katalogen är utbyggbar.
+1. **LÖST.** Kolumn-layout: `IVars_ttbl`/`OVars_ttbl` håller variabelnamnet i **kolumn 1** (default connector-namn `inCon0`/`outCon0`). Det finns INGEN separat attribut-kolumn — attributet ÄR col-1-namnet. Ett connector-default-namn (`^(in|out)Con\d+$`) betyder "läser/skriver via konnektorn, inte ett item-attribut" och hoppas över. `RealReader` använder `VAR_COL = 1` och attribut = col-1-värdet (utom connector-defaults). Bekräftat genom att lägga ett färskt `Equation(I)`-block och läsa/skriva cellen.
+2. **LÖST (positivt).** Tabell-skrivning finns nu (`table_set`) och är **live-verifierad**: `table_set_entry(bid, "IVars_ttbl", "partType", 0, 1)` skrev och läste tillbaka `'partType'` på ett riktigt block. Live-fixtur kan därmed konfigureras programmatiskt.
+3. **VIKTIG begränsning upptäckt:** Equation-block kan också läsa/skriva attribut via **ekvationskoden** (`Equation_dtxt`), inte bara via IVars/OVars-tabellerna. Tabell-baserad detektion fångar INTE kod-refererade attribut — det kräver ModL-kod-parsning (PRD §9.6.4, senare M6-steg). Detektionens `confidence` ska spegla detta.
+4. Andra equation-blocktyper (`Query Equation (I)`, `Queue Equation`) antas ha samma IVars/OVars-tabeller — bekräftas vid behov; katalogen är utbyggbar.
+
+### Operativ lärdom (live-arbete)
+Live-discovery mot ExtendSim via fristående COM-skript fryser lätt: **out-of-range tabell-läsningar poppar en modal** som låser COM, och om skriptet dödas mitt i ett COM-anrop blir COM-servern orphan-deadlockad (kräver omstart). Säkert mönster: kör `dialog_watcher.py` som engångs-process parallellt med `block_add`, läs bara IN-range-celler, döda aldrig skriptet mitt i ett anrop. (Se minnet `extendsim-com-freeze-live-work`.)
