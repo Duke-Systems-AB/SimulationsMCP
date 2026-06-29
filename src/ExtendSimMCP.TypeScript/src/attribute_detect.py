@@ -36,7 +36,11 @@ def detect_attributes(block_id, reader):
 
 
 def detect_attributes_entry(block_id, model_id=None):
-    """MCP entry point: detect read/written attributes of a block in the live model."""
+    """MCP entry point: detect read/written attributes of a block in the live model.
+
+    model_id is accepted for API forward-compatibility but currently ignored
+    (detection always operates on the active model).
+    """
     import simulation_backend as backend
     try:
         return {"success": True, **detect_attributes(block_id, RealReader(backend))}
