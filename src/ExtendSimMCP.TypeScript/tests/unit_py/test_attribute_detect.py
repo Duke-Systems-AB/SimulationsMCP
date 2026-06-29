@@ -67,22 +67,38 @@ def test_realreader_block_type_reads_GetBlockType():
     assert rr.block_type(5) == "Equation(I)"
 
 
-def test_realreader_table_rows_maps_variable_and_attribute_columns():
+def test_realreader_table_rows_reads_col1_skips_connector_defaults():
     import attribute_detect as ad
     backend = mock.Mock()
-    # 1 row: variable col -> "v_in", attribute col -> "partType"; then an empty row stops it
+    # col 1 holds the name. row0=attribute 'partType' (kept), row1='inCon0'
+    # (connector default -> skipped), row2='' (terminates).
     cells = {
-        (0, ad.VAR_COL): {"success": True, "value": "v_in"},
-        (0, ad.ATTR_COL): {"success": True, "value": "partType"},
-        (1, ad.VAR_COL): {"success": True, "value": ""},     # empty row terminates
+        (0, ad.VAR_COL): {"success": True, "value": "partType"},
+        (1, ad.VAR_COL): {"success": True, "value": "inCon0"},
+        (2, ad.VAR_COL): {"success": True, "value": ""},
     }
-    # RealReader reads string cells with as_string=True; the mock accepts the kwarg.
     backend.block_get_value.side_effect = (
         lambda bid, tbl, row, col, as_string=False: cells.get((row, col), {"success": True, "value": ""})
     )
     rr = ad.RealReader(backend)
     rows = rr.table_rows(9, "IVars_ttbl")
-    assert rows == [{"variable": "v_in", "attribute": "partType"}]
+    assert rows == [{"variable": "partType", "attribute": "partType"}]
+    assert ad.VAR_COL == 1
+
+
+def test_realreader_pure_connector_block_yields_no_attributes():
+    import attribute_detect as ad
+    backend = mock.Mock()
+    cells = {
+        (0, ad.VAR_COL): {"success": True, "value": "inCon0"},
+        (1, ad.VAR_COL): {"success": True, "value": "outCon0"},
+        (2, ad.VAR_COL): {"success": True, "value": ""},
+    }
+    backend.block_get_value.side_effect = (
+        lambda bid, tbl, row, col, as_string=False: cells.get((row, col), {"success": True, "value": ""})
+    )
+    rr = ad.RealReader(backend)
+    assert rr.table_rows(9, "IVars_ttbl") == []
 
 
 def test_detect_attributes_entry_wraps_detect(monkeypatch):
