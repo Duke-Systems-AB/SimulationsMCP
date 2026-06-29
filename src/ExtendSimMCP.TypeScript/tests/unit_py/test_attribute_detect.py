@@ -51,3 +51,35 @@ def test_query_equation_with_space_is_treated_as_equation():
     res = detect_attributes(7, r)
     assert res["reads"] == ["partType"]
     assert res["confidence"] == "high"
+
+
+# ---------------------------------------------------------------------------
+# RealReader tests (Task 3) — COM backend replaced by mock.Mock
+# ---------------------------------------------------------------------------
+from unittest import mock
+
+
+def test_realreader_block_type_reads_GetBlockType():
+    import attribute_detect as ad
+    backend = mock.Mock()
+    backend.execute_command.return_value = {"success": True, "result": "Equation(I)"}
+    rr = ad.RealReader(backend)
+    assert rr.block_type(5) == "Equation(I)"
+
+
+def test_realreader_table_rows_maps_variable_and_attribute_columns():
+    import attribute_detect as ad
+    backend = mock.Mock()
+    # 1 row: variable col -> "v_in", attribute col -> "partType"; then an empty row stops it
+    cells = {
+        (0, ad.VAR_COL): {"success": True, "value": "v_in"},
+        (0, ad.ATTR_COL): {"success": True, "value": "partType"},
+        (1, ad.VAR_COL): {"success": True, "value": ""},     # empty row terminates
+    }
+    # RealReader reads string cells with as_string=True; the mock accepts the kwarg.
+    backend.block_get_value.side_effect = (
+        lambda bid, tbl, row, col, as_string=False: cells.get((row, col), {"success": True, "value": ""})
+    )
+    rr = ad.RealReader(backend)
+    rows = rr.table_rows(9, "IVars_ttbl")
+    assert rows == [{"variable": "v_in", "attribute": "partType"}]
