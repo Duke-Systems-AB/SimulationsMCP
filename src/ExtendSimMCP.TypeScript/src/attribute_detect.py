@@ -76,6 +76,8 @@ class RealReader:
         while True:
             cell = self._b.block_get_value(block_id, table_name, row, VAR_COL, as_string=True)
             if not cell.get("success"):
+                # fail-closed: an unreadable row is "unknown", never silently dropped
+                rows.append({"variable": "?", "attribute": None})
                 break
             name = (str(cell.get("value")) if cell.get("value") is not None else "").strip()
             if name == "" or name == "nan":          # empty name terminates the table

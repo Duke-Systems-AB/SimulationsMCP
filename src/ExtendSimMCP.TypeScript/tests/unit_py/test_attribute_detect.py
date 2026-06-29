@@ -134,3 +134,27 @@ def test_detect_attributes_entry_maps_exceptions_to_DETECT_FAILED(monkeypatch):
     res = ad.detect_attributes_entry(5)
     assert res["success"] is False
     assert res["errorCode"] == "DETECT_FAILED"
+
+
+def test_realreader_unreadable_cell_is_failclosed_unbound():
+    import attribute_detect as ad
+    backend = mock.Mock()
+    # row 0 reads fine; row 1 read FAILS -> must be marked unbound (fail-closed), not silently dropped.
+    cells = {
+        (0, ad.VAR_COL): {"success": True, "value": "partType"},
+        (1, ad.VAR_COL): {"success": False, "errorCode": "GET_VALUE_FAILED"},
+    }
+    backend.block_get_value.side_effect = (
+        lambda bid, tbl, row, col, as_string=False: cells.get((row, col), {"success": True, "value": ""})
+    )
+    rr = ad.RealReader(backend)
+    rows = rr.table_rows(9, "IVars_ttbl")
+    assert {"variable": "?", "attribute": None} in rows
+    # and it propagates to low confidence through the pure logic
+    from attribute_detect import detect_attributes
+    class _R:
+        def block_type(self, b): return "Equation(I)"
+        def table_rows(self, b, t): return rows if t == "IVars_ttbl" else []
+    res = detect_attributes(9, _R())
+    assert res["confidence"] == "low"
+    assert "?" in res["reads"]
