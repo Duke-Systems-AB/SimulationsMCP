@@ -3879,62 +3879,17 @@ def attribute_set(block_id: int,
                   model_id: Optional[str] = None) -> dict:
     """Configures a Set block to assign an attribute value to items.
 
-    The Set block in ExtendSim (Item.lbr) sets an attribute on each item passing through.
-
-    Args:
-        block_id: Set block ID
-        attribute_name: Name of the attribute to set (e.g., 'priority', 'customer_type')
-        value_type: How to determine the value: "constant", "connector", "distribution"
-        value: Constant value to set (for value_type="constant")
-        distribution: Distribution name (for value_type="distribution")
-        arg1: Distribution arg 1
-        arg2: Distribution arg 2
-        arg3: Distribution arg 3
-
-    Returns:
-        Dictionary with success status
+    ExtendSim 2024's Set block stores attribute assignments in the
+    AttribsTable_ttbl dialog table, not the removed name/value-type/
+    constant-value dialog variables from earlier versions. Delegates to the
+    effect-verified, fail-closed attribute_config core. Currently only
+    value_type="constant" is supported; other types return
+    ATTRIBUTE_VALUETYPE_UNSUPPORTED.
     """
-    try:
-        app = get_extendsim_app()
-
-        # Validate block type
-        check = _validate_block_type(app, block_id, "Set")
-        if not check.get("success"):
-            return check
-
-        # Set the attribute name (string value — use SetDialogVariable)
-        _set_var_string(app, block_id, "AttributeName_prm", attribute_name)
-
-        # Set value type
-        vtype = SET_VALUE_TYPE.get(value_type.lower(), 1)
-        _set_var(app, block_id, "ValueType_pop", vtype)
-
-        if value_type.lower() == "constant" and value is not None:
-            _set_var(app, block_id, "ConstantValue_prm", value)
-
-        elif value_type.lower() == "distribution":
-            if distribution:
-                dist_code = DISTRIBUTIONS.get(distribution.lower(), 1)
-                _set_var(app, block_id, "Rnd_Distributions_pop", dist_code)
-            if arg1 is not None:
-                _set_var(app, block_id, "Rnd_Arg1_prm", arg1)
-            if arg2 is not None:
-                _set_var(app, block_id, "Rnd_Arg2_prm", arg2)
-            if arg3 is not None:
-                _set_var(app, block_id, "Rnd_Arg3_prm", arg3)
-
-        return {
-            "success": True,
-            "blockId": block_id,
-            "attributeName": attribute_name,
-            "valueType": value_type,
-            "value": value,
-            "distribution": distribution if value_type.lower() == "distribution" else None,
-            "args": {"arg1": arg1, "arg2": arg2, "arg3": arg3}
-        }
-    except Exception as e:
-        return _error(ErrorCode.SET_VALUE_FAILED, str(e),
-                      blockId=block_id, operation="attribute_set")
+    import attribute_config
+    import sys as _sys
+    return attribute_config.set_attribute(
+        _sys.modules[__name__], block_id, attribute_name, value, value_type)
 
 
 def attribute_get(block_id: int,
