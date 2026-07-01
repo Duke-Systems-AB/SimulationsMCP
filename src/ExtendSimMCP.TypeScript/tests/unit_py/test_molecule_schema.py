@@ -57,3 +57,36 @@ def test_at_most_one_inlet_and_outlet():
         "outlets": []}}
     with pytest.raises(MoleculeError, match="at most one"):
         validate_molecule(m, {"process_time": 3})
+
+def test_resolve_set_attributes_substitutes_placeholder_and_default():
+    from molecule_schema import resolve_set_attributes
+    node = {"ref": "set", "setAttributes": [{"name": "partType", "value": "{{partType}}"}]}
+    out = resolve_set_attributes(node, {"partType": 3})
+    assert out == [{"name": "partType", "value": 3, "valueType": "constant"}]
+
+
+def test_resolve_set_attributes_empty_when_absent():
+    from molecule_schema import resolve_set_attributes
+    assert resolve_set_attributes({"ref": "set"}, {}) == []
+
+
+def test_validate_rejects_set_attribute_without_name():
+    from molecule_schema import validate_molecule, MoleculeError
+    mol = {
+        "nodes": [{"ref": "set", "lib": "Item.lbr", "type": "Set", "seed": True,
+                   "setAttributes": [{"value": 1}]}],
+        "edges": [], "interface": {}, "params": {},
+    }
+    import pytest
+    with pytest.raises(MoleculeError):
+        validate_molecule(mol, {})
+
+
+def test_validate_accepts_valid_set_attribute():
+    from molecule_schema import validate_molecule
+    mol = {
+        "nodes": [{"ref": "set", "lib": "Item.lbr", "type": "Set", "seed": True,
+                   "setAttributes": [{"name": "partType", "value": "{{partType}}"}]}],
+        "edges": [], "interface": {}, "params": {},
+    }
+    validate_molecule(mol, {})   # must not raise

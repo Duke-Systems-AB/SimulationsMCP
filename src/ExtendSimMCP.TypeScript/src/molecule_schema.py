@@ -43,6 +43,12 @@ def validate_molecule(molecule: Dict[str, Any], params: Dict[str, Any]) -> None:
         if ref not in refs:
             raise MoleculeError(f"interface binds unknown node: {ref}")
 
+    # setAttributes entries must name an attribute
+    for n in nodes:
+        for entry in (n.get("setAttributes") or []):
+            if not entry.get("name"):
+                raise MoleculeError(f"setAttributes entry on node {n.get('ref')} missing 'name'")
+
 
 def resolve_params(node: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
     """Substitute {{name}} placeholders in a node's params with bound values."""
@@ -54,4 +60,28 @@ def resolve_params(node: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, An
                 out[k] = params[m.group(1)]
                 continue
         out[k] = v
+    return out
+
+
+def _resolve_value(v, params):
+    """Resolve a single {{name}} placeholder against params; pass through otherwise."""
+    if isinstance(v, str):
+        m = _PLACEHOLDER.match(v)
+        if m:
+            return params[m.group(1)]
+    return v
+
+
+def resolve_set_attributes(node: Dict[str, Any], params: Dict[str, Any]):
+    """Return the node's setAttributes with placeholders resolved.
+
+    Each entry -> {"name": str, "value": <resolved>, "valueType": str}.
+    """
+    out = []
+    for entry in (node.get("setAttributes") or []):
+        out.append({
+            "name": entry["name"],
+            "value": _resolve_value(entry.get("value"), params),
+            "valueType": entry.get("valueType", "constant"),
+        })
     return out
