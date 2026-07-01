@@ -3,10 +3,11 @@
   "version": "1.0",
   "kind": "molecule",
   "intent": "Märk items med attributet partType",
-  "params": {},
+  "params": { "partType": { "required": false, "default": 1 } },
   "attributes": { "reads": [], "writes": ["partType"] },
   "nodes": [
-    { "ref": "set", "lib": "Item.lbr", "type": "Set", "seed": true }
+    { "ref": "set", "lib": "Item.lbr", "type": "Set", "seed": true,
+      "setAttributes": [ { "name": "partType", "value": "{{partType}}" } ] }
   ],
   "edges": [],
   "interface": {
