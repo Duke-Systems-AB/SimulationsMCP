@@ -1,5 +1,5 @@
 # tests/unit_py/test_attribute_set_delegation.py
-import os, sys, inspect
+import os, sys
 _SRC = os.path.join(os.path.dirname(__file__), "..", "..", "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
@@ -33,8 +33,23 @@ def test_attribute_set_delegates_to_core(monkeypatch):
                             value_type="constant", row=0)
 
 
+def _attribute_set_source():
+    """Text of just the attribute_set function, read from the source file.
+
+    Uses no COM import, so this regression guard runs in every environment
+    (including headless CI without pywin32). Slices to the next top-level def
+    so attribute_get (which legitimately still references AttributeName_prm) is
+    not scanned.
+    """
+    path = os.path.join(_SRC, "simulation_backend.py")
+    with open(path, encoding="utf-8") as f:
+        lines = f.readlines()
+    start = next(i for i, l in enumerate(lines) if l.startswith("def attribute_set("))
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("def ")), len(lines))
+    return "".join(lines[start:end])
+
+
 def test_attribute_set_no_longer_references_dead_dialog_vars():
-    be = _load_backend()
-    src = inspect.getsource(be.attribute_set)
+    src = _attribute_set_source()
     for dead in ("AttributeName_prm", "ValueType_pop", "ConstantValue_prm"):
         assert dead not in src, f"{dead} still referenced in attribute_set"

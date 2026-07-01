@@ -3860,13 +3860,6 @@ def execute_command(command: str, get_result: bool = False,
 # ATTRIBUTE OPERATIONS (Set/Get blocks)
 # ============================================================================
 
-# Set block value type constants
-SET_VALUE_TYPE = {
-    "constant": 1,
-    "connector": 2,
-    "distribution": 3,
-}
-
 
 def attribute_set(block_id: int,
                   attribute_name: str,
