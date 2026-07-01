@@ -90,3 +90,22 @@ def test_realops_create_hblock_raises_when_not_created():
     ops = inst.RealOps(fake_backend)
     with pytest.raises(inst.BuildError, match="H-block"):
         ops.create_hblock(seed_id=10, name="m")
+
+
+def test_build_applies_set_attributes_with_default_param():
+    from instantiate import build_molecule
+    from fake_ops import FakeOps
+    mol = {
+        "id": "t", "kind": "molecule",
+        "params": {"partType": {"required": False, "default": 5}},
+        "attributes": {"reads": [], "writes": ["partType"]},
+        "nodes": [{"ref": "set", "lib": "Item.lbr", "type": "Set", "seed": True,
+                   "setAttributes": [{"name": "partType", "value": "{{partType}}"}]}],
+        "edges": [],
+        "interface": {"inlets": [{"port": "in", "binds": "set.ItemIn", "role": "item"}],
+                      "outlets": [{"port": "out", "binds": "set.ItemOut", "role": "item"}]},
+    }
+    ops = FakeOps()
+    res = build_molecule(mol, {}, ops)          # no explicit param -> default 5
+    set_id = res["internalBlockIds"]["set"]
+    assert ("set_attribute", set_id, "partType", 5, "constant") in ops.calls

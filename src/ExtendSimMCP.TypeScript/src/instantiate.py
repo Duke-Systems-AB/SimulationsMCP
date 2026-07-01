@@ -6,7 +6,7 @@ is testable. Every COM-affecting step is effect-verified, never trusting a
 success flag (krav 12). See spec 2026-06-27-m3-instantiate-pattern-design.md.
 """
 from typing import Any, Dict
-from molecule_schema import validate_molecule, resolve_params, MoleculeError
+from molecule_schema import validate_molecule, resolve_params, resolve_set_attributes, MoleculeError
 
 
 class BuildError(Exception):
@@ -44,8 +44,18 @@ def _assert_clean(ops, a_id, b_id):
         raise BuildError("flow rewire failed: node collapsed to 0")
 
 
+def _merge_param_defaults(molecule, params):
+    """Return params with molecule-declared defaults filled in where absent."""
+    merged = dict(params or {})
+    for name, spec in (molecule.get("params") or {}).items():
+        if name not in merged and isinstance(spec, dict) and "default" in spec:
+            merged[name] = spec["default"]
+    return merged
+
+
 def build_molecule(molecule: Dict[str, Any], params: Dict[str, Any], ops) -> Dict[str, Any]:
     validate_molecule(molecule, params)            # fail-closed, before any COM
+    params = _merge_param_defaults(molecule, params)
     ops.activate()
 
     seed = next(n for n in molecule["nodes"] if n.get("seed"))
@@ -103,6 +113,11 @@ def build_molecule(molecule: Dict[str, Any], params: Dict[str, Any], ops) -> Dic
     for node in molecule["nodes"]:
         for var, value in resolve_params(node, params).items():
             ops.set_value(internal[node["ref"]], var, value)
+
+    # Phase 4b: apply attribute-set configs (Set blocks tag items).
+    for node in molecule["nodes"]:
+        for a in resolve_set_attributes(node, params):
+            ops.set_attribute(internal[node["ref"]], a["name"], a["value"], a["valueType"])
 
     # Phase 5: interface map (molecule port -> inner block + outer connector).
     iface = {}
@@ -185,6 +200,11 @@ class RealOps:
         r = self._b.block_set_value(block_id, var, value)
         if not r.get("success"):
             raise BuildError(f"set_value failed: block {block_id} {var}={value}: {r}")
+
+    def set_attribute(self, block_id, name, value, value_type):
+        r = self._b.attribute_set(block_id, name, value_type=value_type, value=value)
+        if not r.get("success"):
+            raise BuildError(f"set_attribute failed: block {block_id} {name}={value}: {r}")
 
     def _outer_connector(self, hblock_id, direction):
         """The H-block's outer connector dict for a direction (in/out).
