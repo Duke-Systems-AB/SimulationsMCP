@@ -551,6 +551,7 @@ def model_open(file_path: str, read_only: bool = False) -> dict:
     try:
         # Clear array slot tracking for new model
         _clear_array_slot_tracking()
+        _reset_auto_layout()   # BUG-002: fresh flow-layout cursor per model
 
         app = get_extendsim_app()
         file_path_normalized = file_path.replace("\\", "/")
@@ -721,6 +722,7 @@ def model_new(save_path: Optional[str] = None) -> dict:
     try:
         # Clear array slot tracking for new model
         _clear_array_slot_tracking()
+        _reset_auto_layout()   # BUG-002: fresh flow-layout cursor per model
 
         app = get_extendsim_app(create_if_missing=True)
 
@@ -747,6 +749,34 @@ def model_new(save_path: Optional[str] = None) -> dict:
         }
     except Exception as e:
         return _com_error(e, "model_new")
+
+
+# BUG-002: auto-flow layout cursor. When block_add is called without an explicit
+# position (default x=y=100, no neighbor), blocks cascade left->right and wrap to a
+# new row so a flow chain never stacks on itself. Reset on model_new / model_open.
+_AUTO_LAYOUT_START_X = 60
+_AUTO_LAYOUT_START_Y = 100
+_AUTO_LAYOUT_STEP_X = 140       # ExtendSim models flow left->right
+_AUTO_LAYOUT_ROW_STEP_Y = 120  # wrap down to the next row
+_AUTO_LAYOUT_MAX_X = 1000       # wrap threshold
+_auto_layout_cursor = {"x": _AUTO_LAYOUT_START_X, "y": _AUTO_LAYOUT_START_Y}
+
+
+def _reset_auto_layout():
+    _auto_layout_cursor["x"] = _AUTO_LAYOUT_START_X
+    _auto_layout_cursor["y"] = _AUTO_LAYOUT_START_Y
+
+
+def _next_auto_position():
+    """Return the next auto-flow (x, y) and advance the cursor left->right, wrapping."""
+    x, y = _auto_layout_cursor["x"], _auto_layout_cursor["y"]
+    nx = x + _AUTO_LAYOUT_STEP_X
+    if nx > _AUTO_LAYOUT_MAX_X:
+        _auto_layout_cursor["x"] = _AUTO_LAYOUT_START_X
+        _auto_layout_cursor["y"] = y + _AUTO_LAYOUT_ROW_STEP_Y
+    else:
+        _auto_layout_cursor["x"] = nx
+    return x, y
 
 
 def block_add(library_name: str, block_name: str, x: int = 100, y: int = 100,
@@ -776,28 +806,17 @@ def block_add(library_name: str, block_name: str, x: int = 100, y: int = 100,
             before_ids.add(next_id)
             current_id = next_id
 
-        # When using neighbor placement, calculate proper relative offset
-        # to place blocks in a horizontal line (not diagonal)
-        place_x = x
-        place_y = y
-        if neighbor != -1:
-            # Default offsets for horizontal/vertical alignment
-            HORIZONTAL_OFFSET = 120  # pixels between blocks horizontally
-            VERTICAL_OFFSET = 80     # pixels between blocks vertically
-            if side == 0:    # left
-                place_x = -HORIZONTAL_OFFSET
-                place_y = 0
-            elif side == 1:  # top
-                place_x = 0
-                place_y = -VERTICAL_OFFSET
-            elif side == 2:  # right
-                place_x = HORIZONTAL_OFFSET
-                place_y = 0
-            elif side == 3:  # bottom
-                place_x = 0
-                place_y = VERTICAL_OFFSET
+        # BUG-002: auto-flow layout. When no explicit position/neighbor was given
+        # (the defaults), cascade blocks left->right (wrapping to a new row) so a flow
+        # chain never stacks on the default 100,100. Explicit x,y or neighbor is honored.
+        if neighbor == -1 and x == 100 and y == 100:
+            x, y = _next_auto_position()
 
-        cmd = f'PlaceBlock("{block_name}", "{library_name}", {place_x}, {place_y}, {neighbor}, {side});'
+        # Place at the resolved absolute position (neighbor=-1). Any neighbor+side
+        # placement is applied afterwards as an explicit move relative to the
+        # neighbor's REAL position — PlaceBlock's own neighbor handling did not offset
+        # reliably, so blocks stacked on top of each other.
+        cmd = f'PlaceBlock("{block_name}", "{library_name}", {x}, {y}, -1, {side});'
         app.Execute(cmd)
 
         # Collect all block IDs AFTER and find the new one
@@ -821,13 +840,39 @@ def block_add(library_name: str, block_name: str, x: int = 100, y: int = 100,
         if label:
             app.Execute(f'SetBlockLabel({block_id}, "{_escape_modl_string(label)}");')
 
+        # BUG-002: honor neighbor+side by moving relative to the neighbor's REAL
+        # position (from the now-fixed block_get_position), then read back the actual
+        # position for the response instead of echoing the input (the echo made every
+        # block look like it landed on the default 100,100).
+        if neighbor is not None and neighbor != -1:
+            npos = block_get_position(neighbor)
+            if npos.get("success"):
+                gap = 40
+                nx, ny, nw, nh = npos["x"], npos["y"], npos["width"], npos["height"]
+                if side == 0:      # left
+                    tx, ty = nx - nw - gap, ny
+                elif side == 1:    # top
+                    tx, ty = nx, ny - nh - gap
+                elif side == 3:    # bottom
+                    tx, ty = nx, ny + nh + gap
+                else:              # right (2)
+                    tx, ty = nx + nw + gap, ny
+                app.Execute(f"MoveBlockTo({block_id}, {tx}, {ty});")
+
+        actual = block_get_position(block_id)
+        if actual.get("success"):
+            position = {"x": actual["x"], "y": actual["y"],
+                        "width": actual["width"], "height": actual["height"]}
+        else:
+            position = {"x": x, "y": y}
+
         return {
             "success": True,
             "blockId": block_id,
             "blockName": block_name,
             "library": library_name,
             "label": label or "",
-            "position": {"x": x, "y": y},
+            "position": position,
             "neighbor": neighbor,
             "side": side
         }
