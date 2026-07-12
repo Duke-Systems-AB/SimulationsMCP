@@ -119,6 +119,22 @@ def test_configure_release_rejected_when_name_readback_differs():
     assert res["errorCode"] == "RELEASE_CONFIG_REJECTED"
 
 
+def test_configure_pool_write_and_read_failures_have_distinct_codes():
+    assert configure_pool(FakeBackend(raise_on="set"), 62, "Pool1", 2)["errorCode"] == "POOL_CONFIG_FAILED"
+    assert configure_pool(FakeBackend(raise_on="get"), 62, "Pool1", 2)["errorCode"] == "POOL_CONFIG_READ_FAILED"
+
+
+def test_configure_queue_pool_write_and_read_failures_have_distinct_codes():
+    assert configure_queue_pool(FakeBackend(raise_on="set"), 10, "Pool1", 1)["errorCode"] == "QUEUE_POOL_FAILED"
+    assert configure_queue_pool(FakeBackend(raise_on="get"), 10, "Pool1", 1)["errorCode"] == "QUEUE_POOL_READ_FAILED"
+
+
+def test_configure_release_write_and_read_failures_have_distinct_codes():
+    # pool_block_id given so the scan is skipped and the set/get branch is reached
+    assert configure_release(FakeBackend(raise_on="set"), 46, "Pool1", pool_block_id=62)["errorCode"] == "RELEASE_CONFIG_FAILED"
+    assert configure_release(FakeBackend(raise_on="get"), 46, "Pool1", pool_block_id=62)["errorCode"] == "RELEASE_CONFIG_READ_FAILED"
+
+
 def test_cores_propagate_model_and_block_checks():
     assert configure_pool(FakeBackend(model_open=False), 1, "P", 1)["errorCode"] == "MODEL_NOT_OPEN"
     assert configure_pool(FakeBackend(block_ok=False), 1, "P", 1)["errorCode"] == "WRONG_BLOCK_TYPE"

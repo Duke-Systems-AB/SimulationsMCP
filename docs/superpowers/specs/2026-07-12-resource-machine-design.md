@@ -26,7 +26,7 @@ Hela receptet är **live-verifierat 2026-07-12**: en modell `Create→Queue→Ac
 | **Queue** | `QueueType_pop` | `2` (Resource Pool-läge) |
 | | `ResourceTable[0,0]` | pool-**namn** (sträng) via **`SetDialogVariable`** — *inte* `_set_var` (ingen `_ttbl`-suffix → routas fel till `SetVariableNumeric` = tyst no-op) |
 | | `ResourceTable[0,1]` | antal resurser kön kräver (t.ex. 1) |
-| **Resource Pool Release** | `Serverblocks_pop` | int-index som pekar på poolen (=1 för första poolen) |
+| **Resource Pool Release** | `ResourcePoolName` + `ServerBlockNum` | sätts **direkt** (sträng-namn + poolens blocknummer) via `SetDialogVariable`. **INTE** `Serverblocks_pop`-popupen — dess `RPNames`-lista är tom i ett färskt H-block; blocket resolvar poolen via `FindRPBlock(ResourcePoolName)` vid CheckData (uppdaterat 2026-07-12 efter läsning av blockets ModL-källa, se `docs/resource-machine-hblock-resource-pool-solution.md`) |
 | | `ResourcePoolName` | pool-namn (sträng) — läses tillbaka för att verifiera vilket index som valdes |
 | | `NumReleased_PRM` | antal som återlämnas (t.ex. 1) |
 | **Flöde** | | `Create→Queue→Activity→Release→Exit` + wire `Pool.ValuesOut(con 1) → Queue.ResourcePoolQuantityIn(con 5)` |
@@ -38,7 +38,7 @@ Hela receptet är **live-verifierat 2026-07-12**: en modell `Create→Queue→Ac
 | Funktion | Bugg | Fix |
 |---|---|---|
 | `queue_set_resource_pool` | skriver `ResourceTable` med `_set_var` (→ `SetVariableNumeric`, tyst no-op) **och** skriver block-ID istället för pool-namn | `SetDialogVariable` + pool-namn, effekt-verifierat |
-| `resource_pool_release_set_config` | sätter **aldrig** poolen (bara `NumReleased_PRM`) → CHECKDATA-abort | sätt `Serverblocks_pop` (index-sökt) + `NumReleased_PRM`, verifierat |
+| `resource_pool_release_set_config` | sätter **aldrig** poolen (bara `NumReleased_PRM`) → CHECKDATA-abort | sätt `ResourcePoolName` + `ServerBlockNum` (poolens blocknummer) + `NumReleased_PRM`, verifierat |
 | `resource_pool_set_config` | ingen effekt-verifiering (skriver namn+kapacitet men litar på COM) | återläs namn (via `GetDialogVariable`) + kapacitet |
 | `simulation_run(end_time=X)` | `endTime = X`-tilldelning sätter **inte** sluttiden (förblir modell-default 1000) | använd `SetRunParameter(end_time, dt)` (bevisat i `test_distribution_roundtrip.py`) |
 
@@ -48,7 +48,7 @@ Hela receptet är **live-verifierat 2026-07-12**: en modell `Create→Queue→Ac
 |---|---|---|
 | `resource_pool_config.py: configure_pool(be, id, name, capacity)` | Ren kärna: `ResourcePoolName`+`NumServ`, återläst, fail-closed | Ny |
 | `resource_pool_config.py: configure_queue_pool(be, id, pool_name, qty)` | `QueueType_pop=2` + `ResourceTable` via `SetDialogVariable`, återläst | Ny |
-| `resource_pool_config.py: configure_release(be, id, pool_name, qty)` | **Index-sökning:** för index 1..N: sätt `Serverblocks_pop`, läs tillbaka `ResourcePoolName`; matchar target → klart. + `NumReleased_PRM`. Fail-closed om inget index matchar. | Ny |
+| `resource_pool_config.py: configure_release(be, id, pool_name, pool_block_id=None, qty)` | Sätt release-blockets **`ResourcePoolName`** (sträng) + **`ServerBlockNum`** (poolens blocknummer) direkt via `SetDialogVariable`, + `NumReleased_PRM`. `pool_block_id` fås från bygget (RealOps) eller slås upp via namn (`find_resource_pool`). Effekt-verifierat (läs `ResourcePoolName` tillbaka); fail-closed om poolen inte hittas. | Ny |
 | `simulation_backend`: de 3 gamla funktionerna | Delegerar till kärnan (behåller yttre kontrakt) | Ändrad |
 | `simulation_backend.simulation_run` | Sätt sluttid via `SetRunParameter` | Ändrad |
 | `instantiate.py`: layout-fas | Positionera block: flödesnoder längs x (Δx≈120), sido-noder under (Δy≈140) | Ny |
@@ -99,13 +99,13 @@ Idag placeras alla block på fasta koordinater → de staplas. Ny fas i `build_m
 ## 7. Fail-closed
 
 - Kärnan är ren; all COM injiceras. Ingen skrivning litar på success-flaggan (återläsning + jämförelse).
-- `configure_release`:s index-sökning är i sig en effekt-verifiering (bekräftar att rätt pool valdes via `ResourcePoolName`-återläsning); hittas inget matchande index → explicit felkod, aldrig falsk framgång.
+- `configure_release` läser tillbaka release-blockets `ResourcePoolName` efter skrivningen (effekt-verifiering); hittas ingen pool med namnet → explicit `RELEASE_POOL_NOT_FOUND`, aldrig falsk framgång.
 - `ResourceTable`/`ResourcePoolName` läses tillbaka via `GetDialogVariable` (rätt metod för sträng/popup), inte `GetVariableNumeric` (som ger `-nan(ind)`).
 - Config-fel i instantiate → `BuildError` → hela bygget failar högt, inget halvkonfigurerat H-block.
 
 ## 8. Testning (TDD)
 
-- **Enhet, rent (FakeBackend):** varje config-funktion — lyckad skrivning+återläsning; återläsning ≠ begärt → rejected; skriv/läs-fel → distinkta felkoder; `configure_release` index-sökning hittar rätt index / ger fel när inget matchar.
+- **Enhet, rent (FakeBackend):** varje config-funktion — lyckad skrivning+återläsning; återläsning ≠ begärt → rejected; skriv/läs-fel → distinkta felkoder; `configure_release` löser pool via `pool_block_id` eller namn-uppslag / ger `RELEASE_POOL_NOT_FOUND` när poolen saknas.
 - **Enhet, molekyl (FakeOps):** `build_molecule("resource-machine")` producerar rätt config-anrop (pool/queue/release) + layout-anrop; validering.
 - **Enhet, layout (FakeOps):** block får icke-överlappande positioner.
 - **Live (`skipif`):** bygg + `SetRunParameter` + kör → assert `itemsExited > 0` (bevisat möjligt: 49 items).
@@ -122,5 +122,5 @@ Idag placeras alla block på fasta koordinater → de staplas. Ny fas i `build_m
 
 ## 10. Öppna frågor (mestadels lösta av live-discovery)
 
-1. `Serverblocks_pop`-index vid **flera** pooler i samma modell: index-sökningen (sätt→läs `ResourcePoolName`) hanterar detta robust; bekräftas i live-test om tid.
+1. **LÖST (2026-07-12):** pool-länkningen sker via release-blockets `ResourcePoolName` + `ServerBlockNum`, resolvat av blockets `FindRPBlock` vid CheckData (matchar Resource Pool med samma namn i samma H-block). `Serverblocks_pop`-popupen var en återvändsgränd (tom `RPNames`-lista i färskt H-block). Se `docs/resource-machine-hblock-resource-pool-solution.md`. Flera pooler hanteras robust: `find_resource_pool` matchar på namn.
 2. Wire-riktning/-verifiering `Pool.ValuesOut→Queue.ResourcePoolQuantityIn` i H-block-kontext (M3 gör sido-kanter node-verifierat — bör fungera, bekräftas i live-test).

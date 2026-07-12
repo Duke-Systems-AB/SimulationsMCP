@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "SimulationsMCP_build": {
+      "command": "node",
+      "args": [
+        "C:/Dev/CluadeCode/SimulationsMCP_build/src/SimulationsMCP_build.TypeScript/dist/index.js"
+      ]
+    }
+  }
+}
