@@ -28,3 +28,6 @@ nul
 # Release/build artifacts & one-off scripts
 *.zip
 live_verify_*.py
+
+# Local MCP server config (machine-specific paths)
+.mcp.json
