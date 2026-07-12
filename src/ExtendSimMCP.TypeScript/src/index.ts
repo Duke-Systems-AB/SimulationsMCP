@@ -1409,7 +1409,7 @@ server.tool(
       "Batch: batchType, batchSize, preserveUniqueness, matchAttribute, showDemandConnector, demandConnectorValue, allowZeroBatchSize, batchSizeWhen\n" +
       "Unbatch: preserveUniqueness, quantityPerOutput, costType, usePreservedQuantity, duplicatePreserved, quantityOut\n" +
       "Resource Pool: poolName, initialResources, allocationRule\n" +
-      "Resource Pool Release: releaseQuantity\n" +
+      "Resource Pool Release: poolName (required), releaseQuantity\n" +
       "Workstation: maxServers, maxQueueLength, delayType, distribution, arg1-3, value, costPerTime, costPerItem\n" +
       "Equation: equation\n" +
       "Equation(I): equation, showInputNames, showInputValues, showOutputNames, showOutputValues, outputInitValue, includeEnabled, expandRecords\n" +

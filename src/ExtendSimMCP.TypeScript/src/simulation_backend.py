@@ -4636,8 +4636,9 @@ def resource_pool_set_config(block_id: int, pool_name=None, initial_resources=No
         try:
             app = get_extendsim_app()
             _set_var(app, block_id, "AllocRule", RESOURCE_ALLOC_RULE.get(allocation_rule.lower(), 1))
-        except Exception:
-            pass
+        except Exception as e:
+            # Surface the failure instead of swallowing it (no silent false-success).
+            res["allocationRuleWarning"] = f"allocation_rule not applied: {e}"
     return res
 
 
