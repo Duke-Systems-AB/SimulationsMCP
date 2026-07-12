@@ -2723,19 +2723,26 @@ WORKSTATION_DELAY_OPTIONS = {
 }
 
 # Distribution type constants
+# BUG-004: distribution popup codes are the 1-based position in ExtendSim's standard
+# distribution list (from Create's rnd_Distributions_pop, extracted from the block
+# source). Live-verified: constant=5 (deterministic), exponential=10 (random),
+# triangular=34. The OLD values (constant=32..) were offset by ~27 and selected the
+# WRONG distribution — e.g. 32=Power Function (the reported "constant → 1 item") and
+# 36=Uniform Real (which merely *looked* like a working exponential). The same standard
+# ordering is assumed for the Activity/Shutdown delay popups (re-verify if in doubt).
 DISTRIBUTIONS = {
-    "constant": 32,
-    "uniform": 33,
+    "constant": 5,
+    "uniform": 36,        # Uniform, Real
     "triangular": 34,
-    "normal": 35,
-    "exponential": 36,
-    "erlang": 37,
-    "gamma": 38,
-    "weibull": 39,
-    "lognormal": 40,
-    "beta": 41,
-    "pearson5": 42,
-    "pearson6": 43
+    "normal": 27,
+    "exponential": 10,
+    "erlang": 9,
+    "gamma": 13,
+    "weibull": 37,
+    "lognormal": 25,
+    "beta": 1,
+    "pearson5": 29,       # Pearson type V
+    "pearson6": 30,       # Pearson type VI
 }
 
 
@@ -2796,7 +2803,7 @@ def activity_set_delay(block_id: int,
 
         elif delay_type.lower() == "distribution":
             if distribution:
-                dist_code = DISTRIBUTIONS.get(distribution.lower(), 36)  # default exponential
+                dist_code = DISTRIBUTIONS.get(distribution.lower(), 10)  # default exponential (BUG-004)
                 _set_popup_verified(app, block_id, "Delay_Distributions_pop", dist_code)
 
             if arg1 is not None:
@@ -2923,7 +2930,7 @@ def create_set_arrivals(block_id: int,
 
         if arrival_type.lower() == "distribution":
             # Set distribution type with verification
-            dist_code = DISTRIBUTIONS.get(distribution.lower(), 36)  # default exponential
+            dist_code = DISTRIBUTIONS.get(distribution.lower(), 10)  # default exponential (BUG-004)
             pop_result2 = _set_popup_verified(app, block_id, "Rnd_Distributions_pop", dist_code)
             if not pop_result2["success"]:
                 warnings.append(pop_result2["warning"])
