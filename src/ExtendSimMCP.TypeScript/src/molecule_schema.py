@@ -72,6 +72,18 @@ def _resolve_value(v, params):
     return v
 
 
+def resolve_resource_pool(molecule, params):
+    """Resolve a molecule's optional resourcePool block ({{...}} -> values)."""
+    rp = molecule.get("resourcePool")
+    if not rp:
+        return None
+    out = dict(rp)
+    for k in ("name", "capacity", "qty"):
+        if k in out:
+            out[k] = _resolve_value(out[k], params)
+    return out
+
+
 def resolve_set_attributes(node: Dict[str, Any], params: Dict[str, Any]):
     """Return the node's setAttributes with placeholders resolved.
 

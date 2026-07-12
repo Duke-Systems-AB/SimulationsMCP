@@ -90,3 +90,17 @@ def test_validate_accepts_valid_set_attribute():
         "edges": [], "interface": {}, "params": {},
     }
     validate_molecule(mol, {})   # must not raise
+
+
+def test_resolve_resource_pool_resolves_placeholders():
+    from molecule_schema import resolve_resource_pool
+    mol = {"resourcePool": {"poolNode": "rp", "queueNode": "q", "releaseNode": "rel",
+                            "name": "{{pool_name}}", "capacity": "{{capacity}}", "qty": 1}}
+    out = resolve_resource_pool(mol, {"pool_name": "Pool1", "capacity": 2})
+    assert out == {"poolNode": "rp", "queueNode": "q", "releaseNode": "rel",
+                   "name": "Pool1", "capacity": 2, "qty": 1}
+
+
+def test_resolve_resource_pool_none_when_absent():
+    from molecule_schema import resolve_resource_pool
+    assert resolve_resource_pool({}, {}) is None

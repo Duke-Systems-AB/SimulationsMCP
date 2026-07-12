@@ -26,6 +26,7 @@ class FakeOps:
         "Shutdown":      {"SD_ValueOut": 1},
         "Set":           {"ItemIn": 0, "ItemOut": 1},
         "Resource Pool": {"ValuesOut": 1},
+        "Resource Pool Release": {"ItemIn": 0, "ItemOut": 1},
     }
 
     def __init__(self):
@@ -88,6 +89,9 @@ class FakeOps:
 
     def move(self, block_id, x, y):
         self.calls.append(("move", block_id, x, y))
+
+    def configure_resource_pool(self, pool_id, queue_id, release_id, name, capacity, qty):
+        self.calls.append(("resource_pool", pool_id, queue_id, release_id, name, capacity, qty))
 
     def inlet_connector(self, hblock_id):
         return self._hblocks[hblock_id]["inlet"]

@@ -131,3 +131,30 @@ def test_build_lays_out_blocks_without_overlap():
     assert len(moves) >= 2
     xs = [m[2] for m in moves]
     assert len(set(xs)) == len(xs)
+
+
+def test_build_applies_resource_pool_config():
+    from instantiate import build_molecule
+    from fake_ops import FakeOps
+    mol = {
+        "id": "rm", "kind": "molecule",
+        "params": {"capacity": {"default": 2}, "pool_name": {"default": "Pool1"}},
+        "attributes": {"reads": [], "writes": []},
+        "nodes": [
+            {"ref": "q", "lib": "Item.lbr", "type": "Queue"},
+            {"ref": "act", "lib": "Item.lbr", "type": "Activity"},
+            {"ref": "rel", "lib": "Item.lbr", "type": "Resource Pool Release", "seed": True},
+            {"ref": "rp", "lib": "Item.lbr", "type": "Resource Pool"},
+        ],
+        "resourcePool": {"poolNode": "rp", "queueNode": "q", "releaseNode": "rel",
+                         "name": "{{pool_name}}", "capacity": "{{capacity}}", "qty": 1},
+        "edges": [{"kind": "flow", "from": "q.ItemOut", "to": "act.ItemIn"},
+                  {"kind": "flow", "from": "act.ItemOut", "to": "rel.ItemIn"},
+                  {"kind": "side", "from": "rp.ValuesOut", "to": "q.ResourcePoolQuantityIn"}],
+        "interface": {"inlets": [{"port": "in", "binds": "q.ItemIn", "role": "item"}],
+                      "outlets": [{"port": "out", "binds": "rel.ItemOut", "role": "item"}]},
+    }
+    ops = FakeOps()
+    res = build_molecule(mol, {}, ops)
+    ids = res["internalBlockIds"]
+    assert ("resource_pool", ids["rp"], ids["q"], ids["rel"], "Pool1", 2, 1) in ops.calls

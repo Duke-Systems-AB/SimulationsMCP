@@ -6,7 +6,9 @@ is testable. Every COM-affecting step is effect-verified, never trusting a
 success flag (krav 12). See spec 2026-06-27-m3-instantiate-pattern-design.md.
 """
 from typing import Any, Dict
-from molecule_schema import validate_molecule, resolve_params, resolve_set_attributes, MoleculeError
+from molecule_schema import (
+    validate_molecule, resolve_params, resolve_set_attributes, resolve_resource_pool, MoleculeError,
+)
 
 
 class BuildError(Exception):
@@ -135,7 +137,14 @@ def build_molecule(molecule: Dict[str, Any], params: Dict[str, Any], ops) -> Dic
         for a in resolve_set_attributes(node, params):
             ops.set_attribute(internal[node["ref"]], a["name"], a["value"], a["valueType"])
 
-    # Phase 4c: layout - spread blocks so they don't stack on top of each other.
+    # Phase 4c: apply the resource-pool config (pool + queue + release), if any.
+    rp_cfg = resolve_resource_pool(molecule, params)
+    if rp_cfg:
+        ops.configure_resource_pool(
+            internal[rp_cfg["poolNode"]], internal[rp_cfg["queueNode"]],
+            internal[rp_cfg["releaseNode"]], rp_cfg["name"], rp_cfg["capacity"], rp_cfg["qty"])
+
+    # Phase 4d: layout - spread blocks so they don't stack on top of each other.
     _layout(molecule, internal, ops)
 
     # Phase 5: interface map (molecule port -> inner block + outer connector).
@@ -229,6 +238,18 @@ class RealOps:
         r = self._b.block_move(block_id, x, y)
         if not r.get("success"):
             raise BuildError(f"move failed: block {block_id} -> ({x},{y}): {r}")
+
+    def configure_resource_pool(self, pool_id, queue_id, release_id, name, capacity, qty):
+        import resource_pool_config as rpc
+        p1 = rpc.configure_pool(self._b, pool_id, name, capacity)
+        if not p1.get("success"):
+            raise BuildError(f"pool config failed: {p1}")
+        p2 = rpc.configure_queue_pool(self._b, queue_id, name, qty)
+        if not p2.get("success"):
+            raise BuildError(f"queue pool config failed: {p2}")
+        p3 = rpc.configure_release(self._b, release_id, name, qty)
+        if not p3.get("success"):
+            raise BuildError(f"release config failed: {p3}")
 
     def _outer_connector(self, hblock_id, direction):
         """The H-block's outer connector dict for a direction (in/out).
