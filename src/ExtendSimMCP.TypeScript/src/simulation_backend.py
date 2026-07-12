@@ -3586,8 +3586,12 @@ def simulation_get_results(model_id: Optional[str] = None, block_ids: Optional[l
                 # Queue block statistics
                 stats = {"blockId": block_id, "label": label}
 
+                # BUG-005: use the SAME dialog-var names as block_get_stats/BLOCK_STAT_VARS
+                # (AveLength_prm / AveWait_prm / QueueLength_prm). The prior names
+                # (AverageLength_prm / AverageWait_prm / L_prm) don't exist on the 2024
+                # Queue block, so the summary path read None while block_get_stats had data.
                 try:
-                    stats["averageLength"] = parse_float_nullable(_get_var(app, block_id, "AverageLength_prm"))
+                    stats["averageLength"] = parse_float_nullable(_get_var(app, block_id, "AveLength_prm"))
                 except Exception:
                     stats["averageLength"] = None
 
@@ -3597,12 +3601,12 @@ def simulation_get_results(model_id: Optional[str] = None, block_ids: Optional[l
                     stats["maxLength"] = None
 
                 try:
-                    stats["averageWaitTime"] = parse_float_nullable(_get_var(app, block_id, "AverageWait_prm"))
+                    stats["averageWaitTime"] = parse_float_nullable(_get_var(app, block_id, "AveWait_prm"))
                 except Exception:
                     stats["averageWaitTime"] = None
 
                 try:
-                    stats["currentLength"] = parse_float_nullable(_get_var(app, block_id, "L_prm"))
+                    stats["currentLength"] = parse_float_nullable(_get_var(app, block_id, "QueueLength_prm"))
                 except Exception:
                     stats["currentLength"] = None
 
@@ -3631,13 +3635,13 @@ def simulation_get_results(model_id: Optional[str] = None, block_ids: Optional[l
             elif block_name == "Create":
                 # Create block statistics
                 stats = {"blockId": block_id, "label": label}
+                # BUG-005: Create's total is RndI_TotalQuantity_prm (same as block_get_stats'
+                # "totalCreated"); the prior ItemsCreated_prm/TotalItemsCreated_prm don't exist
+                # on the 2024 Create block, so itemsCreated always read None.
                 try:
-                    stats["itemsCreated"] = parse_float_nullable(_get_var(app, block_id, "ItemsCreated_prm"))
+                    stats["itemsCreated"] = parse_float_nullable(_get_var(app, block_id, "RndI_TotalQuantity_prm"))
                 except Exception:
-                    try:
-                        stats["itemsCreated"] = parse_float_nullable(_get_var(app, block_id, "TotalItemsCreated_prm"))
-                    except Exception:
-                        stats["itemsCreated"] = None
+                    stats["itemsCreated"] = None
                 results["createStatistics"].append(stats)
 
         # Summary statistics (filter out None values)
