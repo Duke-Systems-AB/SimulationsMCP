@@ -8770,15 +8770,18 @@ def block_get_position(block_id: int, model_id: Optional[str] = None) -> dict:
         if not model_check.get("success"):
             return model_check
 
-        # GetBlockTypePosition fills a 4-element array: top, left, bottom, right
-        app.Execute(f"global0 = GetBlockTypePosition({block_id}, 0);")  # top
+        # BUG-003: GetBlockTypePosition(i, array[4]) FILLS a 4-element array with
+        # [top, left, bottom, right] and returns the block type. The 2nd arg must be
+        # an array NAME, not a scalar — passing a scalar emits "expecting array name
+        # in function call" (a COM-locking compile dialog). A fixed-size local array
+        # works in immediate-mode Execute; a dynamic array (`integer x[]`) does not.
+        app.Execute(
+            f"integer _esPos[4]; GetBlockTypePosition({block_id}, _esPos); "
+            f"global0=_esPos[0]; global1=_esPos[1]; global2=_esPos[2]; global3=_esPos[3];")
         top = parse_float(app.Request("System", "global0+:0:0:0"))
-        app.Execute(f"global0 = GetBlockTypePosition({block_id}, 1);")  # left
-        left = parse_float(app.Request("System", "global0+:0:0:0"))
-        app.Execute(f"global0 = GetBlockTypePosition({block_id}, 2);")  # bottom
-        bottom = parse_float(app.Request("System", "global0+:0:0:0"))
-        app.Execute(f"global0 = GetBlockTypePosition({block_id}, 3);")  # right
-        right = parse_float(app.Request("System", "global0+:0:0:0"))
+        left = parse_float(app.Request("System", "global1+:0:0:0"))
+        bottom = parse_float(app.Request("System", "global2+:0:0:0"))
+        right = parse_float(app.Request("System", "global3+:0:0:0"))
 
         return {
             "success": True,
