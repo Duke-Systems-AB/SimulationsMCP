@@ -1,0 +1,31 @@
+{
+  "id": "resource-machine",
+  "version": "1.0",
+  "kind": "molecule",
+  "intent": "Maskin vars genomflöde begränsas av en resurspool",
+  "params": {
+    "process_time": { "required": false, "default": 1 },
+    "capacity":     { "required": false, "default": 2 },
+    "pool_name":    { "required": false, "default": "Pool1" }
+  },
+  "attributes": { "reads": [], "writes": [] },
+  "nodes": [
+    { "ref": "q",   "lib": "Item.lbr", "type": "Queue" },
+    { "ref": "act", "lib": "Item.lbr", "type": "Activity", "params": { "D": "{{process_time}}" } },
+    { "ref": "rel", "lib": "Item.lbr", "type": "Resource Pool Release", "seed": true },
+    { "ref": "rp",  "lib": "Item.lbr", "type": "Resource Pool" }
+  ],
+  "resourcePool": {
+    "poolNode": "rp", "queueNode": "q", "releaseNode": "rel",
+    "name": "{{pool_name}}", "capacity": "{{capacity}}", "qty": 1
+  },
+  "edges": [
+    { "kind": "flow", "from": "q.ItemOut",    "to": "act.ItemIn" },
+    { "kind": "flow", "from": "act.ItemOut",  "to": "rel.ItemIn" },
+    { "kind": "side", "from": "rp.ValuesOut", "to": "q.ResourcePoolQuantityIn" }
+  ],
+  "interface": {
+    "inlets":  [ { "port": "in",  "binds": "q.ItemIn",    "role": "item" } ],
+    "outlets": [ { "port": "out", "binds": "rel.ItemOut", "role": "item" } ]
+  }
+}
