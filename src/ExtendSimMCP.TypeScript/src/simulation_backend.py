@@ -147,6 +147,30 @@ def _set_var_string(app, block_id: int, var_name: str, value: str, row: int = 0,
     app.Execute(f'SetDialogVariable({block_id}, "{var_name}", "{_escape_modl_string(value)}", {row}, {col});')
 
 
+def _set_dialog_var(app, block_id: int, var_name: str, value, row: int = 0, col: int = 0):
+    """Write a dialog cell via SetDialogVariable regardless of suffix.
+
+    Needed for string-tables named without a _ttbl suffix (e.g. Queue
+    'ResourceTable') and edittext fields ('ResourcePoolName'), where the
+    suffix-based _set_var routing would wrongly use SetVariableNumeric (a silent
+    no-op on string cells). String values are quoted; numbers written bare.
+    """
+    if isinstance(value, str):
+        app.Execute(f'SetDialogVariable({block_id}, "{var_name}", "{_escape_modl_string(value)}", {row}, {col});')
+    else:
+        app.Execute(f'SetDialogVariable({block_id}, "{var_name}", {value}, {row}, {col});')
+
+
+def _get_dialog_string(app, block_id: int, var_name: str, row: int = 0, col: int = 0) -> str:
+    """Read a dialog cell via GetDialogVariable as a string regardless of suffix.
+
+    Suffix-less string/popup vars (ResourcePoolName, ResourceTable, Serverblocks_pop)
+    read as '-nan(ind)' through GetVariableNumeric; GetDialogVariable returns the
+    text (or the popup's index as text)."""
+    app.Execute(f'globalStr0 = GetDialogVariable({block_id}, "{var_name}", {row}, {col});')
+    return app.Request("System", "globalStr0+:0:0:0")
+
+
 # ============================================================================
 # ERROR CODES
 # ============================================================================
