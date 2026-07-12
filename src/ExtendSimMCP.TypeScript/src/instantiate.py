@@ -36,6 +36,22 @@ def _flow_chain(flow_edges):
     return order
 
 
+def _layout(molecule, internal, ops):
+    """Spread blocks: flow nodes left->right along x, side nodes on a row below.
+    Deterministic; prevents the default (100,100)-stacking. Positions are logical
+    ExtendSim units; exact spacing is cosmetic."""
+    chain = _flow_chain([e for e in molecule["edges"] if e["kind"] == "flow"])
+    ordered = chain or [n["ref"] for n in molecule["nodes"]]
+    x0, y_flow, dx = 60, 100, 120
+    for i, ref in enumerate(ordered):
+        if ref in internal:
+            ops.move(internal[ref], x0 + i * dx, y_flow)
+    side = [n["ref"] for n in molecule["nodes"] if n["ref"] not in ordered]
+    for j, ref in enumerate(side):
+        if ref in internal:
+            ops.move(internal[ref], x0 + j * dx, y_flow + 140)
+
+
 def _assert_clean(ops, a_id, b_id):
     """Effect-verify: a.ItemOut and b.ItemIn share a node, not collapsed to 0."""
     if ops.node_of(a_id, ops.con_index(a_id, "ItemOut")) != ops.node_of(b_id, ops.con_index(b_id, "ItemIn")):
@@ -118,6 +134,9 @@ def build_molecule(molecule: Dict[str, Any], params: Dict[str, Any], ops) -> Dic
     for node in molecule["nodes"]:
         for a in resolve_set_attributes(node, params):
             ops.set_attribute(internal[node["ref"]], a["name"], a["value"], a["valueType"])
+
+    # Phase 4c: layout - spread blocks so they don't stack on top of each other.
+    _layout(molecule, internal, ops)
 
     # Phase 5: interface map (molecule port -> inner block + outer connector).
     iface = {}
@@ -205,6 +224,11 @@ class RealOps:
         r = self._b.attribute_set(block_id, name, value_type=value_type, value=value)
         if not r.get("success"):
             raise BuildError(f"set_attribute failed: block {block_id} {name}={value}: {r}")
+
+    def move(self, block_id, x, y):
+        r = self._b.block_move(block_id, x, y)
+        if not r.get("success"):
+            raise BuildError(f"move failed: block {block_id} -> ({x},{y}): {r}")
 
     def _outer_connector(self, hblock_id, direction):
         """The H-block's outer connector dict for a direction (in/out).

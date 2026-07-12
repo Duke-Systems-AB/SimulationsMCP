@@ -109,3 +109,25 @@ def test_build_applies_set_attributes_with_default_param():
     res = build_molecule(mol, {}, ops)          # no explicit param -> default 5
     set_id = res["internalBlockIds"]["set"]
     assert ("set_attribute", set_id, "partType", 5, "constant") in ops.calls
+
+
+def test_build_lays_out_blocks_without_overlap():
+    from instantiate import build_molecule
+    from fake_ops import FakeOps
+    mol = {
+        "id": "lin", "kind": "molecule", "params": {},
+        "attributes": {"reads": [], "writes": []},
+        "nodes": [
+            {"ref": "a", "lib": "Item.lbr", "type": "Queue"},
+            {"ref": "b", "lib": "Item.lbr", "type": "Activity", "seed": True},
+        ],
+        "edges": [{"kind": "flow", "from": "a.ItemOut", "to": "b.ItemIn"}],
+        "interface": {"inlets": [{"port": "in", "binds": "a.ItemIn", "role": "item"}],
+                      "outlets": [{"port": "out", "binds": "b.ItemOut", "role": "item"}]},
+    }
+    ops = FakeOps()
+    build_molecule(mol, {}, ops)
+    moves = [c for c in ops.calls if c[0] == "move"]
+    assert len(moves) >= 2
+    xs = [m[2] for m in moves]
+    assert len(set(xs)) == len(xs)

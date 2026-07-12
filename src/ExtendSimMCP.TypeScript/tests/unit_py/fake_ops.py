@@ -86,6 +86,9 @@ class FakeOps:
     def set_attribute(self, block_id, name, value, value_type):
         self.calls.append(("set_attribute", block_id, name, value, value_type))
 
+    def move(self, block_id, x, y):
+        self.calls.append(("move", block_id, x, y))
+
     def inlet_connector(self, hblock_id):
         return self._hblocks[hblock_id]["inlet"]
 
