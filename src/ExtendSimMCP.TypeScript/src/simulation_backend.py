@@ -2306,7 +2306,9 @@ def simulation_run(model_id: Optional[str] = None, end_time: Optional[float] = N
         app = get_extendsim_app()
 
         if end_time is not None:
-            app.Execute(f"endTime = {end_time};")
+            # endTime = X does NOT set the run end time (stays at the model default);
+            # SetRunParameter is the effective API (see test_distribution_roundtrip.py).
+            app.Execute(f"SetRunParameter({end_time}, 1);")
 
         # For fast mode, turn off 2D animation (toggle command 2020)
         # NOTE: This is a toggle, so we need to be careful
