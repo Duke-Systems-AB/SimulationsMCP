@@ -2461,12 +2461,12 @@
           "returns": "V"
         },
         "GetBlockTypePosition": {
-          "description": "Returns a position value for a block. which: 0=top, 1=left, 2=bottom, 3=right.",
+          "description": "Returns object type and FILLS a 4-element array with position [top, left, bottom, right]. The 2nd arg MUST be a declared array name, not a scalar — passing a scalar gives 'expecting array name in function call'.",
           "args": [
-            {"name": "blockId", "type": "integer", "description": "Block ID"},
-            {"name": "which", "type": "integer", "description": "Which value: 0=top, 1=left, 2=bottom, 3=right"}
+            {"name": "i", "type": "integer", "description": "Global block number"},
+            {"name": "array", "type": "integer array[4]", "description": "Four-element array filled with [top, left, bottom, right]"}
           ],
-          "returns": "R"
+          "returns": "I"
         },
         "AlignConnection": {
           "description": "Moves the target block so the connection line is straight.",
