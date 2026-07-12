@@ -4620,46 +4620,23 @@ RESOURCE_ALLOC_RULE = {
 }
 
 
-def resource_pool_set_config(block_id: int,
-                             pool_name: Optional[str] = None,
-                             initial_resources: Optional[int] = None,
-                             allocation_rule: Optional[str] = None,
-                             model_id: Optional[str] = None) -> dict:
-    """Configures a Resource Pool block.
+def resource_pool_set_config(block_id: int, pool_name=None, initial_resources=None,
+                             allocation_rule=None, model_id=None) -> dict:
+    """Configure a Resource Pool block (name + capacity), effect-verified.
 
-    Args:
-        block_id: Resource Pool block ID
-        pool_name: Name of the resource pool
-        initial_resources: Number of initial resources
-        allocation_rule: "random", "priority", "cyclical", or "longest_idle"
-    """
-    try:
-        app = get_extendsim_app()
-
-        check = _validate_block_type(app, block_id, "Resource Pool")
-        if not check.get("success"):
-            return check
-
-        if pool_name is not None:
-            _set_var_string(app, block_id, "ResourcePoolName", pool_name)
-
-        if initial_resources is not None:
-            _set_var(app, block_id, "NumServ", initial_resources)
-
-        if allocation_rule is not None:
-            rule = RESOURCE_ALLOC_RULE.get(allocation_rule.lower(), 1)
-            _set_var(app, block_id, "AllocRule", rule)
-
-        return {
-            "success": True,
-            "blockId": block_id,
-            "poolName": pool_name,
-            "initialResources": initial_resources,
-            "allocationRule": allocation_rule
-        }
-    except Exception as e:
-        return _error(ErrorCode.SET_VALUE_FAILED, str(e),
-                      blockId=block_id, operation="resource_pool_set_config")
+    Delegates to the fail-closed resource_pool_config core. allocation_rule is
+    applied directly (AllocRule popup) after the verified name/capacity write."""
+    import resource_pool_config, sys as _sys
+    name = pool_name if pool_name is not None else ""
+    cap = initial_resources if initial_resources is not None else 1
+    res = resource_pool_config.configure_pool(_sys.modules[__name__], block_id, name, cap)
+    if res.get("success") and allocation_rule is not None:
+        try:
+            app = get_extendsim_app()
+            _set_var(app, block_id, "AllocRule", RESOURCE_ALLOC_RULE.get(allocation_rule.lower(), 1))
+        except Exception:
+            pass
+    return res
 
 
 def resource_pool_get_stats(block_id: int,
@@ -4693,72 +4670,37 @@ def resource_pool_get_stats(block_id: int,
         return _com_error(e, "resource_pool_get_stats")
 
 
-def resource_pool_release_set_config(block_id: int,
+def resource_pool_release_set_config(block_id: int, pool_name: Optional[str] = None,
                                      release_quantity: Optional[int] = None,
-                                     model_id: Optional[str] = None) -> dict:
-    """Configures a Resource Pool Release block.
+                                     model_id=None) -> dict:
+    """Configure a Resource Pool Release block: select the pool + release qty.
 
-    Args:
-        block_id: Resource Pool Release block ID
-        release_quantity: Number of resources to release per item
-    """
-    try:
-        app = get_extendsim_app()
-
-        check = _validate_block_type(app, block_id, "Resource Pool Release")
-        if not check.get("success"):
-            return check
-
-        if release_quantity is not None:
-            _set_var(app, block_id, "NumReleased_PRM", release_quantity)
-
-        return {
-            "success": True,
-            "blockId": block_id,
-            "releaseQuantity": release_quantity
-        }
-    except Exception as e:
-        return _error(ErrorCode.SET_VALUE_FAILED, str(e),
+    Selecting the pool (Serverblocks_pop) is REQUIRED — without it ExtendSim
+    aborts the simulation at t=0 (CHECKDATA). Delegates to the fail-closed core."""
+    import resource_pool_config, sys as _sys
+    qty = release_quantity if release_quantity is not None else 1
+    if pool_name is None:
+        return _error(ErrorCode.SET_VALUE_FAILED,
+                      "pool_name is required for a Resource Pool Release block",
                       blockId=block_id, operation="resource_pool_release_set_config")
+    return resource_pool_config.configure_release(_sys.modules[__name__], block_id, pool_name, qty)
 
 
-def queue_set_resource_pool(block_id: int,
-                            resource_pool_block_id: int,
-                            resources_needed: int = 1,
-                            model_id: Optional[str] = None) -> dict:
-    """Configures a Queue block to require resources from a Resource Pool.
+def queue_set_resource_pool(block_id: int, resource_pool_block_id: int,
+                            resources_needed: int = 1, model_id=None) -> dict:
+    """Put a Queue in Resource Pool mode and point it at the given Resource Pool.
 
-    Sets the Queue to resource pool mode (QueueType_pop=2) and configures
-    the ResourceTable with the pool block ID and quantity.
-
-    Args:
-        block_id: Queue block ID
-        resource_pool_block_id: Resource Pool block ID to request resources from
-        resources_needed: Number of resources needed per item
-    """
-    try:
-        app = get_extendsim_app()
-
-        check = _validate_block_type(app, block_id, "Queue")
-        if not check.get("success"):
-            return check
-
-        # Set queue type to resource pool mode (2 = resource pool)
-        _set_var(app, block_id, "QueueType_pop", 2)
-
-        # Configure ResourceTable: row 0, col 0 = pool block ID, col 1 = quantity
-        _set_var(app, block_id, "ResourceTable", resource_pool_block_id, 0, 0)
-        _set_var(app, block_id, "ResourceTable", resources_needed, 0, 1)
-
-        return {
-            "success": True,
-            "blockId": block_id,
-            "resourcePoolBlockId": resource_pool_block_id,
-            "resourcesNeeded": resources_needed
-        }
-    except Exception as e:
-        return _error(ErrorCode.SET_VALUE_FAILED, str(e),
+    The Queue references the pool by NAME (read off the pool block), written into
+    the ResourceTable dialog string-table. Delegates to the fail-closed core."""
+    import resource_pool_config, sys as _sys
+    app = get_extendsim_app()
+    pool_name = _get_dialog_string(app, resource_pool_block_id, "ResourcePoolName")
+    if not pool_name or str(pool_name) in ("", "-nan(ind)"):
+        return _error(ErrorCode.SET_VALUE_FAILED,
+                      f"Resource Pool block {resource_pool_block_id} has no name to reference",
                       blockId=block_id, operation="queue_set_resource_pool")
+    return resource_pool_config.configure_queue_pool(_sys.modules[__name__], block_id,
+                                                     str(pool_name), resources_needed)
 
 
 # ============================================================================
@@ -8063,6 +8005,7 @@ BLOCK_PARAMS = {
     },
     "Resource Pool Release": {
         "params": {
+            "poolName": "Resource Pool name to release to (required)",
             "releaseQuantity": "Number of resources to release per item"
         }
     },
@@ -10256,7 +10199,8 @@ COMMANDS = {
     ),
     "resource_pool_release_set_config": lambda p: resource_pool_release_set_config(
         p["blockId"],
-        p.get("releaseQuantity"), p.get("modelId")
+        pool_name=p.get("poolName"),
+        release_quantity=p.get("releaseQuantity"), model_id=p.get("modelId")
     ),
     "queue_set_resource_pool": lambda p: queue_set_resource_pool(
         p["blockId"], p["resourcePoolBlockId"],
