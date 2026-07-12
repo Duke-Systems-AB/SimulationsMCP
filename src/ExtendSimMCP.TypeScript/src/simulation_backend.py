@@ -499,9 +499,13 @@ def extendsim_start() -> dict:
 
 
 def detect_license(model_id: Optional[str] = None) -> dict:
-    """Detects the ExtendSim license level (CP/DE/Pro) by checking library availability.
+    """Detects the ExtendSim license level (CP/DE/Pro) — a property of the installation.
 
-    Uses IsLibEnabled(17) for Item library (DE+) and IsLibEnabled(18) for Rate library (Pro).
+    Uses IsLibEnabled(17)=DE (Item) and IsLibEnabled(18)=Pro (Rate/Reliability). These
+    are license-entitlement checks, but ExtendSim only returns a valid value while a
+    model is open (otherwise they read as empty → the old code fell back to CP even on
+    a Pro install). BUG-001: if no model is open, open a temporary blank one, detect,
+    then close it — so the license is reported correctly regardless of model state.
     """
     try:
         app = get_extendsim_app()
@@ -509,13 +513,28 @@ def detect_license(model_id: Optional[str] = None) -> dict:
             return _error(ErrorCode.EXTENDSIM_NOT_RUNNING, "ExtendSim is not running",
                          suggestion="Start ExtendSim first with extendsim_start()")
 
-        # Check Item library (DE or Pro)
-        app.Execute("global0 = IsLibEnabled(17);")
-        has_item = int(parse_float(app.Request("System", "global0+:0:0:0")))
+        # IsLibEnabled needs a model open. Open a temporary one only if none is.
+        app.Execute("globalStr0 = GetModelName();")
+        opened_temp = not (app.Request("System", "globalStr0+:0:0:0") or "").strip()
+        if opened_temp:
+            app.Execute("ExecuteMenuCommand(2);")   # File > New (blank model)
 
-        # Check Rate/Reliability library (Pro only)
-        app.Execute("global0 = IsLibEnabled(18);")
-        has_rate = int(parse_float(app.Request("System", "global0+:0:0:0")))
+        def _lib_enabled(type_code):
+            app.Execute(f"global0 = IsLibEnabled({type_code});")
+            raw = app.Request("System", "global0+:0:0:0")
+            try:
+                return int(parse_float(raw)) if str(raw).strip() != "" else 0
+            except (ValueError, TypeError):
+                return 0
+
+        try:
+            has_item = _lib_enabled(17)   # DE (Item library)
+            has_rate = _lib_enabled(18)   # Pro (Rate/Reliability)
+        finally:
+            if opened_temp:
+                # Close the temporary model without a save prompt.
+                app.Execute("SetDirty(False);")
+                app.Execute("ExecuteMenuCommand(4);")
 
         if has_rate:
             license_type = "Pro"
