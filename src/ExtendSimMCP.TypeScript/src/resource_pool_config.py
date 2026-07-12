@@ -7,13 +7,12 @@ cycle, configured entirely in code. See spec 2026-07-12-resource-machine-design.
 
 COM facts: ResourcePoolName / Queue ResourceTable are string cells written via
 SetDialogVariable (ResourceTable has no _ttbl suffix, so _set_var would silently
-no-op) and read back via GetDialogVariable-as-string. The Release block must
-select its pool via Serverblocks_pop (int index); the right index is found by
-setting it and reading back ResourcePoolName until it matches, else the sim
-aborts at t=0 (CHECKDATA).
+no-op) and read back via GetDialogVariable-as-string. The Release block links to
+its pool via its own ResourcePoolName + ServerBlockNum (resolved live at CheckData
+by the block's FindRPBlock, matching a Resource Pool with that name in the same
+H-block) — NOT via the Serverblocks_pop popup, whose RPNames list stays empty in a
+freshly-built H-block (confirmed from the block ModL source).
 """
-
-MAX_POOL_INDEX = 32     # upper bound for the Serverblocks_pop index search
 
 
 def _err(code, message, **extra):
@@ -74,32 +73,43 @@ def configure_queue_pool(backend, block_id, pool_name, qty=1):
     return {"success": True, "blockId": block_id, "poolName": pool_name, "qty": qty}
 
 
-def configure_release(backend, block_id, pool_name, qty=1):
-    """Point a Resource Pool Release at pool_name. Serverblocks_pop is an int
-    index into the model's pools; find the index whose ResourcePoolName readback
-    matches pool_name (robust to other pools). Fail-closed if none matches."""
+def configure_release(backend, block_id, pool_name, pool_block_id=None, qty=1):
+    """Point a Resource Pool Release at pool_name.
+
+    The block's real link is its own ResourcePoolName + ServerBlockNum, which its
+    FindRPBlock() resolves live at CheckData by matching a "Resource Pool" block
+    with that ResourcePoolName within the same H-block (verified from the block's
+    ModL source). The Serverblocks_pop popup only SETS those two vars from an
+    RPNames list that stays empty until a UI redraw — so it is unusable in a
+    freshly-built H-block. Set the two link vars directly instead, effect-verified.
+
+    pool_block_id is the Resource Pool block's id (ServerBlockNum). When omitted it
+    is resolved by name via backend.find_resource_pool (matches FindRPBlock)."""
     app, err = _preflight(backend, block_id, "Resource Pool Release")
     if err:
         return err
-    found = None
-    try:
-        for idx in range(1, MAX_POOL_INDEX + 1):
-            backend._set_var(app, block_id, "Serverblocks_pop", idx, 0, 0, 1)
-            if str(backend._get_dialog_string(app, block_id, "ResourcePoolName")) == str(pool_name):
-                found = idx
-                break
-    except Exception as e:
-        return _err("RELEASE_CONFIG_FAILED", str(e), blockId=block_id)
-    if found is None:
+    if pool_block_id is None:
+        pool_block_id = backend.find_resource_pool(app, pool_name)
+    if pool_block_id is None or int(pool_block_id) < 0:
         return _err("RELEASE_POOL_NOT_FOUND",
-                    f"no Serverblocks_pop index selects pool '{pool_name}' on block {block_id}",
+                    f"no Resource Pool named '{pool_name}' found for release block {block_id}",
                     blockId=block_id, poolName=pool_name)
     try:
         backend._set_var(app, block_id, "NumReleased_PRM", qty, 0, 0, 1)
+        backend._set_dialog_var(app, block_id, "ResourcePoolName", str(pool_name))
+        backend._set_dialog_var(app, block_id, "ServerBlockNum", int(pool_block_id))
     except Exception as e:
         return _err("RELEASE_CONFIG_FAILED", str(e), blockId=block_id)
+    try:
+        name_rb = backend._get_dialog_string(app, block_id, "ResourcePoolName")
+    except Exception as e:
+        return _err("RELEASE_CONFIG_READ_FAILED", str(e), blockId=block_id)
+    if str(name_rb) != str(pool_name):
+        return _err("RELEASE_CONFIG_REJECTED",
+                    f"ResourcePoolName on release block {block_id} did not persist",
+                    blockId=block_id, requested=str(pool_name), actual=str(name_rb))
     return {"success": True, "blockId": block_id, "poolName": pool_name,
-            "poolIndex": found, "qty": qty}
+            "poolBlock": int(pool_block_id), "qty": qty}
 
 
 def configure_pool_entry(block_id, name, capacity):
@@ -114,4 +124,4 @@ def configure_queue_pool_entry(block_id, pool_name, qty=1):
 
 def configure_release_entry(block_id, pool_name, qty=1):
     import simulation_backend as backend
-    return configure_release(backend, block_id, pool_name, qty)
+    return configure_release(backend, block_id, pool_name, pool_block_id=None, qty=qty)

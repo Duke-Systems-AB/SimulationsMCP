@@ -247,7 +247,10 @@ class RealOps:
         p2 = rpc.configure_queue_pool(self._b, queue_id, name, qty)
         if not p2.get("success"):
             raise BuildError(f"queue pool config failed: {p2}")
-        p3 = rpc.configure_release(self._b, release_id, name, qty)
+        # Link the release directly to the pool block (ResourcePoolName + ServerBlockNum);
+        # the Serverblocks_pop popup can't be used in a freshly-built H-block (its
+        # RPNames list is empty until a UI redraw). See resource_pool_config.
+        p3 = rpc.configure_release(self._b, release_id, name, pool_block_id=pool_id, qty=qty)
         if not p3.get("success"):
             raise BuildError(f"release config failed: {p3}")
 

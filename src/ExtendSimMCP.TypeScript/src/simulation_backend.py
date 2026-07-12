@@ -4676,17 +4676,37 @@ def resource_pool_get_stats(block_id: int,
 def resource_pool_release_set_config(block_id: int, pool_name: Optional[str] = None,
                                      release_quantity: Optional[int] = None,
                                      model_id=None) -> dict:
-    """Configure a Resource Pool Release block: select the pool + release qty.
+    """Configure a Resource Pool Release block: link it to its pool + release qty.
 
-    Selecting the pool (Serverblocks_pop) is REQUIRED — without it ExtendSim
-    aborts the simulation at t=0 (CHECKDATA). Delegates to the fail-closed core."""
+    Setting the pool is REQUIRED — without it ExtendSim aborts the simulation at
+    t=0 (CHECKDATA). The pool block is resolved by name (find_resource_pool).
+    Delegates to the fail-closed core."""
     import resource_pool_config, sys as _sys
     qty = release_quantity if release_quantity is not None else 1
     if pool_name is None:
         return _error(ErrorCode.SET_VALUE_FAILED,
                       "pool_name is required for a Resource Pool Release block",
                       blockId=block_id, operation="resource_pool_release_set_config")
-    return resource_pool_config.configure_release(_sys.modules[__name__], block_id, pool_name, qty)
+    return resource_pool_config.configure_release(
+        _sys.modules[__name__], block_id, pool_name, pool_block_id=None, qty=qty)
+
+
+def find_resource_pool(app, pool_name: str) -> int:
+    """Return the block id of the Resource Pool whose ResourcePoolName == pool_name,
+    or -1 if none. Mirrors the block's own FindRPBlock (scan all blocks by name)."""
+    try:
+        blocks = block_list(detail="summary").get("blocks", [])
+    except Exception:
+        return -1
+    for b in blocks:
+        if b.get("blockName") == "Resource Pool":
+            bid = b.get("blockId")
+            try:
+                if str(_get_dialog_string(app, bid, "ResourcePoolName")) == str(pool_name):
+                    return bid
+            except Exception:
+                continue
+    return -1
 
 
 def queue_set_resource_pool(block_id: int, resource_pool_block_id: int,

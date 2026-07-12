@@ -9,18 +9,20 @@ from resource_pool_config import configure_pool, configure_queue_pool, configure
 
 
 class FakeBackend:
-    """Models the live COM surface the core needs. Simulates a pool list so the
-    Serverblocks_pop index search is exercised: index i selects pools[i]."""
-    def __init__(self, pools=("", "Pool1"), model_open=True, block_ok=True, raise_on=None):
+    """Models the live COM surface the core needs. known_pools maps a pool name
+    to the Resource Pool block id find_resource_pool should return."""
+    def __init__(self, known_pools=None, model_open=True, block_ok=True, raise_on=None):
         self.calls = []
         self.cells = {}
         self.numeric = {}
-        self._pools = list(pools)
-        self._server_index = {}
+        self._known_pools = dict(known_pools) if known_pools is not None else {"Pool1": 53}
         self._model_open = model_open
         self._block_ok = block_ok
         self._raise_on = raise_on
         self.app = object()
+
+    def find_resource_pool(self, app, pool_name):
+        return self._known_pools.get(pool_name, -1)
 
     def get_extendsim_app(self): return self.app
     def _validate_model_open(self, app):
@@ -34,8 +36,6 @@ class FakeBackend:
         self.calls.append(("num", block_id, var, value, row, col))
         if self._raise_on == "set": raise RuntimeError("com boom")
         self.numeric[(block_id, var)] = value
-        if var == "Serverblocks_pop":
-            self._server_index[block_id] = int(value)
 
     def _set_dialog_var(self, app, block_id, var, value, row=0, col=0):
         self.calls.append(("dlg", block_id, var, value, row, col))
@@ -44,9 +44,6 @@ class FakeBackend:
 
     def _get_dialog_string(self, app, block_id, var, row=0, col=0):
         if self._raise_on == "get": raise RuntimeError("com boom")
-        if var == "ResourcePoolName" and block_id in self._server_index:
-            idx = self._server_index[block_id]
-            return self._pools[idx] if 0 <= idx < len(self._pools) else ""
         return self.cells.get((block_id, var, row, col), "")
 
     def _get_var(self, app, block_id, var, row=0, col=0):
@@ -87,27 +84,39 @@ def test_configure_queue_pool_rejected_when_table_readback_differs():
     assert res["errorCode"] == "QUEUE_POOL_REJECTED"
 
 
-def test_configure_release_finds_pool_index():
-    be = FakeBackend(pools=("", "Pool1"))
-    res = configure_release(be, 46, "Pool1", 1)
+def test_configure_release_links_pool_verified():
+    be = FakeBackend()
+    res = configure_release(be, 46, "Pool1", pool_block_id=62, qty=1)
     assert res["success"] is True
-    assert res["poolIndex"] == 1
-    assert be.numeric[(46, "Serverblocks_pop")] == 1
+    assert res["poolBlock"] == 62
+    # the real link vars are set directly (not the Serverblocks_pop popup)
+    assert be.cells[(46, "ResourcePoolName", 0, 0)] == "Pool1"
+    assert be.cells[(46, "ServerBlockNum", 0, 0)] == "62"
     assert be.numeric[(46, "NumReleased_PRM")] == 1
 
 
-def test_configure_release_finds_pool_index_when_not_first():
-    be = FakeBackend(pools=("", "Other", "Pool1"))
-    res = configure_release(be, 46, "Pool1", 1)
+def test_configure_release_resolves_pool_by_name_when_id_omitted():
+    be = FakeBackend(known_pools={"Pool1": 53})
+    res = configure_release(be, 46, "Pool1", qty=1)   # pool_block_id defaults to None -> scan
     assert res["success"] is True
-    assert res["poolIndex"] == 2
+    assert res["poolBlock"] == 53
+    assert be.cells[(46, "ServerBlockNum", 0, 0)] == "53"
 
 
 def test_configure_release_fails_when_pool_absent():
-    be = FakeBackend(pools=("", "Other"))
-    res = configure_release(be, 46, "Pool1", 1)
+    be = FakeBackend(known_pools={})   # find_resource_pool returns -1
+    res = configure_release(be, 46, "Pool1", qty=1)
     assert res["success"] is False
     assert res["errorCode"] == "RELEASE_POOL_NOT_FOUND"
+
+
+def test_configure_release_rejected_when_name_readback_differs():
+    be = FakeBackend()
+    # force the ResourcePoolName readback to differ from what was written
+    be._get_dialog_string = lambda app, b, v, row=0, col=0: "Other"
+    res = configure_release(be, 46, "Pool1", pool_block_id=62, qty=1)
+    assert res["success"] is False
+    assert res["errorCode"] == "RELEASE_CONFIG_REJECTED"
 
 
 def test_cores_propagate_model_and_block_checks():
