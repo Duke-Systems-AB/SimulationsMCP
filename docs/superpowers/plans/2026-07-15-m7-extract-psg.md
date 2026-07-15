@@ -436,7 +436,9 @@ def _psg_gather_scope(app, scope_id, kind, parent_scope_id, label, block_ids, ou
         is_h = int(parse_float(app.Request("System", "global0+:0:0:0"))) == 4
         meta.append({"id": bid, "type": btype, "lib": lib, "isHBlock": is_h})
 
-    param_map = _extract_parameters(app, [{"id": m["id"], "type": m["type"]} for m in meta])
+    # _extract_parameters returns {"blocks": {str(bid): {...}}, "skippedBlocks": [...]}
+    param_map = _extract_parameters(
+        app, [{"id": m["id"], "type": m["type"]} for m in meta]).get("blocks", {})
 
     blocks, child_hblocks = [], []
     for m in meta:
@@ -445,7 +447,7 @@ def _psg_gather_scope(app, scope_id, kind, parent_scope_id, label, block_ids, ou
         blocks.append({
             "blockId": bid, "lib": m["lib"], "type": m["type"],
             "isHBlock": m["isHBlock"], "childScopeId": child_scope,
-            "params": param_map.get(bid, {}),
+            "params": param_map.get(str(bid), {}),
             "connectors": _psg_read_connectors(app, bid),
         })
         if m["isHBlock"]:
@@ -505,7 +507,7 @@ def extract_psg(file_path=None, save_path=None, model_id=None):
             res = model_open(file_path, True)
             if not res.get("success"):
                 return res
-            opened = True
+            opened = not res.get("alreadyOpen", False)  # only close if WE opened it
         else:
             chk = _validate_model_open(app)
             if not chk.get("success"):
