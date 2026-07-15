@@ -21,11 +21,24 @@ def _port(conn):
     return f"Con{_DIR_TAG.get(conn.get('direction'), '')}{conn.get('idx', 0)}"
 
 
+def _boundary_edge(bid, conn):
+    """Boundary (dangling) edge for one internal endpoint."""
+    port = _port(conn)
+    return {"internal": f"b{bid}.{port}",
+            "crosses": _CROSSES.get(conn.get("direction"), "unknown"),
+            "boundaryConnector": port}
+
+
 def _pair(scope_blocks):
     """Pair a scope's connectors by shared nodeIndex.
 
-    Two-or-more internal endpoints on a node -> internal edge(s), out->in.
-    Exactly one internal endpoint -> boundary (dangling) edge.
+    - Exactly one internal endpoint on a node -> boundary (dangling) edge.
+    - A clean out+in split -> internal edge(s), out->in.
+    - Two-or-more endpoints all sharing one KNOWN direction (all in / all out)
+      cannot be a valid internal edge; they tie to the same boundary connector,
+      so each is a boundary edge (boundary fan-in / fan-out).
+    - Otherwise (direction indeterminate) -> keep every wire (first endpoint as
+      source) flagged directionConfident:false so the miner treats it undirected.
     Returns (edges, boundaryEdges).
     """
     by_node = defaultdict(list)
@@ -40,11 +53,7 @@ def _pair(scope_blocks):
     for _, eps in by_node.items():
         if len(eps) == 1:
             bid, c = eps[0]
-            boundary.append({
-                "internal": f"b{bid}.{_port(c)}",
-                "crosses": _CROSSES.get(c.get("direction"), "unknown"),
-                "boundaryConnector": _port(c),
-            })
+            boundary.append(_boundary_edge(bid, c))
             continue
         outs = [e for e in eps if e[1].get("direction") == "out"]
         ins = [e for e in eps if e[1].get("direction") == "in"]
@@ -53,9 +62,13 @@ def _pair(scope_blocks):
                 for i in ins:
                     edges.append({"from": f"b{o[0]}.{_port(o[1])}",
                                   "to": f"b{i[0]}.{_port(i[1])}"})
+        elif len(outs) == len(eps) or len(ins) == len(eps):
+            # all endpoints share one known direction -> boundary fan-in/out
+            for bid, c in eps:
+                boundary.append(_boundary_edge(bid, c))
         else:
             # direction indeterminate: keep every wire (first endpoint as source),
-            # but flag the edge so the miner (M8) can treat it as undirected.
+            # flag so the miner (M8) can treat it as undirected.
             src = eps[0]
             for tgt in eps[1:]:
                 edges.append({"from": f"b{src[0]}.{_port(src[1])}",

@@ -97,14 +97,30 @@ def test_pair_confident_out_in_edge_has_no_direction_flag():
     assert "directionConfident" not in edges[0]
 
 
-def test_pair_two_outs_on_one_node_emits_unconfident_edge():
+def test_pair_two_outs_on_one_node_are_boundary_outlets():
     blocks = [
         _blk(10, [_c(0, "outA", "out", 5)]),
         _blk(11, [_c(0, "outB", "out", 5)]),
     ]
-    edges, _ = _pair(blocks)
-    assert edges == [{"from": "b10.outA", "to": "b11.outB",
-                      "directionConfident": False}]
+    edges, boundary = _pair(blocks)
+    assert edges == []
+    assert boundary == [
+        {"internal": "b10.outA", "crosses": "outlet", "boundaryConnector": "outA"},
+        {"internal": "b11.outB", "crosses": "outlet", "boundaryConnector": "outB"},
+    ]
+
+
+def test_pair_two_ins_on_one_node_are_boundary_inlets():
+    blocks = [
+        _blk(10, [_c(0, "inA", "in", 5)]),
+        _blk(11, [_c(0, "inB", "in", 5)]),
+    ]
+    edges, boundary = _pair(blocks)
+    assert edges == []
+    assert boundary == [
+        {"internal": "b10.inA", "crosses": "inlet", "boundaryConnector": "inA"},
+        {"internal": "b11.inB", "crosses": "inlet", "boundaryConnector": "inB"},
+    ]
 
 
 from psg_extract import build_psg
