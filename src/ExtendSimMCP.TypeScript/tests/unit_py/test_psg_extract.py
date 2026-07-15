@@ -105,3 +105,85 @@ def test_pair_two_outs_on_one_node_emits_unconfident_edge():
     edges, _ = _pair(blocks)
     assert edges == [{"from": "b10.outA", "to": "b11.outB",
                       "directionConfident": False}]
+
+
+from psg_extract import build_psg
+
+
+def _raw_block(bid, lib, btype, is_h=False, child=None, params=None, connectors=None):
+    return {"blockId": bid, "lib": lib, "type": btype, "isHBlock": is_h,
+            "childScopeId": child, "params": params or {},
+            "connectors": connectors or []}
+
+
+def test_build_psg_flat_model_single_root_scope():
+    raw = {"modelName": "flat.mox", "scopes": [
+        {"scopeId": "root", "kind": "root", "parentScopeId": None, "blocks": [
+            _raw_block(10, "Item", "Create", connectors=[_c(0, "outCon0", "out", 5)]),
+            _raw_block(11, "Item", "Exit", connectors=[_c(0, "inCon0", "in", 5)]),
+        ]},
+    ]}
+    psg = build_psg(raw)
+    assert psg["modelName"] == "flat.mox"
+    assert len(psg["scopes"]) == 1
+    root = psg["scopes"][0]
+    assert root["scopeId"] == "root" and root["kind"] == "root"
+    assert root["nodes"][0] == {"ref": "b10", "blockId": 10, "lib": "Item",
+                                "type": "Create", "isHBlock": False, "params": {}}
+    assert root["edges"] == [{"from": "b10.outCon0", "to": "b11.inCon0"}]
+    assert root["boundaryEdges"] == []
+
+
+def test_build_psg_hblock_node_carries_child_scope_id():
+    raw = {"modelName": "h.mox", "scopes": [
+        {"scopeId": "root", "kind": "root", "parentScopeId": None, "blocks": [
+            _raw_block(140, "", "Hierarchical", is_h=True, child="h140"),
+        ]},
+        {"scopeId": "h140", "kind": "hblock", "parentScopeId": "root",
+         "hblockType": "pure", "label": "Machine", "blocks": [
+            _raw_block(141, "Item", "Activity", connectors=[_c(0, "inCon0", "in", 3)]),
+        ]},
+    ]}
+    psg = build_psg(raw)
+    root, hb = psg["scopes"]
+    node = root["nodes"][0]
+    assert node["isHBlock"] is True and node["scopeId"] == "h140"
+    assert hb["kind"] == "hblock" and hb["parentScopeId"] == "root"
+    assert hb["hblockType"] == "pure" and hb["label"] == "Machine"
+    # the dangling internal inlet becomes a boundary edge
+    assert hb["boundaryEdges"] == [{"internal": "b141.inCon0", "crosses": "inlet",
+                                    "boundaryConnector": "inCon0"}]
+
+
+def test_build_psg_passes_params_through_including_question_mark():
+    raw = {"modelName": "p.mox", "scopes": [
+        {"scopeId": "root", "kind": "root", "parentScopeId": None, "blocks": [
+            _raw_block(10, "Item", "Activity", params={"D": 5, "capacity": "?"}),
+        ]},
+    ]}
+    node = build_psg(raw)["scopes"][0]["nodes"][0]
+    assert node["params"] == {"D": 5, "capacity": "?"}
+
+
+def test_build_psg_root_scope_omits_hblock_only_fields():
+    raw = {"modelName": "f.mox", "scopes": [
+        {"scopeId": "root", "kind": "root", "parentScopeId": None, "blocks": []},
+    ]}
+    root = build_psg(raw)["scopes"][0]
+    assert "hblockType" not in root and "label" not in root
+
+
+def test_build_psg_nested_hblocks_every_depth_is_a_scope():
+    raw = {"modelName": "n.mox", "scopes": [
+        {"scopeId": "root", "kind": "root", "parentScopeId": None, "blocks": [
+            _raw_block(140, "", "Hierarchical", is_h=True, child="h140")]},
+        {"scopeId": "h140", "kind": "hblock", "parentScopeId": "root",
+         "hblockType": "physical", "label": "Outer", "blocks": [
+            _raw_block(150, "", "Hierarchical", is_h=True, child="h150")]},
+        {"scopeId": "h150", "kind": "hblock", "parentScopeId": "h140",
+         "hblockType": "pure", "label": "Inner", "blocks": []},
+    ]}
+    psg = build_psg(raw)
+    ids = [s["scopeId"] for s in psg["scopes"]]
+    assert ids == ["root", "h140", "h150"]
+    assert psg["scopes"][2]["parentScopeId"] == "h140"

@@ -62,3 +62,38 @@ def _pair(scope_blocks):
                               "to": f"b{tgt[0]}.{_port(tgt[1])}",
                               "directionConfident": False})
     return edges, boundary
+
+
+def _node(blk):
+    node = {
+        "ref": f"b{blk['blockId']}",
+        "blockId": blk["blockId"],
+        "lib": blk.get("lib", ""),
+        "type": blk.get("type", ""),
+        "isHBlock": bool(blk.get("isHBlock")),
+        "params": blk.get("params", {}),
+    }
+    if node["isHBlock"] and blk.get("childScopeId"):
+        node["scopeId"] = blk["childScopeId"]
+    return node
+
+
+def build_psg(raw):
+    """Transform a raw per-scope snapshot into a multi-scale PSG."""
+    out_scopes = []
+    for scope in raw.get("scopes", []):
+        blocks = scope.get("blocks", [])
+        edges, boundary = _pair(blocks)
+        out = {
+            "scopeId": scope["scopeId"],
+            "kind": scope["kind"],
+            "parentScopeId": scope.get("parentScopeId"),
+            "nodes": [_node(b) for b in blocks],
+            "edges": edges,
+            "boundaryEdges": boundary,
+        }
+        if scope["kind"] == "hblock":
+            out["hblockType"] = scope.get("hblockType")
+            out["label"] = scope.get("label", "")
+        out_scopes.append(out)
+    return {"modelName": raw.get("modelName", ""), "scopes": out_scopes}
