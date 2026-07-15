@@ -1640,6 +1640,19 @@ server.tool(
   }
 );
 
+server.tool(
+  "extract_psg",
+  "Extract a model's Pattern Structure Graph (PSG): multi-scale nodes (lib:blocktype + params) and edges (srcPort->dstPort), with boundary-crossing edges marked per H-block. Foundation for pattern mining. Reads the open model, or opens filePath (read-only) first and closes it. Use savePath to write JSON to file.",
+  {
+    filePath: z.string().optional().describe("If set, open this .mox read-only, extract, then close it"),
+    savePath: z.string().optional().describe("If set, write JSON to file and return path instead of inline data"),
+    modelId: z.string().optional().describe("Model ID (defaults to the active model)")
+  },
+  async ({ filePath, savePath, modelId }) => {
+    return safeToolCall("extract_psg", () => backend.extractPsg({ filePath, savePath, modelId }), { filePath, savePath, modelId });
+  }
+);
+
 // ============================================================================
 // DATABASE TOOLS
 // ============================================================================
