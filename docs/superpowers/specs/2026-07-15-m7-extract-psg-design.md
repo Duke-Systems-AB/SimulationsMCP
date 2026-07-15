@@ -101,7 +101,12 @@ Field rules:
 - **Edge ports** = connector name (`GetConName`); empty name → fallback
   `Con{In|Out}{idx}` (same convention as M3, where connector names vary per build).
 - **`edges`** = both endpoints inside the same scope. Direction is normalized
-  out→in (`from` is the output side, `to` the input side).
+  out→in (`from` is the output side, `to` the input side). When a shared node is
+  not a clean out→in pair (e.g. two outs, or an endpoint whose connector name
+  carries no "in"/"out"), the edge is still emitted (no wire is dropped) but
+  carries **`"directionConfident": false`** so the miner (M8) can treat it as
+  undirected in its fingerprint. Confident out→in edges omit the field (default
+  true).
 - **`boundaryEdges`** = edges with exactly one endpoint internal to the H-block →
   dangling → M8's interface candidates. `crosses: inlet|outlet` derived from the
   internal endpoint's direction (input side → `inlet`, output side → `outlet`).

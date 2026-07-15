@@ -16,7 +16,7 @@
 - **Fail-closed everywhere:** unreadable param → `"?"`; undeterminable `hblockType` → `null`; never fabricate an edge; never trust COM `success` — effect-verify reads.
 - Pure core is **COM-free** (unit-testable with fixtures); all COM lives in the reader.
 - Follow existing module style: pure core + injected/real reader, mirroring `attribute_detect.py`.
-- PSG node `ref` = `"b" + blockId`. Edge port = connector name; empty name → `Con{In|Out}{idx}` fallback. Edges normalized out→in.
+- PSG node `ref` = `"b" + blockId`. Edge port = connector name; empty name → `Con{In|Out}{idx}` fallback. Edges normalized out→in. When a shared node is not a clean out→in pair, the edge is still emitted but carries `"directionConfident": false`; clean out→in edges omit the field.
 - Unit tests live in `src/ExtendSimMCP.TypeScript/tests/unit_py/`; each test file prepends `../../src` to `sys.path` (see existing tests).
 
 ---
