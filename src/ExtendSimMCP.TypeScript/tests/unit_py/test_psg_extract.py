@@ -83,5 +83,25 @@ def test_pair_unknown_direction_two_endpoints_emits_edge_as_listed():
         _blk(11, [_c(0, "port", "unknown", 5)]),
     ]
     edges, boundary = _pair(blocks)
-    assert edges == [{"from": "b10.port", "to": "b11.port"}]
+    assert edges == [{"from": "b10.port", "to": "b11.port",
+                      "directionConfident": False}]
     assert boundary == []
+
+
+def test_pair_confident_out_in_edge_has_no_direction_flag():
+    blocks = [
+        _blk(10, [_c(0, "outCon0", "out", 5)]),
+        _blk(11, [_c(0, "inCon0", "in", 5)]),
+    ]
+    edges, _ = _pair(blocks)
+    assert "directionConfident" not in edges[0]
+
+
+def test_pair_two_outs_on_one_node_emits_unconfident_edge():
+    blocks = [
+        _blk(10, [_c(0, "outA", "out", 5)]),
+        _blk(11, [_c(0, "outB", "out", 5)]),
+    ]
+    edges, _ = _pair(blocks)
+    assert edges == [{"from": "b10.outA", "to": "b11.outB",
+                      "directionConfident": False}]

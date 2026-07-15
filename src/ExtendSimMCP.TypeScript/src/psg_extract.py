@@ -54,9 +54,11 @@ def _pair(scope_blocks):
                     edges.append({"from": f"b{o[0]}.{_port(o[1])}",
                                   "to": f"b{i[0]}.{_port(i[1])}"})
         else:
-            # direction indeterminate: keep every wire, first endpoint as source
+            # direction indeterminate: keep every wire (first endpoint as source),
+            # but flag the edge so the miner (M8) can treat it as undirected.
             src = eps[0]
             for tgt in eps[1:]:
                 edges.append({"from": f"b{src[0]}.{_port(src[1])}",
-                              "to": f"b{tgt[0]}.{_port(tgt[1])}"})
+                              "to": f"b{tgt[0]}.{_port(tgt[1])}",
+                              "directionConfident": False})
     return edges, boundary
