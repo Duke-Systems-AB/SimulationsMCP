@@ -3,6 +3,38 @@
 Future work items, newest first. Not a committed roadmap — a parking lot for
 things we've agreed are worth doing but haven't scheduled.
 
+## Pattern Mining — the "learn from old models" half (miner, tools 1–4)
+
+We shipped the *use* half of the Pattern Mining module (PRD §11): `instantiate_pattern`
+(M3), `compose_flow` (M4), `list_patterns`/`get_pattern` (M5), attribute detection
+(M6). The *learn* half — reading existing `.mox` models and distilling reusable
+molecules into the library — is **not built**. That's PRD §11 tools 1–4 / FR-1..12.
+
+Build order (each an independent spec → plan → build, brainstorming first):
+
+- **M7 `extract_psg`** (FR-4/5) — read a `.mox` → PSG: nodes (`lib:blocktype` +
+  params) + edges (`srcPort→dstPort`), H-blocks/named regions kept as boundary
+  metadata. Reuses `hierarchy_get_contents` / `connection_list` / `model_extract`.
+  Deterministic foundation everything else builds on.
+- **M8 boundary detection + WL fingerprint** (FR-6/7) — offline over PSGs. MVP
+  leans on the locked decision that **a pure/library H-block is always a molecule
+  boundary**: pull each pure/named H-block out of a real model, canonicalize
+  (Weisfeiler–Lehman), offer as a candidate. Flat (non-H-block) models are a
+  non-goal — never guess boundaries from loose blocks.
+- **M9 clustering + param/interface inference** (FR-8/9/10) — near-miss merge
+  (graph edit distance), param varies→required / constant→fixed, interface =
+  edges crossing the cut.
+- **M10 `approve_pattern` + naming** (FR-11/12) — LLM proposes intent/port names,
+  human approves, record written to the **same library** M5 already reads. Nothing
+  enters the library without approval (fail-closed).
+- `extract_port_registry` (tool 1, FR-1..3) — mostly a prebuilt standard registry
+  for validation; fold into M7 or ship as a small standalone piece.
+
+MVP path (M7 → simple M8) already delivers value: point at an existing H-block
+model, get a candidate molecule out. Full near-miss/param inference (M9) follows.
+Requested 2026-07-15. Not scheduled. See `docs/SimulationsMCP_Pattern_Mining_PRD.md`
+§6.2–6.3, §9, §11 for the detailed design.
+
 ## Parallel REST/HTTP API (alongside MCP)
 
 Build a standalone REST/HTTP API that runs in parallel with the MCP server,
