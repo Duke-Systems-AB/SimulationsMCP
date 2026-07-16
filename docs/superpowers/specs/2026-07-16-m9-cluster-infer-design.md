@@ -100,10 +100,12 @@ becomes `required` with no `fixed`/range inference possible (noted, not an error
 
 ## Interface inference (§9.4)
 
-From each instance's `boundaryEdges`, aligned by the internal node's WL label + port:
+Derived from the **representative** instance's `boundaryEdges` (the boundary structure
+is identical across an exact WL bucket, so the representative is authoritative for v1;
+cross-instance union is a future refinement):
 
-- `crosses: inlet` → an inlet; `crosses: outlet` → an outlet; `binds` =
-  `"<position>.<port>"`.
+- `crosses: inlet` → an inlet; `crosses: outlet` → an outlet; `binds` = the boundary
+  edge's `internal` endpoint (`"<repRef>.<port>"`).
 - `role` = best-effort from the connector name (`Item…` → `item`, `Value…` →
   `value`) else `null`. Port **names** are assigned by M10.
 
