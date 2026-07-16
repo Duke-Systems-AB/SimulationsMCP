@@ -10245,6 +10245,55 @@ def mine_candidates(file_path=None, psg_path=None, save_path=None, model_id=None
         return _com_error(e, "mine_candidates")
 
 
+def cluster_patterns(candidates_paths=None, file_paths=None, psg_paths=None, save_path=None):
+    """Aggregate candidate subgraphs from offline JSON (candidates_paths), offline PSG
+    (psg_paths via mine_candidates), and live models (file_paths via mine_candidates),
+    then cluster + infer mined pattern candidates."""
+    import json as _json
+    import pattern_cluster
+    try:
+        all_candidates = []
+        for p in (candidates_paths or []):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = _json.load(f)
+            except Exception as e:
+                return {"success": False, "errorCode": "CANDIDATES_PATH_UNREADABLE",
+                        "error": f"cannot read candidatesPath: {e}", "candidatesPath": p}
+            for c in data.get("candidates", []):
+                c = dict(c)
+                c.setdefault("source", p)
+                all_candidates.append(c)
+        for p in (psg_paths or []):
+            res = mine_candidates(psg_path=p)
+            if not res.get("success"):
+                return res
+            for c in res.get("candidates", []):
+                c = dict(c)
+                c.setdefault("source", p)
+                all_candidates.append(c)
+        for p in (file_paths or []):
+            res = mine_candidates(file_path=p)
+            if not res.get("success"):
+                return res
+            for c in res.get("candidates", []):
+                c = dict(c)
+                c.setdefault("source", p)
+                all_candidates.append(c)
+
+        clusters = pattern_cluster.cluster_candidates(all_candidates)
+        patterns = [pattern_cluster.infer_pattern(cl) for cl in clusters]
+
+        if save_path:
+            with open(save_path, "w", encoding="utf-8") as f:
+                _json.dump({"success": True, "clusterCount": len(patterns),
+                            "patterns": patterns}, f, indent=2, allow_nan=False)
+            return {"success": True, "savedTo": save_path, "clusterCount": len(patterns)}
+        return {"success": True, "clusterCount": len(patterns), "patterns": patterns}
+    except Exception as e:
+        return _com_error(e, "cluster_patterns")
+
+
 # Dispatch table
 COMMANDS = {
     "extendsim_status": lambda p: extendsim_status(),
@@ -10803,6 +10852,9 @@ COMMANDS = {
     ),
     "mine_candidates": lambda p: mine_candidates(
         p.get("filePath"), p.get("psgPath"), p.get("savePath"), p.get("modelId")
+    ),
+    "cluster_patterns": lambda p: cluster_patterns(
+        p.get("candidatesPaths"), p.get("filePaths"), p.get("psgPaths"), p.get("savePath")
     ),
 }
 

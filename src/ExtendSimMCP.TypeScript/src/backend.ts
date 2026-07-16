@@ -951,6 +951,15 @@ export async function mineCandidates(params: {
   return await sendCommand("mine_candidates", params);
 }
 
+export async function clusterPatterns(params: {
+  candidatesPaths?: string[];
+  filePaths?: string[];
+  psgPaths?: string[];
+  savePath?: string;
+}) {
+  return await sendCommand("cluster_patterns", params);
+}
+
 // ============================================================================
 // DATABASE OPERATIONS
 // ============================================================================

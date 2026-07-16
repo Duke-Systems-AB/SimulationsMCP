@@ -1667,6 +1667,20 @@ server.tool(
   }
 );
 
+server.tool(
+  "cluster_patterns",
+  "Cluster mined candidate subgraphs into pattern candidates: group instances by exact Weisfeiler-Lehman fingerprint, merge near-misses via graph edit distance (flagged for review), and infer each cluster's parameter schema (fixed/required + median/range), interface (from boundary edges), and template. Aggregates candidates from candidatesPaths (offline JSON saved by mine_candidates), psgPaths (offline PSG), and filePaths (live model). Output feeds pattern approval (M10). Use savePath to write JSON.",
+  {
+    candidatesPaths: z.array(z.string()).optional().describe("Saved mine_candidates JSON files to aggregate (offline)"),
+    filePaths: z.array(z.string()).optional().describe("Model .mox files to mine live (opened read-only) then cluster"),
+    psgPaths: z.array(z.string()).optional().describe("Saved PSG JSON files to mine (offline) then cluster"),
+    savePath: z.string().optional().describe("If set, write JSON to file and return path instead of inline data")
+  },
+  async ({ candidatesPaths, filePaths, psgPaths, savePath }) => {
+    return safeToolCall("cluster_patterns", () => backend.clusterPatterns({ candidatesPaths, filePaths, psgPaths, savePath }), { candidatesPaths, filePaths, psgPaths, savePath });
+  }
+);
+
 // ============================================================================
 // DATABASE TOOLS
 // ============================================================================
