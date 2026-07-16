@@ -960,6 +960,17 @@ export async function clusterPatterns(params: {
   return await sendCommand("cluster_patterns", params);
 }
 
+export async function approvePattern(params: {
+  candidate?: Record<string, any>;
+  patternsPath?: string;
+  patternFingerprint?: string;
+  naming?: Record<string, any>;
+  dryRun?: boolean;
+  overwrite?: boolean;
+}) {
+  return await sendCommand("approve_pattern", params);
+}
+
 // ============================================================================
 // DATABASE OPERATIONS
 // ============================================================================
