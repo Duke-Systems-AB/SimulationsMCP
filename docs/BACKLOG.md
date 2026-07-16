@@ -30,6 +30,19 @@ real ExtendSim. Follow-up (pairs with M7's deferred live run):
   two instances of the same molecule produce the same fingerprint.
 - Deferred 2026-07-16.
 
+## M9 cluster_patterns — live verification (Task 6)
+
+`cluster_patterns` shipped (M9, `src/pattern_cluster.py` + entry in
+`simulation_backend.py`), pure core fully unit-tested incl. the offline
+`candidatesPaths` aggregation, but the live paths (`filePaths` via M7→M8) have not
+been run against real ExtendSim. Follow-up (pairs with M7/M8):
+
+- Run `src/ExtendSimMCP.TypeScript/tests/live/test_cluster_patterns_live.py` against a
+  live ExtendSim with a model containing repeated H-block instances (safe COM pattern).
+- Confirm repeated instances cluster (support > 1), that a varying param is inferred
+  `required` with a sensible median/range, and that near-miss merges look right.
+- Deferred 2026-07-16.
+
 ## Pattern Mining — the "learn from old models" half (miner, tools 1–4)
 
 We shipped the *use* half of the Pattern Mining module (PRD §11): `instantiate_pattern`
