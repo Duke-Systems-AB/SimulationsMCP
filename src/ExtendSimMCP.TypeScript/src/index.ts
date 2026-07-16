@@ -1653,6 +1653,20 @@ server.tool(
   }
 );
 
+server.tool(
+  "mine_candidates",
+  "Mine candidate molecule subgraphs from a model's Pattern Structure Graph: one candidate per H-block scope, each with a stable Weisfeiler-Lehman fingerprint (topology-only, param-independent), kind (molecule/composite), hblockType, confidence, and its boundary edges. Foundation for pattern clustering (M9). PSG source: psgPath (offline JSON saved by extract_psg), else filePath (opened read-only), else the active model. Use savePath to write JSON.",
+  {
+    filePath: z.string().optional().describe("If set, open this .mox read-only and extract its PSG first"),
+    psgPath: z.string().optional().describe("If set, load a previously-saved PSG JSON from disk (offline, no ExtendSim)"),
+    savePath: z.string().optional().describe("If set, write JSON to file and return path instead of inline data"),
+    modelId: z.string().optional().describe("Model ID (defaults to the active model)")
+  },
+  async ({ filePath, psgPath, savePath, modelId }) => {
+    return safeToolCall("mine_candidates", () => backend.mineCandidates({ filePath, psgPath, savePath, modelId }), { filePath, psgPath, savePath, modelId });
+  }
+);
+
 // ============================================================================
 // DATABASE TOOLS
 // ============================================================================

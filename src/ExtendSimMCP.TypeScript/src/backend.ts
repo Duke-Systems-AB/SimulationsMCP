@@ -942,6 +942,15 @@ export async function extractPsg(params: {
   return await sendCommand("extract_psg", params);
 }
 
+export async function mineCandidates(params: {
+  filePath?: string;
+  psgPath?: string;
+  savePath?: string;
+  modelId?: string;
+}) {
+  return await sendCommand("mine_candidates", params);
+}
+
 // ============================================================================
 // DATABASE OPERATIONS
 // ============================================================================
