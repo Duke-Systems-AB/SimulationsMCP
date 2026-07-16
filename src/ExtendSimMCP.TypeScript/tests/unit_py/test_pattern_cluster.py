@@ -103,6 +103,19 @@ def test_cluster_near_miss_merges_and_flags():
     assert len(clusters[0]["instances"]) == 2
 
 
+def test_cluster_transitive_merge_across_three_buckets():
+    # A-B within threshold and B-C within threshold, but A-C not: union-find must
+    # still merge all three into ONE cluster (transitivity).
+    a = _cand("FPA", [_n("b1", "Item", "Queue")], [])
+    b = _cand("FPB", [_n("c1", "Item", "Queue"), _n("c2", "Item", "Exit")], [])
+    c = _cand("FPC", [_n("d1", "Item", "Queue"), _n("d2", "Item", "Exit"),
+                      _n("d3", "Item", "Create")], [])
+    clusters = cluster_candidates([a, b, c], ged_threshold=1)
+    assert len(clusters) == 1
+    assert clusters[0]["nearMiss"] is True
+    assert len(clusters[0]["instances"]) == 3
+
+
 def test_cluster_skips_candidate_missing_fingerprint():
     good = _cand("FP1", [_n("b1", "Item", "Queue")])
     bad = {"nodes": [_n("b9", "Item", "Queue")], "edges": []}  # no wl_fingerprint
