@@ -125,3 +125,55 @@ def graph_edit_distance(a, b):
         for l in range(n):
             cost[n + k][m + l] = 0.0
     return _hungarian(cost)
+
+
+def cluster_candidates(candidates, ged_threshold=2):
+    """Group candidates by exact WL fingerprint, then union-merge buckets whose
+    representatives are within ged_threshold GED. Returns clusters."""
+    buckets = {}
+    order = []
+    for c in candidates:
+        fp = c.get("wl_fingerprint")
+        if fp is None:
+            continue  # malformed -> skip defensively
+        if fp not in buckets:
+            buckets[fp] = []
+            order.append(fp)
+        buckets[fp].append(c)
+
+    parent = {fp: fp for fp in order}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[ry] = rx
+
+    reps = {fp: buckets[fp][0] for fp in order}
+    for i in range(len(order)):
+        for j in range(i + 1, len(order)):
+            if find(order[i]) == find(order[j]):
+                continue
+            if graph_edit_distance(reps[order[i]], reps[order[j]]) <= ged_threshold:
+                union(order[i], order[j])
+
+    groups = defaultdict(list)
+    for fp in order:
+        groups[find(fp)].append(fp)
+
+    clusters = []
+    for root, member_fps in groups.items():
+        instances = []
+        for fp in member_fps:
+            instances.extend(buckets[fp])
+        clusters.append({
+            "fingerprint": root,
+            "instances": instances,
+            "nearMiss": len(member_fps) > 1,
+        })
+    return clusters

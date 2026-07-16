@@ -4,7 +4,7 @@ _SRC = os.path.join(os.path.dirname(__file__), "..", "..", "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-from pattern_cluster import _hungarian, graph_edit_distance
+from pattern_cluster import _hungarian, graph_edit_distance, cluster_candidates
 
 
 def _n(ref, lib, typ):
@@ -67,3 +67,45 @@ def test_ged_differing_ports_is_nonzero():
     b = {"nodes": [_n("c1", "Item", "Create"), _n("c2", "Item", "Activity")],
          "edges": [{"from": "c1.shutdown", "to": "c2.shutdown"}]}
     assert graph_edit_distance(a, b) > 0.0
+
+
+def _cand(fp, nodes, edges=None):
+    return {"wl_fingerprint": fp, "nodes": nodes, "edges": edges or []}
+
+
+def test_cluster_identical_fingerprints_one_bucket():
+    nodes = [_n("b1", "Item", "Queue")]
+    cands = [_cand("FP1", nodes), _cand("FP1", nodes)]
+    clusters = cluster_candidates(cands)
+    assert len(clusters) == 1
+    assert clusters[0]["fingerprint"] == "FP1"
+    assert len(clusters[0]["instances"]) == 2
+    assert clusters[0]["nearMiss"] is False
+
+
+def test_cluster_far_apart_stay_separate():
+    a = _cand("FPA", [_n("b1", "Item", "Queue"), _n("b2", "Item", "Activity"),
+                      _n("b3", "Item", "Exit")],
+              [{"from": "b1.outCon0", "to": "b2.inCon0"},
+               {"from": "b2.outCon0", "to": "b3.inCon0"}])
+    b = _cand("FPB", [_n("c1", "Value", "Constant")], [])
+    clusters = cluster_candidates([a, b], ged_threshold=2)
+    assert len(clusters) == 2
+
+
+def test_cluster_near_miss_merges_and_flags():
+    # differ by one extra isolated node -> GED 1 <= threshold 2 -> merge
+    a = _cand("FPA", [_n("b1", "Item", "Queue")], [])
+    b = _cand("FPB", [_n("c1", "Item", "Queue"), _n("c2", "Item", "Exit")], [])
+    clusters = cluster_candidates([a, b], ged_threshold=2)
+    assert len(clusters) == 1
+    assert clusters[0]["nearMiss"] is True
+    assert len(clusters[0]["instances"]) == 2
+
+
+def test_cluster_skips_candidate_missing_fingerprint():
+    good = _cand("FP1", [_n("b1", "Item", "Queue")])
+    bad = {"nodes": [_n("b9", "Item", "Queue")], "edges": []}  # no wl_fingerprint
+    clusters = cluster_candidates([good, bad])
+    assert len(clusters) == 1
+    assert len(clusters[0]["instances"]) == 1
