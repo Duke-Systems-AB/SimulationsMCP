@@ -43,6 +43,19 @@ been run against real ExtendSim. Follow-up (pairs with M7/M8):
   `required` with a sensible median/range, and that near-miss merges look right.
 - Deferred 2026-07-16.
 
+## M10 approve_pattern — live round-trip (Task 5)
+
+`approve_pattern` shipped (M10, `src/pattern_approve.py` + entry in `simulation_backend.py`),
+pure core fully unit-tested, but the full miner round-trip has not been run against real
+ExtendSim. Follow-up (closes the loop; pairs with M7–M9):
+
+- Run `src/ExtendSimMCP.TypeScript/tests/live/test_approve_pattern_live.py`: mine a real
+  model → cluster → approve a molecule → `instantiate_pattern` it → `extract_psg` the result
+  and confirm it matches the source subgraph (§9.5 round-trip invariant).
+- Validate the lib-name normalization (`Item` → `Item.lbr`) actually lets M3 place blocks,
+  and that mined edge-kind inference (flow/side) produces a buildable molecule.
+- Deferred 2026-07-16.
+
 ## Pattern Mining — the "learn from old models" half (miner, tools 1–4)
 
 We shipped the *use* half of the Pattern Mining module (PRD §11): `instantiate_pattern`
