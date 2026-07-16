@@ -37,11 +37,17 @@ def _friendly_map(candidate, naming):
             out[key] = name
         else:
             out[key] = _sanitize(key)
+    seen = {}
+    for k, name in out.items():
+        if name in seen:
+            raise ApproveError(
+                f"duplicate friendly param name {name!r} (from {seen[name]!r} and {k!r})")
+        seen[name] = k
     return out
 
 
 def _normalize_lib(lib):
-    if lib and not lib.endswith(".lbr"):
+    if lib and not lib.lower().endswith(".lbr"):
         return lib + ".lbr"
     return lib
 
@@ -49,7 +55,7 @@ def _normalize_lib(lib):
 def _infer_edge_kind(frm, to, override):
     if to in override:
         return override[to]
-    text = (frm + " " + to).lower()
+    text = frm.rpartition(".")[2].lower() + " " + to.rpartition(".")[2].lower()
     return "flow" if "item" in text else "side"
 
 

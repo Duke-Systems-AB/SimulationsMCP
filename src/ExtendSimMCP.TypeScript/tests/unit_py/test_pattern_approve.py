@@ -133,3 +133,24 @@ def test_build_entry_unmapped_param_uses_sanitized_key():
     assert "b3_D" in e["params"]
     b3 = next(n for n in e["nodes"] if n["ref"] == "b3")
     assert b3["params"]["D"] == "{{b3_D}}"
+
+
+def test_build_entry_duplicate_friendly_name_is_error():
+    naming = _naming()
+    naming["params"] = {"b3.D": "rate", "b2.capacity": "rate"}   # two keys -> same name
+    with pytest.raises(ApproveError):
+        build_library_entry(_candidate(), naming)
+
+
+def test_build_entry_edge_kind_ignores_ref_only_port_names():
+    # a node ref containing "item" must NOT make a non-item-port edge infer "flow"
+    c = _candidate()
+    c["template"]["nodes"][0]["ref"] = "itemNode"
+    c["template"]["edges"] = [{"from": "itemNode.outCon0", "to": "b3.inCon0"}]
+    c["interface"]["inlets"] = [{"binds": "itemNode.inCon0", "role": "item"}]
+    naming = _naming()
+    naming["seed"] = "b3"
+    naming["inlet"] = {"binds": "itemNode.inCon0", "port": "in"}
+    naming["params"] = {}
+    e = build_library_entry(c, naming)
+    assert e["edges"][0]["kind"] == "side"   # ports outCon0/inCon0 -> no "item" -> side
