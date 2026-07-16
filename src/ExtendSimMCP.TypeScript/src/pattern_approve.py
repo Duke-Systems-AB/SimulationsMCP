@@ -157,3 +157,57 @@ def build_library_entry(candidate, naming):
         },
         "example": example,
     }
+
+
+def _default_molecules_dir():
+    return os.path.join(os.path.dirname(__file__), "..", "patterns", "molecules")
+
+
+def approve_pattern_entry(candidate=None, patterns_path=None, pattern_fingerprint=None,
+                          naming=None, dry_run=False, overwrite=False, molecules_dir=None):
+    """Resolve a candidate, assemble + validate its library entry, then preview or write it."""
+    try:
+        if candidate is None:
+            if not patterns_path or not pattern_fingerprint:
+                return {"success": False, "errorCode": "NO_CANDIDATE",
+                        "error": "provide candidate, or patternsPath + patternFingerprint"}
+            try:
+                with open(patterns_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                return {"success": False, "errorCode": "PATTERNS_PATH_UNREADABLE",
+                        "error": f"cannot read patternsPath: {e}", "patternsPath": patterns_path}
+            candidate = next((p for p in data.get("patterns", [])
+                              if p.get("wl_fingerprint") == pattern_fingerprint), None)
+            if candidate is None:
+                return {"success": False, "errorCode": "UNKNOWN_FINGERPRINT",
+                        "error": f"no pattern with fingerprint {pattern_fingerprint}"}
+
+        if not naming or not naming.get("id"):
+            return {"success": False, "errorCode": "NAMING_REQUIRED",
+                    "error": "naming with an id is required"}
+
+        try:
+            entry = build_library_entry(candidate, naming)
+        except ApproveError as e:
+            return {"success": False, "errorCode": "BUILD_FAILED", "error": str(e)}
+
+        try:
+            validate_molecule(entry, entry.get("example", {}))
+        except MoleculeError as e:
+            return {"success": False, "errorCode": "VALIDATION_FAILED", "error": str(e)}
+
+        if dry_run:
+            return {"success": True, "preview": entry}
+
+        mdir = molecules_dir or _default_molecules_dir()
+        path = os.path.join(mdir, f"{entry['id']}.json")
+        if os.path.exists(path) and not overwrite:
+            return {"success": False, "errorCode": "ALREADY_EXISTS",
+                    "error": f"pattern id already exists: {entry['id']}", "path": path}
+        os.makedirs(mdir, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(entry, f, indent=2, allow_nan=False)
+        return {"success": True, "written": path, "id": entry["id"]}
+    except Exception as e:
+        return {"success": False, "errorCode": "APPROVE_FAILED", "error": str(e)}

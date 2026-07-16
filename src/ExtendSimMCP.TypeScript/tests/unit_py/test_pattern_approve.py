@@ -154,3 +154,68 @@ def test_build_entry_edge_kind_ignores_ref_only_port_names():
     naming["params"] = {}
     e = build_library_entry(c, naming)
     assert e["edges"][0]["kind"] == "side"   # ports outCon0/inCon0 -> no "item" -> side
+
+
+import json as _json
+from pattern_approve import approve_pattern_entry
+
+
+def test_approve_dry_run_returns_preview_no_write(tmp_path):
+    res = approve_pattern_entry(candidate=_candidate(), naming=_naming(),
+                                dry_run=True, molecules_dir=str(tmp_path))
+    assert res["success"] is True
+    assert res["preview"]["id"] == "machine"
+    assert list(tmp_path.iterdir()) == []   # nothing written
+
+
+def test_approve_writes_valid_entry(tmp_path):
+    res = approve_pattern_entry(candidate=_candidate(), naming=_naming(),
+                                molecules_dir=str(tmp_path))
+    assert res["success"] is True and res["id"] == "machine"
+    out = tmp_path / "machine.json"
+    assert out.exists()
+    written = _json.loads(out.read_text(encoding="utf-8"))
+    validate_molecule(written, written["example"])   # written entry is valid
+    assert written["kind"] == "molecule"
+
+
+def test_approve_refuses_overwrite_without_flag(tmp_path):
+    approve_pattern_entry(candidate=_candidate(), naming=_naming(), molecules_dir=str(tmp_path))
+    res = approve_pattern_entry(candidate=_candidate(), naming=_naming(), molecules_dir=str(tmp_path))
+    assert res["success"] is False and res["errorCode"] == "ALREADY_EXISTS"
+
+
+def test_approve_overwrite_with_flag(tmp_path):
+    approve_pattern_entry(candidate=_candidate(), naming=_naming(), molecules_dir=str(tmp_path))
+    res = approve_pattern_entry(candidate=_candidate(), naming=_naming(),
+                                overwrite=True, molecules_dir=str(tmp_path))
+    assert res["success"] is True
+
+
+def test_approve_invalid_build_no_write(tmp_path):
+    naming = _naming()
+    naming["seed"] = "nope"
+    res = approve_pattern_entry(candidate=_candidate(), naming=naming, molecules_dir=str(tmp_path))
+    assert res["success"] is False and res["errorCode"] == "BUILD_FAILED"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_approve_from_patterns_path_by_fingerprint(tmp_path):
+    patterns_file = tmp_path / "patterns.json"
+    patterns_file.write_text(_json.dumps({"patterns": [_candidate()]}), encoding="utf-8")
+    res = approve_pattern_entry(patterns_path=str(patterns_file), pattern_fingerprint="FP1",
+                                naming=_naming(), molecules_dir=str(tmp_path))
+    assert res["success"] is True and res["id"] == "machine"
+
+
+def test_approve_unknown_fingerprint(tmp_path):
+    patterns_file = tmp_path / "patterns.json"
+    patterns_file.write_text(_json.dumps({"patterns": [_candidate()]}), encoding="utf-8")
+    res = approve_pattern_entry(patterns_path=str(patterns_file), pattern_fingerprint="NOPE",
+                                naming=_naming(), molecules_dir=str(tmp_path))
+    assert res["success"] is False and res["errorCode"] == "UNKNOWN_FINGERPRINT"
+
+
+def test_approve_no_candidate_source():
+    res = approve_pattern_entry(naming=_naming())
+    assert res["success"] is False and res["errorCode"] == "NO_CANDIDATE"
