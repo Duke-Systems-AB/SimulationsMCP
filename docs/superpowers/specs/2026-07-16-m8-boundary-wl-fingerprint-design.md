@@ -151,7 +151,9 @@ PSG (from M7's `savePath`) — fixture/replay debugging without ExtendSim.
 - `pure` → confidence `high`; `physical`/`null` → confidence `candidate`.
 - `composite` flagged when the subgraph contains an H-block node; root scope excluded.
 - Empty model (no H-blocks) → `[]`.
-- `directionConfident:false` edge does not split an otherwise-identical subgraph.
+- A `directionConfident:false` edge is orientation-invariant: the same subgraph with
+  that edge stored `from→to` vs `to→from` yields the SAME fingerprint (both views
+  contributed). A confident edge is NOT orientation-invariant (direction matters).
 
 **Live (guarded, deferred like M7 Task 5)** — `mine_candidates` against a real
 H-block model; auto-skips without an open model. Run alongside M7's deferred live

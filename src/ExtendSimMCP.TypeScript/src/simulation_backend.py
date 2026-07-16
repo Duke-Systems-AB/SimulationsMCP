@@ -10856,6 +10856,10 @@ COMMANDS = {
     "cluster_patterns": lambda p: cluster_patterns(
         p.get("candidatesPaths"), p.get("filePaths"), p.get("psgPaths"), p.get("savePath")
     ),
+    "approve_pattern": lambda p: __import__("pattern_approve").approve_pattern_entry(
+        p.get("candidate"), p.get("patternsPath"), p.get("patternFingerprint"),
+        p.get("naming"), p.get("dryRun", False), p.get("overwrite", False)
+    ),
 }
 
 

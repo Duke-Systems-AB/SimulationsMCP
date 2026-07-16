@@ -1681,6 +1681,22 @@ server.tool(
   }
 );
 
+server.tool(
+  "approve_pattern",
+  "Approve a mined pattern candidate into the molecule library. Assembles a validated, M3-instantiable library entry (§7.1) from a candidate (inline, or selected from a cluster_patterns file by patternFingerprint) plus a naming object (id, intent, seed, param names, inlet/outlet ports), validates it against the molecule schema, and writes patterns/molecules/<id>.json. dryRun returns a preview without writing; overwrite allows replacing an existing id. Nothing is written unless valid and deliberately approved.",
+  {
+    candidate: z.record(z.any()).optional().describe("Inline mined pattern candidate (from cluster_patterns)"),
+    patternsPath: z.string().optional().describe("cluster_patterns output JSON to load the candidate from"),
+    patternFingerprint: z.string().optional().describe("wl_fingerprint selecting which pattern in patternsPath"),
+    naming: z.record(z.any()).optional().describe("id, intent, seed, params{m9key->name}, inlet/outlet{binds,port}, edgeKinds"),
+    dryRun: z.boolean().optional().describe("Preview the assembled entry without writing"),
+    overwrite: z.boolean().optional().describe("Allow overwriting an existing pattern id")
+  },
+  async ({ candidate, patternsPath, patternFingerprint, naming, dryRun, overwrite }) => {
+    return safeToolCall("approve_pattern", () => backend.approvePattern({ candidate, patternsPath, patternFingerprint, naming, dryRun, overwrite }), { patternsPath, patternFingerprint, dryRun, overwrite });
+  }
+);
+
 // ============================================================================
 // DATABASE TOOLS
 // ============================================================================
