@@ -16,7 +16,7 @@
 - **Fail-closed everywhere:** unreadable param → `"?"`; undeterminable `hblockType` → `null`; never fabricate an edge; never trust COM `success` — effect-verify reads.
 - Pure core is **COM-free** (unit-testable with fixtures); all COM lives in the reader.
 - Follow existing module style: pure core + injected/real reader, mirroring `attribute_detect.py`.
-- PSG node `ref` = `"b" + blockId`. Edge port = connector name; empty name → `Con{In|Out}{idx}` fallback. Edges normalized out→in.
+- PSG node `ref` = `"b" + blockId`. Edge port = connector name; empty name → `Con{In|Out}{idx}` fallback. Edges normalized out→in. When a shared node is not a clean out→in pair, the edge is still emitted but carries `"directionConfident": false`; clean out→in edges omit the field.
 - Unit tests live in `src/ExtendSimMCP.TypeScript/tests/unit_py/`; each test file prepends `../../src` to `sys.path` (see existing tests).
 
 ---
@@ -162,11 +162,24 @@ def _port(conn):
     return f"Con{_DIR_TAG.get(conn.get('direction'), '')}{conn.get('idx', 0)}"
 
 
+def _boundary_edge(bid, conn):
+    """Boundary (dangling) edge for one internal endpoint."""
+    port = _port(conn)
+    return {"internal": f"b{bid}.{port}",
+            "crosses": _CROSSES.get(conn.get("direction"), "unknown"),
+            "boundaryConnector": port}
+
+
 def _pair(scope_blocks):
     """Pair a scope's connectors by shared nodeIndex.
 
-    Two-or-more internal endpoints on a node -> internal edge(s), out->in.
-    Exactly one internal endpoint -> boundary (dangling) edge.
+    - Exactly one internal endpoint on a node -> boundary (dangling) edge.
+    - A clean out+in split -> internal edge(s), out->in.
+    - Two-or-more endpoints all sharing one KNOWN direction (all in / all out)
+      cannot be a valid internal edge; they tie to the same boundary connector,
+      so each is a boundary edge (boundary fan-in / fan-out).
+    - Otherwise (direction indeterminate) -> keep every wire (first endpoint as
+      source) flagged directionConfident:false so the miner treats it undirected.
     Returns (edges, boundaryEdges).
     """
     by_node = defaultdict(list)
@@ -181,11 +194,7 @@ def _pair(scope_blocks):
     for _, eps in by_node.items():
         if len(eps) == 1:
             bid, c = eps[0]
-            boundary.append({
-                "internal": f"b{bid}.{_port(c)}",
-                "crosses": _CROSSES.get(c.get("direction"), "unknown"),
-                "boundaryConnector": _port(c),
-            })
+            boundary.append(_boundary_edge(bid, c))
             continue
         outs = [e for e in eps if e[1].get("direction") == "out"]
         ins = [e for e in eps if e[1].get("direction") == "in"]
@@ -194,12 +203,18 @@ def _pair(scope_blocks):
                 for i in ins:
                     edges.append({"from": f"b{o[0]}.{_port(o[1])}",
                                   "to": f"b{i[0]}.{_port(i[1])}"})
+        elif len(outs) == len(eps) or len(ins) == len(eps):
+            # all endpoints share one known direction -> boundary fan-in/out
+            for bid, c in eps:
+                boundary.append(_boundary_edge(bid, c))
         else:
-            # direction indeterminate: keep every wire, first endpoint as source
+            # direction indeterminate: keep every wire (first endpoint as source),
+            # flag so the miner (M8) can treat it as undirected.
             src = eps[0]
             for tgt in eps[1:]:
                 edges.append({"from": f"b{src[0]}.{_port(src[1])}",
-                              "to": f"b{tgt[0]}.{_port(tgt[1])}"})
+                              "to": f"b{tgt[0]}.{_port(tgt[1])}",
+                              "directionConfident": False})
     return edges, boundary
 ```
 
@@ -436,7 +451,9 @@ def _psg_gather_scope(app, scope_id, kind, parent_scope_id, label, block_ids, ou
         is_h = int(parse_float(app.Request("System", "global0+:0:0:0"))) == 4
         meta.append({"id": bid, "type": btype, "lib": lib, "isHBlock": is_h})
 
-    param_map = _extract_parameters(app, [{"id": m["id"], "type": m["type"]} for m in meta])
+    # _extract_parameters returns {"blocks": {str(bid): {...}}, "skippedBlocks": [...]}
+    param_map = _extract_parameters(
+        app, [{"id": m["id"], "type": m["type"]} for m in meta]).get("blocks", {})
 
     blocks, child_hblocks = [], []
     for m in meta:
@@ -445,7 +462,7 @@ def _psg_gather_scope(app, scope_id, kind, parent_scope_id, label, block_ids, ou
         blocks.append({
             "blockId": bid, "lib": m["lib"], "type": m["type"],
             "isHBlock": m["isHBlock"], "childScopeId": child_scope,
-            "params": param_map.get(bid, {}),
+            "params": param_map.get(str(bid), {}),
             "connectors": _psg_read_connectors(app, bid),
         })
         if m["isHBlock"]:
@@ -505,7 +522,7 @@ def extract_psg(file_path=None, save_path=None, model_id=None):
             res = model_open(file_path, True)
             if not res.get("success"):
                 return res
-            opened = True
+            opened = not res.get("alreadyOpen", False)  # only close if WE opened it
         else:
             chk = _validate_model_open(app)
             if not chk.get("success"):

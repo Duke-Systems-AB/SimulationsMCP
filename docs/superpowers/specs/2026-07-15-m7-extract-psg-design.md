@@ -101,12 +101,22 @@ Field rules:
 - **Edge ports** = connector name (`GetConName`); empty name → fallback
   `Con{In|Out}{idx}` (same convention as M3, where connector names vary per build).
 - **`edges`** = both endpoints inside the same scope. Direction is normalized
-  out→in (`from` is the output side, `to` the input side).
-- **`boundaryEdges`** = edges with exactly one endpoint internal to the H-block →
-  dangling → M8's interface candidates. `crosses: inlet|outlet` derived from the
-  internal endpoint's direction (input side → `inlet`, output side → `outlet`).
-  `boundaryConnector` = the H-block's own connector the edge maps to when
-  resolvable, else the internal connector name.
+  out→in (`from` is the output side, `to` the input side). When a shared node is
+  not a clean out→in pair (e.g. two outs, or an endpoint whose connector name
+  carries no "in"/"out"), the edge is still emitted (no wire is dropped) but
+  carries **`"directionConfident": false`** so the miner (M8) can treat it as
+  undirected in its fingerprint. Confident out→in edges omit the field (default
+  true).
+- **`boundaryEdges`** = dangling endpoints → M8's interface candidates.
+  Two cases produce them: (1) a node with exactly one internal endpoint; (2) a
+  node with two or more endpoints that all share one **known** direction (all
+  `in` or all `out`) — such endpoints cannot form a valid internal edge (you
+  cannot wire two inputs, or two outputs, together), so they tie to the same
+  H-block boundary connector and each becomes a boundary edge (a boundary fan-in
+  / fan-out). `crosses: inlet|outlet` derived from the internal endpoint's
+  direction (input side → `inlet`, output side → `outlet`). `boundaryConnector` =
+  the internal connector name (M7 does not resolve the H-block's own connector
+  name; M8 does interface inference).
 - **`hblockType`** = `pure|physical` best-effort: H-block via
   `GetBlockTypeNumeric == 4`; library origin via `GetLibraryPathName(id, 2)` →
   `pure`, otherwise `physical`. Feeds M8's rule. Undeterminable → `null` (no guess).

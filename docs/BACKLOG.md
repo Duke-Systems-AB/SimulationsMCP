@@ -3,6 +3,20 @@
 Future work items, newest first. Not a committed roadmap — a parking lot for
 things we've agreed are worth doing but haven't scheduled.
 
+## M7 extract_psg — live verification (Task 5)
+
+`extract_psg` shipped (M7, `src/psg_extract.py` + reader in `simulation_backend.py`),
+pure core fully unit-tested, but the recursive live COM reader has **not yet been
+run against a real model**. Follow-up:
+
+- Run `src/ExtendSimMCP.TypeScript/tests/live/test_extract_psg_live.py` against a
+  live ExtendSim with an H-block model open (safe COM pattern: single driver, no
+  concurrent runtime server, in-range reads, never kill mid-call).
+- Confirm scopes / nodes / boundaryEdges match the model, and **pin `hblockType`**:
+  if the `GetLibraryPathName`-based pure/physical signal is unreliable, change
+  `_psg_hblock_type` to return `None` (fail-closed) instead of a wrong tag.
+- Deferred 2026-07-15 (ExtendSim was in use). Everything else in M7 is merged.
+
 ## Pattern Mining — the "learn from old models" half (miner, tools 1–4)
 
 We shipped the *use* half of the Pattern Mining module (PRD §11): `instantiate_pattern`

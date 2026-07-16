@@ -934,6 +934,14 @@ export async function modelExtract(params: {
   return await sendCommand("model_extract", params);
 }
 
+export async function extractPsg(params: {
+  filePath?: string;
+  savePath?: string;
+  modelId?: string;
+}) {
+  return await sendCommand("extract_psg", params);
+}
+
 // ============================================================================
 // DATABASE OPERATIONS
 // ============================================================================

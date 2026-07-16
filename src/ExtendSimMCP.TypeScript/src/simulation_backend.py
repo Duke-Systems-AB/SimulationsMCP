@@ -10067,6 +10067,146 @@ def model_extract(save_path=None, sections=None, model_id=None):
         return _com_error(e, "model_extract")
 
 
+def _psg_read_connectors(app, bid):
+    """Read a block's connectors: idx, name, direction, nodeIndex (effect-verified)."""
+    conns = []
+    app.Execute(f"global0 = GetNumCons({bid});")
+    n = int(parse_float(app.Request("System", "global0+:0:0:0")))
+    for c in range(n):
+        app.Execute(f'globalStr0 = GetConName({bid}, {c});')
+        name = app.Request("System", "globalStr0+:0:0:0") or ""
+        app.Execute(f"global0 = NodeGetIDIndex({bid}, {c});")
+        node_index = int(parse_float(app.Request("System", "global0+:0:0:0")))
+        low = name.lower()
+        direction = "in" if "in" in low else "out" if "out" in low else "unknown"
+        conns.append({"idx": c, "connName": name,
+                      "direction": direction, "nodeIndex": node_index})
+    return conns
+
+
+def _psg_hblock_type(app, bid):
+    """Best-effort pure/physical: library origin -> pure, else physical.
+
+    NOTE: the pure/physical signal is a live-verification item (Task 5). If it
+    proves unreliable, return None (fail-closed, no guess) rather than a wrong tag.
+    """
+    app.Execute(f'globalStr0 = GetLibraryPathName({bid}, 2);')
+    lib = app.Request("System", "globalStr0+:0:0:0") or ""
+    return "pure" if lib else "physical"
+
+
+def _psg_gather_scope(app, scope_id, kind, parent_scope_id, label, block_ids, out_scopes):
+    """Build one scope's raw block list and recurse into its child H-blocks."""
+    meta = []
+    for bid in block_ids:
+        app.Execute(f"globalStr0 = BlockName({bid});")
+        btype = app.Request("System", "globalStr0+:0:0:0") or ""
+        if not btype:
+            continue
+        app.Execute(f'globalStr0 = GetLibraryPathName({bid}, 2);')
+        lib = app.Request("System", "globalStr0+:0:0:0") or ""
+        app.Execute(f'global0 = GetBlockTypeNumeric({bid});')
+        is_h = int(parse_float(app.Request("System", "global0+:0:0:0"))) == 4
+        meta.append({"id": bid, "type": btype, "lib": lib, "isHBlock": is_h})
+
+    # _extract_parameters returns {"blocks": {str(bid): {...}}, "skippedBlocks": [...]}
+    param_map = _extract_parameters(
+        app, [{"id": m["id"], "type": m["type"]} for m in meta]).get("blocks", {})
+
+    blocks, child_hblocks = [], []
+    for m in meta:
+        bid = m["id"]
+        child_scope = f"h{bid}" if m["isHBlock"] else None
+        blocks.append({
+            "blockId": bid, "lib": m["lib"], "type": m["type"],
+            "isHBlock": m["isHBlock"], "childScopeId": child_scope,
+            "params": param_map.get(str(bid), {}),
+            "connectors": _psg_read_connectors(app, bid),
+        })
+        if m["isHBlock"]:
+            child_hblocks.append(bid)
+
+    scope = {"scopeId": scope_id, "kind": kind,
+             "parentScopeId": parent_scope_id, "blocks": blocks}
+    if kind == "hblock":
+        scope["hblockType"] = _psg_hblock_type(app, int(scope_id[1:]))
+        scope["label"] = label
+    out_scopes.append(scope)
+
+    for hb in child_hblocks:
+        app.Execute(f'global0 = LocalNumBlocks2({hb});')
+        n = int(parse_float(app.Request("System", "global0+:0:0:0")))
+        internal = []
+        for i in range(n):
+            app.Execute(f'global0 = LocalToGlobal2({hb}, {i});')
+            gid = int(parse_float(app.Request("System", "global0+:0:0:0")))
+            if gid > 0:
+                internal.append(gid)
+        app.Execute(f'globalStr0 = GetBlockLabel({hb});')
+        hlabel = app.Request("System", "globalStr0+:0:0:0") or ""
+        _psg_gather_scope(app, f"h{hb}", "hblock", scope_id, hlabel, internal, out_scopes)
+
+
+def _psg_top_level_ids(app):
+    """Top-level block ids (objectIDNext), filtered to those enclosed by the model root."""
+    ids, current = [], -1
+    while True:
+        app.Execute(f"global0 = objectIDNext({current}, 0);")
+        bid = int(parse_float(app.Request("System", "global0+:0:0:0")))
+        if bid == -1:
+            break
+        current = bid
+        app.Execute(f'global0 = GetEnclosingHBlockNum2({bid});')
+        enclosing = int(parse_float(app.Request("System", "global0+:0:0:0")))
+        if enclosing <= 0:
+            ids.append(bid)
+    return ids
+
+
+def _gather_psg_raw(app, model_name):
+    scopes = []
+    _psg_gather_scope(app, "root", "root", None, "", _psg_top_level_ids(app), scopes)
+    return {"modelName": model_name, "scopes": scopes}
+
+
+def extract_psg(file_path=None, save_path=None, model_id=None):
+    """Extract the model's multi-scale PSG. Reads the open model, or opens
+    file_path (read-only) first and closes it afterward. Optionally writes JSON."""
+    import psg_extract
+    app = get_extendsim_app()
+    opened = False
+    try:
+        if file_path:
+            res = model_open(file_path, True)
+            if not res.get("success"):
+                return res
+            opened = not res.get("alreadyOpen", False)  # only close if WE opened it
+        else:
+            chk = _validate_model_open(app)
+            if not chk.get("success"):
+                return chk
+
+        app.Execute("globalStr0 = GetModelName();")
+        model_name = app.Request("System", "globalStr0+:0:0:0") or ""
+        psg = psg_extract.build_psg(_gather_psg_raw(app, model_name))
+
+        if save_path:
+            import json as _json
+            with open(save_path, "w", encoding="utf-8") as f:
+                _json.dump(psg, f, indent=2, allow_nan=False)
+            return {"success": True, "savedTo": save_path,
+                    "modelName": model_name, "scopeCount": len(psg["scopes"])}
+        return {"success": True, **psg}
+    except Exception as e:
+        return _com_error(e, "extract_psg")
+    finally:
+        if opened:
+            try:
+                model_close(None, False)
+            except Exception:
+                pass
+
+
 # Dispatch table
 COMMANDS = {
     "extendsim_status": lambda p: extendsim_status(),
@@ -10619,6 +10759,9 @@ COMMANDS = {
     # v1.13.0 — Model extract
     "model_extract": lambda p: model_extract(
         p.get("savePath"), p.get("sections"), p.get("modelId")
+    ),
+    "extract_psg": lambda p: extract_psg(
+        p.get("filePath"), p.get("savePath"), p.get("modelId")
     ),
 }
 
