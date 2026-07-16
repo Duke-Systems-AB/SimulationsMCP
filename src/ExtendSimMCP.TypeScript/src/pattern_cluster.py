@@ -134,8 +134,8 @@ def cluster_candidates(candidates, ged_threshold=2):
     order = []
     for c in candidates:
         fp = c.get("wl_fingerprint")
-        if fp is None:
-            continue  # malformed -> skip defensively
+        if fp is None or not c.get("wlLabels"):
+            continue  # malformed (no fingerprint or no WL labels) -> skip defensively
         if fp not in buckets:
             buckets[fp] = []
             order.append(fp)
@@ -220,11 +220,16 @@ def infer_pattern(cluster):
     values = defaultdict(list)
     for inst in instances:
         labels = inst.get("wlLabels", {})
+        seen = set()  # per-instance (label, key, value) -> set-merge symmetric nodes
         for node in inst.get("nodes", []):
             lbl = labels.get(node["ref"])
             if lbl is None:
                 continue
             for k, v in (node.get("params") or {}).items():
+                marker = (lbl, k, v)
+                if marker in seen:
+                    continue
+                seen.add(marker)
                 values[(lbl, k)].append(v)
 
     # Params + example keyed by the representative's refs.

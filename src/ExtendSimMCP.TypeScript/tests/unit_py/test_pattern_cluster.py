@@ -70,7 +70,8 @@ def test_ged_differing_ports_is_nonzero():
 
 
 def _cand(fp, nodes, edges=None):
-    return {"wl_fingerprint": fp, "nodes": nodes, "edges": edges or []}
+    wl = {n["ref"]: f"L{i+1}" for i, n in enumerate(nodes)}
+    return {"wl_fingerprint": fp, "nodes": nodes, "edges": edges or [], "wlLabels": wl}
 
 
 def test_cluster_identical_fingerprints_one_bucket():
@@ -214,3 +215,30 @@ def test_infer_hblocktype_null_when_mixed():
         _inst("FP", [_pnode("b1", "Item", "Activity")], wl={"b1": "L1"}, hbt="pure"),
         _inst("FP", [_pnode("x1", "Item", "Activity")], wl={"x1": "L1"}, hbt="physical")]}
     assert infer_pattern(cluster)["hblockType"] is None
+
+
+def test_cluster_skips_candidate_missing_wllabels():
+    good = {"wl_fingerprint": "FP1", "nodes": [_n("b1", "Item", "Queue")],
+            "edges": [], "wlLabels": {"b1": "L1"}}
+    bad = {"wl_fingerprint": "FP2", "nodes": [_n("b9", "Item", "Queue")],
+           "edges": []}  # no wlLabels
+    clusters = cluster_candidates([good, bad])
+    assert len(clusters) == 1
+    assert clusters[0]["instances"][0]["wl_fingerprint"] == "FP1"
+
+
+def test_infer_set_merges_symmetric_label_values():
+    # Instance A has a symmetric pair (2 nodes, same label L, both "gold");
+    # B and C each contribute one "silver". Without set-merge the doubled "gold"
+    # wins most-common; with set-merge, "silver" (2 instances) wins.
+    def inst(fp, nodes, wl):
+        return {"wl_fingerprint": fp, "nodes": nodes, "edges": [], "boundaryEdges": [],
+                "wlLabels": wl, "hblockType": "pure", "scopeId": "h", "source": "m"}
+    a = inst("FP", [_pnode("a1", "Item", "Set", {"attr": "gold"}),
+                    _pnode("a2", "Item", "Set", {"attr": "gold"})],
+             {"a1": "L1", "a2": "L1"})
+    b = inst("FP", [_pnode("b1", "Item", "Set", {"attr": "silver"})], {"b1": "L1"})
+    c = inst("FP", [_pnode("c1", "Item", "Set", {"attr": "silver"})], {"c1": "L1"})
+    cluster = {"fingerprint": "FP", "nearMiss": False, "instances": [a, b, c]}
+    info = infer_pattern(cluster)["params"]["a1.attr"]
+    assert info["default"] == "silver"
