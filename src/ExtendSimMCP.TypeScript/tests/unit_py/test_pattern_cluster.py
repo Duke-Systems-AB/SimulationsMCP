@@ -220,10 +220,11 @@ def test_infer_hblocktype_null_when_mixed():
 def test_cluster_skips_candidate_missing_wllabels():
     good = {"wl_fingerprint": "FP1", "nodes": [_n("b1", "Item", "Queue")],
             "edges": [], "wlLabels": {"b1": "L1"}}
-    bad = {"wl_fingerprint": "FP2", "nodes": [_n("b9", "Item", "Queue")],
-           "edges": []}  # no wlLabels
-    clusters = cluster_candidates([good, bad])
+    bad = {"wl_fingerprint": "FP2", "nodes": [_n("b9", "Item", "Activity")],
+           "edges": []}  # no wlLabels -> must be skipped
+    clusters = cluster_candidates([good, bad], ged_threshold=0)
     assert len(clusters) == 1
+    assert len(clusters[0]["instances"]) == 1   # bad candidate dropped, not merged
     assert clusters[0]["instances"][0]["wl_fingerprint"] == "FP1"
 
 
