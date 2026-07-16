@@ -17,6 +17,19 @@ run against a real model**. Follow-up:
   `_psg_hblock_type` to return `None` (fail-closed) instead of a wrong tag.
 - Deferred 2026-07-15 (ExtendSim was in use). Everything else in M7 is merged.
 
+## M8 mine_candidates — live verification (Task 5)
+
+`mine_candidates` shipped (M8, `src/pattern_mine.py` + entry in `simulation_backend.py`),
+pure core fully unit-tested incl. the offline `psgPath` path, but the live paths
+(`filePath` / active model, which drive M7's `extract_psg`) have not been run against
+real ExtendSim. Follow-up (pairs with M7's deferred live run):
+
+- Run `src/ExtendSimMCP.TypeScript/tests/live/test_mine_candidates_live.py` against a
+  live ExtendSim with an H-block model open (safe COM pattern: single driver).
+- Confirm candidates, kinds, and WL fingerprints match the model; sanity-check that
+  two instances of the same molecule produce the same fingerprint.
+- Deferred 2026-07-16.
+
 ## Pattern Mining — the "learn from old models" half (miner, tools 1–4)
 
 We shipped the *use* half of the Pattern Mining module (PRD §11): `instantiate_pattern`
