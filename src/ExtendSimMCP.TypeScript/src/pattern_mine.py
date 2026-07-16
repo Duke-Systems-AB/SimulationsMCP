@@ -56,3 +56,34 @@ def wl_fingerprint(nodes, edges, k=4):
 
     fingerprint = _stable_hash(tuple(sorted(label.values())))
     return fingerprint, label
+
+
+def detect_candidates(psg):
+    """Emit one candidate molecule subgraph per H-block scope of a multi-scale PSG.
+
+    Root scope (the model's flow) is excluded. Each candidate carries its interior
+    subgraph, boundary edges, WL fingerprint, and per-node WL labels.
+    """
+    candidates = []
+    for scope in psg.get("scopes", []):
+        if scope.get("kind") != "hblock":
+            continue
+        nodes = scope.get("nodes", [])
+        edges = scope.get("edges", [])
+        fingerprint, labels = wl_fingerprint(nodes, edges)
+        hblock_type = scope.get("hblockType")
+        is_composite = any(n.get("isHBlock") for n in nodes)
+        candidates.append({
+            "scopeId": scope["scopeId"],
+            "hblockType": hblock_type,
+            "kind": "composite" if is_composite else "molecule",
+            "label": scope.get("label", ""),
+            "wl_fingerprint": fingerprint,
+            "nodeCount": len(nodes),
+            "nodes": nodes,
+            "edges": edges,
+            "boundaryEdges": scope.get("boundaryEdges", []),
+            "wlLabels": labels,
+            "confidence": "high" if hblock_type == "pure" else "candidate",
+        })
+    return candidates

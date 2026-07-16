@@ -91,3 +91,84 @@ def test_missing_lib_type_does_not_crash():
     edges = [{"from": "b2.outCon0", "to": "b3.inCon0"}]
     f, labels = wl_fingerprint(nodes, edges)
     assert len(f) == 32 and set(labels) == {"b2", "b3"}
+
+
+from pattern_mine import detect_candidates
+
+
+def _scope(scope_id, kind, nodes, edges=None, boundary=None, parent=None,
+           hblock_type=None, label=""):
+    s = {"scopeId": scope_id, "kind": kind, "parentScopeId": parent,
+         "nodes": nodes, "edges": edges or [], "boundaryEdges": boundary or []}
+    if kind == "hblock":
+        s["hblockType"] = hblock_type
+        s["label"] = label
+    return s
+
+
+def _hnode(ref, lib, typ, is_h=False, child=None):
+    n = {"ref": ref, "blockId": int(ref[1:]), "lib": lib, "type": typ,
+         "isHBlock": is_h, "params": {}}
+    if is_h and child:
+        n["scopeId"] = child
+    return n
+
+
+def test_detect_candidates_one_per_hblock_root_excluded():
+    psg = {"modelName": "m.mox", "scopes": [
+        _scope("root", "root", [_hnode("b1", "", "Hierarchical", is_h=True, child="h1")]),
+        _scope("h1", "hblock", [_hnode("b2", "Item", "Queue"), _hnode("b3", "Item", "Activity")],
+               edges=[{"from": "b2.outCon0", "to": "b3.inCon0"}],
+               hblock_type="pure", label="Machine"),
+    ]}
+    cands = detect_candidates(psg)
+    assert len(cands) == 1
+    c = cands[0]
+    assert c["scopeId"] == "h1"
+    assert c["kind"] == "molecule"
+    assert c["confidence"] == "high"
+    assert c["hblockType"] == "pure"
+    assert c["nodeCount"] == 2
+    assert c["label"] == "Machine"
+    assert len(c["wl_fingerprint"]) == 32
+    assert set(c["wlLabels"].keys()) == {"b2", "b3"}
+
+
+def test_detect_candidates_physical_and_null_are_candidate_confidence():
+    psg = {"modelName": "m.mox", "scopes": [
+        _scope("h1", "hblock", [_hnode("b2", "Item", "Queue")], hblock_type="physical"),
+        _scope("h2", "hblock", [_hnode("b3", "Item", "Queue")], hblock_type=None),
+    ]}
+    cands = detect_candidates(psg)
+    assert cands[0]["confidence"] == "candidate"
+    assert cands[1]["confidence"] == "candidate"
+
+
+def test_detect_candidates_composite_when_interior_has_hblock():
+    psg = {"modelName": "m.mox", "scopes": [
+        _scope("h1", "hblock",
+               [_hnode("b2", "Item", "Queue"),
+                _hnode("b3", "", "Hierarchical", is_h=True, child="h3")],
+               hblock_type="pure"),
+        _scope("h3", "hblock", [_hnode("b4", "Item", "Activity")], hblock_type="pure"),
+    ]}
+    cands = detect_candidates(psg)
+    by_id = {c["scopeId"]: c for c in cands}
+    assert by_id["h1"]["kind"] == "composite"
+    assert by_id["h3"]["kind"] == "molecule"
+
+
+def test_detect_candidates_carries_boundary_edges_untouched():
+    b = [{"internal": "b2.inCon0", "crosses": "inlet", "boundaryConnector": "inCon0"}]
+    psg = {"modelName": "m.mox", "scopes": [
+        _scope("h1", "hblock", [_hnode("b2", "Item", "Queue")], boundary=b, hblock_type="pure"),
+    ]}
+    assert detect_candidates(psg)[0]["boundaryEdges"] == b
+
+
+def test_detect_candidates_flat_model_yields_empty():
+    psg = {"modelName": "flat.mox", "scopes": [
+        _scope("root", "root", [_hnode("b1", "Item", "Create"), _hnode("b2", "Item", "Exit")],
+               edges=[{"from": "b1.outCon0", "to": "b2.inCon0"}]),
+    ]}
+    assert detect_candidates(psg) == []
