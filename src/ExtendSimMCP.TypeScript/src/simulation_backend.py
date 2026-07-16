@@ -10207,6 +10207,44 @@ def extract_psg(file_path=None, save_path=None, model_id=None):
                 pass
 
 
+def mine_candidates(file_path=None, psg_path=None, save_path=None, model_id=None):
+    """Detect candidate molecule subgraphs + WL fingerprints from a model's PSG.
+
+    PSG source (priority): psg_path (offline JSON, no COM) -> file_path (extract_psg
+    opens it) -> active model (extract_psg). Pure mining runs on the resolved PSG.
+    """
+    import json as _json
+    import pattern_mine
+    try:
+        if psg_path:
+            try:
+                with open(psg_path, "r", encoding="utf-8") as f:
+                    psg = _json.load(f)
+            except Exception as e:
+                return {"success": False, "errorCode": "PSG_PATH_UNREADABLE",
+                        "error": f"cannot read psgPath: {e}", "psgPath": psg_path}
+        else:
+            res = extract_psg(file_path=file_path, model_id=model_id)
+            if not res.get("success"):
+                return res
+            psg = {"modelName": res.get("modelName", ""), "scopes": res.get("scopes", [])}
+
+        model_name = psg.get("modelName", "")
+        candidates = pattern_mine.detect_candidates(psg)
+
+        if save_path:
+            with open(save_path, "w", encoding="utf-8") as f:
+                _json.dump({"success": True, "modelName": model_name,
+                            "candidateCount": len(candidates), "candidates": candidates},
+                           f, indent=2, allow_nan=False)
+            return {"success": True, "savedTo": save_path, "modelName": model_name,
+                    "candidateCount": len(candidates)}
+        return {"success": True, "modelName": model_name,
+                "candidateCount": len(candidates), "candidates": candidates}
+    except Exception as e:
+        return _com_error(e, "mine_candidates")
+
+
 # Dispatch table
 COMMANDS = {
     "extendsim_status": lambda p: extendsim_status(),
@@ -10762,6 +10800,9 @@ COMMANDS = {
     ),
     "extract_psg": lambda p: extract_psg(
         p.get("filePath"), p.get("savePath"), p.get("modelId")
+    ),
+    "mine_candidates": lambda p: mine_candidates(
+        p.get("filePath"), p.get("psgPath"), p.get("savePath"), p.get("modelId")
     ),
 }
 
