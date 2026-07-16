@@ -122,3 +122,95 @@ def test_cluster_skips_candidate_missing_fingerprint():
     clusters = cluster_candidates([good, bad])
     assert len(clusters) == 1
     assert len(clusters[0]["instances"]) == 1
+
+
+from pattern_cluster import infer_pattern
+
+
+def _inst(fp, nodes, edges=None, boundary=None, wl=None, hbt="pure",
+          scope="h1", source="m.mox"):
+    return {"wl_fingerprint": fp, "nodes": nodes, "edges": edges or [],
+            "boundaryEdges": boundary or [], "wlLabels": wl or {},
+            "hblockType": hbt, "scopeId": scope, "source": source}
+
+
+def _pnode(ref, lib, typ, params=None, is_h=False):
+    n = {"ref": ref, "lib": lib, "type": typ, "isHBlock": is_h, "params": params or {}}
+    return n
+
+
+def test_infer_constant_param_is_fixed():
+    n1 = [_pnode("b1", "Item", "Activity", {"D": 5})]
+    n2 = [_pnode("x1", "Item", "Activity", {"D": 5})]
+    cluster = {"fingerprint": "FP", "nearMiss": False, "instances": [
+        _inst("FP", n1, wl={"b1": "L1"}), _inst("FP", n2, wl={"x1": "L1"})]}
+    pat = infer_pattern(cluster)
+    assert pat["params"]["b1.D"] == {"type": "number", "required": False, "fixed": 5}
+    assert pat["support"] == 2
+
+
+def test_infer_varying_numeric_is_required_with_median_and_range():
+    cluster = {"fingerprint": "FP", "nearMiss": False, "instances": [
+        _inst("FP", [_pnode("b1", "Item", "Activity", {"D": 2})], wl={"b1": "L1"}),
+        _inst("FP", [_pnode("x1", "Item", "Activity", {"D": 8})], wl={"x1": "L1"}),
+        _inst("FP", [_pnode("y1", "Item", "Activity", {"D": 5})], wl={"y1": "L1"})]}
+    info = infer_pattern(cluster)["params"]["b1.D"]
+    assert info["required"] is True
+    assert info["default"] == 5
+    assert info["range"] == [2, 8]
+
+
+def test_infer_varying_non_numeric_uses_most_common():
+    cluster = {"fingerprint": "FP", "nearMiss": False, "instances": [
+        _inst("FP", [_pnode("b1", "Item", "Set", {"attr": "gold"})], wl={"b1": "L1"}),
+        _inst("FP", [_pnode("x1", "Item", "Set", {"attr": "gold"})], wl={"x1": "L1"}),
+        _inst("FP", [_pnode("y1", "Item", "Set", {"attr": "silver"})], wl={"y1": "L1"})]}
+    info = infer_pattern(cluster)["params"]["b1.attr"]
+    assert info["required"] is True and info["type"] == "string"
+    assert info["default"] == "gold"
+
+
+def test_infer_template_uses_placeholder_for_required_literal_for_fixed():
+    cluster = {"fingerprint": "FP", "nearMiss": False, "instances": [
+        _inst("FP", [_pnode("b1", "Item", "Activity", {"D": 2, "cap": 1})], wl={"b1": "L1"}),
+        _inst("FP", [_pnode("x1", "Item", "Activity", {"D": 8, "cap": 1})], wl={"x1": "L1"})]}
+    tnode = infer_pattern(cluster)["template"]["nodes"][0]
+    assert tnode["params"]["D"] == "{{b1.D}}"   # varies -> placeholder
+    assert tnode["params"]["cap"] == 1          # constant -> literal
+
+
+def test_infer_interface_from_representative_boundary_edges():
+    b = [{"internal": "b1.ItemIn", "crosses": "inlet", "boundaryConnector": "ItemIn"},
+         {"internal": "b1.ItemOut", "crosses": "outlet", "boundaryConnector": "ItemOut"}]
+    cluster = {"fingerprint": "FP", "nearMiss": False, "instances": [
+        _inst("FP", [_pnode("b1", "Item", "Activity")], boundary=b, wl={"b1": "L1"})]}
+    iface = infer_pattern(cluster)["interface"]
+    assert iface["inlets"] == [{"binds": "b1.ItemIn", "role": "item"}]
+    assert iface["outlets"] == [{"binds": "b1.ItemOut", "role": "item"}]
+
+
+def test_infer_aligns_by_wl_label_not_block_id():
+    # different refs, same label -> params align into one position
+    cluster = {"fingerprint": "FP", "nearMiss": False, "instances": [
+        _inst("FP", [_pnode("aaa", "Item", "Activity", {"D": 3})], wl={"aaa": "L1"}),
+        _inst("FP", [_pnode("zzz", "Item", "Activity", {"D": 7})], wl={"zzz": "L1"})]}
+    pat = infer_pattern(cluster)
+    # rep is first instance -> key uses rep ref "aaa"; both values aligned via L1
+    assert pat["params"]["aaa.D"]["required"] is True
+    assert pat["params"]["aaa.D"]["range"] == [3, 7]
+
+
+def test_infer_support_one_param_is_required_not_fixed():
+    # a single instance cannot establish constancy -> required (default = the value)
+    cluster = {"fingerprint": "FP", "nearMiss": False, "instances": [
+        _inst("FP", [_pnode("b1", "Item", "Activity", {"D": 5})], wl={"b1": "L1"})]}
+    pat = infer_pattern(cluster)
+    assert pat["support"] == 1
+    assert pat["params"]["b1.D"] == {"type": "number", "required": True, "default": 5}
+
+
+def test_infer_hblocktype_null_when_mixed():
+    cluster = {"fingerprint": "FP", "nearMiss": True, "instances": [
+        _inst("FP", [_pnode("b1", "Item", "Activity")], wl={"b1": "L1"}, hbt="pure"),
+        _inst("FP", [_pnode("x1", "Item", "Activity")], wl={"x1": "L1"}, hbt="physical")]}
+    assert infer_pattern(cluster)["hblockType"] is None

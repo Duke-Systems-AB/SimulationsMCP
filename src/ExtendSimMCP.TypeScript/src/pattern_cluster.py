@@ -177,3 +177,104 @@ def cluster_candidates(candidates, ged_threshold=2):
             "nearMiss": len(member_fps) > 1,
         })
     return clusters
+
+
+def _infer_param(values):
+    """Classify a param's values across instances into fixed / required + default."""
+    if not values:
+        return {"type": "number", "required": True}
+    is_num = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values)
+    typ = "number" if is_num else "string"
+    if len(values) >= 2 and len(set(values)) == 1:
+        return {"type": typ, "required": False, "fixed": values[0]}
+    if len(set(values)) == 1:
+        # single observation -> cannot conclude constant -> required (default = the value)
+        return {"type": typ, "required": True, "default": values[0]}
+    info = {"type": typ, "required": True}
+    if is_num:
+        median = statistics.median(values)
+        info["default"] = int(median) if float(median).is_integer() else median
+        info["range"] = [min(values), max(values)]
+    else:
+        info["default"] = Counter(values).most_common(1)[0][0]
+    return info
+
+
+def _role_of(internal):
+    port = internal.rpartition(".")[2].lower()
+    if "item" in port:
+        return "item"
+    if "value" in port:
+        return "value"
+    return None
+
+
+def infer_pattern(cluster):
+    """Turn a cluster into a mined pattern candidate (params/interface/template)."""
+    instances = cluster["instances"]
+    rep = instances[0]
+    rep_nodes = rep.get("nodes", [])
+    rep_labels = rep.get("wlLabels", {})
+
+    # Collect each param value across instances, keyed by (WL label, paramKey).
+    values = defaultdict(list)
+    for inst in instances:
+        labels = inst.get("wlLabels", {})
+        for node in inst.get("nodes", []):
+            lbl = labels.get(node["ref"])
+            if lbl is None:
+                continue
+            for k, v in (node.get("params") or {}).items():
+                values[(lbl, k)].append(v)
+
+    # Params + example keyed by the representative's refs.
+    params, example = {}, {}
+    for node in rep_nodes:
+        lbl = rep_labels.get(node["ref"])
+        for k, v in (node.get("params") or {}).items():
+            key = f"{node['ref']}.{k}"
+            params[key] = _infer_param(values.get((lbl, k), [v]))
+            example[key] = v
+
+    # Template from the representative: placeholder for required, literal for fixed.
+    tnodes = []
+    for node in rep_nodes:
+        tn = {"ref": node["ref"], "lib": node.get("lib", ""), "type": node.get("type", "")}
+        p = {}
+        for k, v in (node.get("params") or {}).items():
+            key = f"{node['ref']}.{k}"
+            p[k] = "{{" + key + "}}" if params.get(key, {}).get("required") else v
+        if p:
+            tn["params"] = p
+        if node.get("isHBlock"):
+            tn["isHBlock"] = True
+        tnodes.append(tn)
+    template = {"nodes": tnodes, "edges": rep.get("edges", [])}
+
+    # Interface from the representative's boundary edges.
+    inlets, outlets = [], []
+    for be in rep.get("boundaryEdges", []):
+        entry = {"binds": be.get("internal", ""), "role": _role_of(be.get("internal", ""))}
+        if be.get("crosses") == "inlet":
+            inlets.append(entry)
+        elif be.get("crosses") == "outlet":
+            outlets.append(entry)
+    interface = {"inlets": inlets, "outlets": outlets}
+
+    hblock_types = {inst.get("hblockType") for inst in instances}
+    hblock_type = instances[0].get("hblockType") if len(hblock_types) == 1 else None
+    kind = "composite" if any(n.get("isHBlock") for n in rep_nodes) else "molecule"
+
+    return {
+        "wl_fingerprint": cluster.get("fingerprint"),
+        "support": len(instances),
+        "nearMiss": cluster.get("nearMiss", False),
+        "hblockType": hblock_type,
+        "kind": kind,
+        "params": params,
+        "template": template,
+        "interface": interface,
+        "instances": [{"scopeId": i.get("scopeId"), "source": i.get("source")}
+                      for i in instances],
+        "example": example,
+    }
