@@ -25,6 +25,9 @@ nul
 # Claude Code local config
 .claude/
 
+# SDD ledgers (dev-only scratch, never publish)
+.superpowers/
+
 # Release/build artifacts & one-off scripts
 *.zip
 live_verify_*.py
