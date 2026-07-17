@@ -34,3 +34,7 @@ live_verify_*.py
 
 # Local MCP server config (machine-specific paths)
 .mcp.json
+
+# Built installer artifacts (build locally, distribute via Releases)
+installer/output/
+installer/*.exe

@@ -1,8 +1,9 @@
 Simulations MCP Server - Installation Guide
 ============================================
 Duke Systems AB
-Version 1.20.0 — 99 tools
-(Prebuilt installer SimulationsMCP-Setup-1.19.2.exe predates the 1.20.0 tools; rebuild pending.)
+Version 1.21.0 — 103 tools
+Build the installer with installer\build-installer.bat (requires Inno Setup 6 +
+Node + Python) -> output\SimulationsMCP-Setup-1.21.0.exe
 
 PREREQUISITES
 -------------
@@ -19,6 +20,11 @@ Before installing, ensure you have:
 3. ExtendSim installed and registered
    The ExtendSim COM component must be available.
    ExtendSim must be running before using the MCP server.
+   The installer checks for the COM ProgID "ExtendSim.Application" (ExtendSim
+   2024). TESTING ExtendSim 2026 BETA: if the beta registers a different or
+   versioned COM ProgID, the backend's GetActiveObject("ExtendSim.Application")
+   call in src/ExtendSimMCP.TypeScript/src/simulation_backend.py must be updated
+   to match — otherwise the server cannot attach to the running ExtendSim.
 
 INSTALLATION
 ------------
@@ -141,7 +147,7 @@ FIRST SESSION — IMPORTANT
 When your AI client connects, it should call MCP_init first.
 This returns critical usage rules, available tools, and workflow guidance.
 
-The server provides 99 tools across these categories:
+The server provides 103 tools across these categories:
   Model, Block, Block Layout, Values, Config, Attributes,
   Simulation, Statistics, Multi-run, Database, DB Relations,
   Global Arrays, Hierarchy, Analysis (Optimizer, Scenario Manager),
