@@ -9,6 +9,9 @@ _get_var / _set_var_string. table_set is read-back verified and fail-closed.
 
 # Local copy of simulation_backend._error — avoids a module-level import of
 # simulation_backend (which pulls in win32com), keeping the pure cores testable.
+# Deliberately triplicated (same copy also in resource_pool_config.py and
+# attribute_config.py) rather than shared, so each zero-dep module stays
+# independently importable without pulling in a shared helper module.
 def _err(code, message, **extra):
     result = {"success": False, "errorCode": code, "error": message}
     result.update(extra)

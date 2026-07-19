@@ -156,6 +156,59 @@ def test_build_entry_edge_kind_ignores_ref_only_port_names():
     assert e["edges"][0]["kind"] == "side"   # ports outCon0/inCon0 -> no "item" -> side
 
 
+def _candidate_with_attributes():
+    """A candidate whose template has a Set node writing 'partType' (verbatim,
+    literal value — as pattern_cluster now carries setAttributes) plus the
+    existing Queue node 'reading' partType via its sortAttribute param."""
+    c = _candidate()
+    c["template"]["nodes"][0]["params"]["sortAttribute"] = "partType"  # b2 = Queue
+    c["template"]["nodes"].append({
+        "ref": "s1", "lib": "Item", "type": "Set", "isHBlock": False,
+        "setAttributes": [{"name": "partType", "value": 5}],
+    })
+    return c
+
+
+def test_build_entry_infers_writes_from_set_attributes():
+    e = build_library_entry(_candidate_with_attributes(), _naming())
+    assert e["attributes"]["writes"] == ["partType"]
+
+
+def test_build_entry_infers_reads_from_attribute_named_param():
+    e = build_library_entry(_candidate_with_attributes(), _naming())
+    assert e["attributes"]["reads"] == ["partType"]
+
+
+def test_build_entry_carries_set_attributes_onto_node():
+    e = build_library_entry(_candidate_with_attributes(), _naming())
+    s1 = next(n for n in e["nodes"] if n["ref"] == "s1")
+    assert s1["setAttributes"] == [{"name": "partType", "value": 5}]
+
+
+def test_build_entry_no_attributes_is_empty_reads_and_writes():
+    e = build_library_entry(_candidate(), _naming())
+    assert e["attributes"] == {"reads": [], "writes": []}
+
+
+def test_build_entry_naming_attributes_override_wins():
+    naming = _naming()
+    naming["attributes"] = {"reads": ["x"], "writes": ["y"]}
+    e = build_library_entry(_candidate_with_attributes(), naming)
+    assert e["attributes"] == {"reads": ["x"], "writes": ["y"]}
+
+
+def test_build_entry_rewrites_placeholder_in_set_attributes_value():
+    c = _candidate_with_attributes()
+    c["params"]["s1.qty"] = {"type": "number", "required": True, "default": 3}
+    c["template"]["nodes"][2]["setAttributes"] = [
+        {"name": "partType", "value": "{{s1.qty}}"}]
+    naming = _naming()
+    naming["params"]["s1.qty"] = "quantity"
+    e = build_library_entry(c, naming)
+    s1 = next(n for n in e["nodes"] if n["ref"] == "s1")
+    assert s1["setAttributes"][0]["value"] == "{{quantity}}"
+
+
 import json as _json
 from pattern_approve import approve_pattern_entry
 

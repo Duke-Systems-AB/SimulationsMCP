@@ -10,6 +10,17 @@ class MoleculeError(Exception):
     pass
 
 
+def _check_placeholder_declared(value: Any, declared_params: set, where: str) -> None:
+    """Raise MoleculeError if `value` is a {{placeholder}} not in declared_params.
+    Reuses the same placeholder-detection regex as resolve_params/_resolve_value."""
+    if isinstance(value, str):
+        m = _PLACEHOLDER.match(value)
+        if m and m.group(1) not in declared_params:
+            raise MoleculeError(
+                f"undeclared param placeholder '{{{{{m.group(1)}}}}}' in {where} "
+                f"(not in molecule params)")
+
+
 def validate_molecule(molecule: Dict[str, Any], params: Dict[str, Any]) -> None:
     """Raise MoleculeError if the molecule + bound params are not buildable."""
     nodes = molecule.get("nodes", [])
@@ -49,6 +60,35 @@ def validate_molecule(molecule: Dict[str, Any], params: Dict[str, Any]) -> None:
             if not entry.get("name"):
                 raise MoleculeError(f"setAttributes entry on node {n.get('ref')} missing 'name'")
 
+    # {{placeholder}} references (params / setAttributes / resourcePool) must be
+    # declared in molecule["params"] - otherwise they surface as a raw KeyError
+    # mid-build (W2-9).
+    declared_params = set((molecule.get("params") or {}).keys())
+    for n in nodes:
+        ref = n.get("ref")
+        for key, value in (n.get("params") or {}).items():
+            _check_placeholder_declared(value, declared_params, f"node {ref} param '{key}'")
+        for entry in (n.get("setAttributes") or []):
+            _check_placeholder_declared(
+                entry.get("value"), declared_params,
+                f"node {ref} setAttributes['{entry.get('name')}'].value")
+    rp = molecule.get("resourcePool")
+    if rp:
+        for key in ("name", "capacity", "qty"):
+            if key in rp:
+                _check_placeholder_declared(rp[key], declared_params, f"resourcePool.{key}")
+
+
+def _lookup_param(name: str, params: Dict[str, Any]) -> Any:
+    """Look up a resolved param value, raising an honest MoleculeError (not a
+    raw KeyError) when the placeholder has no default and no caller-supplied
+    value (W2-9 follow-up)."""
+    try:
+        return params[name]
+    except KeyError:
+        raise MoleculeError(
+            f"no value supplied for param '{name}' (no default declared)") from None
+
 
 def resolve_params(node: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
     """Substitute {{name}} placeholders in a node's params with bound values."""
@@ -57,7 +97,7 @@ def resolve_params(node: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, An
         if isinstance(v, str):
             m = _PLACEHOLDER.match(v)
             if m:
-                out[k] = params[m.group(1)]
+                out[k] = _lookup_param(m.group(1), params)
                 continue
         out[k] = v
     return out
@@ -68,7 +108,7 @@ def _resolve_value(v, params):
     if isinstance(v, str):
         m = _PLACEHOLDER.match(v)
         if m:
-            return params[m.group(1)]
+            return _lookup_param(m.group(1), params)
     return v
 
 

@@ -92,6 +92,22 @@ def test_realops_create_hblock_raises_when_not_created():
         ops.create_hblock(seed_id=10, name="m")
 
 
+def test_build_molecule_never_starts_com_when_placeholder_undeclared():
+    from instantiate import build_molecule
+    from molecule_schema import MoleculeError
+    from fake_ops import FakeOps
+    mol = {
+        "id": "t", "kind": "molecule", "params": {},
+        "nodes": [{"ref": "act", "lib": "Item.lbr", "type": "Activity", "seed": True,
+                   "params": {"D": "{{typo}}"}}],
+        "edges": [], "interface": {},
+    }
+    ops = FakeOps()
+    with pytest.raises(MoleculeError, match="typo"):
+        build_molecule(mol, {}, ops)
+    assert ops.calls == []          # validation is fail-closed, before any COM
+
+
 def test_build_applies_set_attributes_with_default_param():
     from instantiate import build_molecule
     from fake_ops import FakeOps
@@ -131,6 +147,96 @@ def test_build_lays_out_blocks_without_overlap():
     assert len(moves) >= 2
     xs = [m[2] for m in moves]
     assert len(set(xs)) == len(xs)
+
+
+def test_flow_chain_rejects_branching_duplicate_from_ref():
+    from instantiate import _flow_chain, BuildError
+    edges = [
+        {"kind": "flow", "from": "a.ItemOut", "to": "b.ItemIn"},
+        {"kind": "flow", "from": "a.ItemOut", "to": "c.ItemIn"},   # duplicate 'from' -> branch
+    ]
+    with pytest.raises(BuildError, match="branch"):
+        _flow_chain(edges)
+
+
+def test_build_molecule_reports_orphan_on_mid_build_failure():
+    from instantiate import build_molecule
+    from fake_ops import FakeOps
+
+    class BoomOps(FakeOps):
+        def set_value(self, block_id, var, value):
+            raise RuntimeError("COM exploded mid-build")
+
+    ops = BoomOps()
+    mol = load("machine-with-breakdowns.json")
+    with pytest.raises(RuntimeError) as exc_info:
+        build_molecule(mol, {"process_time": 3, "mtbf": 120, "mttr": 8}, ops)
+
+    partial = getattr(exc_info.value, "partial", None)
+    assert partial is not None
+    assert partial["partialBuild"] is True
+    assert len(partial["orphanedHblockIds"]) == 1
+    # the H-block id recorded is the one this build actually created
+    hblock_calls = [c for c in ops.calls if c[0] == "create_hblock"]
+    assert partial["orphanedHblockIds"][0] == hblock_calls[-1][-1]
+
+
+def test_build_molecule_reports_orphan_blocks_on_pre_hblock_failure():
+    """A failure BEFORE the H-block exists (e.g. the 2nd add_block, for the
+    seed itself) must still attach partial info: the stub block already
+    created ('up') is orphaned, and there's no H-block yet."""
+    from instantiate import build_molecule
+    from fake_ops import FakeOps
+
+    class BoomOps(FakeOps):
+        def __init__(self):
+            super().__init__()
+            self._add_block_calls = 0
+
+        def add_block(self, lib, type_):
+            self._add_block_calls += 1
+            if self._add_block_calls == 2:
+                raise RuntimeError("COM exploded before the seed block landed")
+            return super().add_block(lib, type_)
+
+    ops = BoomOps()
+    mol = load("buffer.json")
+    with pytest.raises(RuntimeError) as exc_info:
+        build_molecule(mol, {}, ops)
+
+    # 'up' (Item.lbr/Create) was the first (and only) successful add_block.
+    up_id = next(c[3] for c in ops.calls if c[0] == "add_block")
+    partial = exc_info.value.partial
+    assert partial is not None
+    assert partial["partialBuild"] is True
+    assert partial["orphanedBlockIds"] == [up_id]
+    assert partial["orphanedHblockIds"] == []
+
+
+def test_build_molecule_reports_all_three_blocks_when_create_hblock_raises():
+    """If create_hblock itself raises (its documented 'created but not
+    confirmed' failure mode), all three pre-hblock blocks (up, seed, down)
+    are orphaned and there's no confirmed H-block id to report."""
+    from instantiate import build_molecule, BuildError
+    from fake_ops import FakeOps
+
+    class BoomOps(FakeOps):
+        def create_hblock(self, seed_id, name):
+            super().create_hblock(seed_id, name)   # the COM call "happens"...
+            raise BuildError("CreateHblock produced no H-block (unconfirmed)")
+
+    ops = BoomOps()
+    mol = load("buffer.json")
+    with pytest.raises(BuildError) as exc_info:
+        build_molecule(mol, {}, ops)
+
+    add_block_ids = [c[3] for c in ops.calls if c[0] == "add_block"]
+    assert len(add_block_ids) == 3
+
+    partial = exc_info.value.partial
+    assert partial["partialBuild"] is True
+    assert partial["orphanedBlockIds"] == add_block_ids
+    assert partial["orphanedHblockIds"] == []
 
 
 def test_build_applies_resource_pool_config():

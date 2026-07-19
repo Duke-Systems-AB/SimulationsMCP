@@ -9,16 +9,12 @@ See spec 2026-07-16-m8-boundary-wl-fingerprint-design.md.
 """
 import hashlib
 
+from patterns import split_ref_port as _split_ref_port
+
 
 def _stable_hash(value):
     """Deterministic 32-hex-char digest of a value (NOT Python's salted hash())."""
     return hashlib.blake2b(repr(value).encode("utf-8"), digest_size=16).hexdigest()
-
-
-def _split_ref_port(endpoint):
-    """'b141.inCon0' -> ('b141', 'inCon0'); rightmost dot separates ref from port."""
-    ref, _, port = endpoint.rpartition(".")
-    return ref, port
 
 
 def wl_fingerprint(nodes, edges, k=4):

@@ -34,7 +34,9 @@ function sessionLog(toolName: string, durationMs: number, params: Record<string,
     const status = result?.status || (result?.success ? "success" : "unknown");
     const resultStr = JSON.stringify(result, null, 0);
     const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "...[truncated]" : resultStr;
-    const line = `[${ts}] ${toolName} (${Math.round(durationMs)}ms) status=${status}\n  params: ${JSON.stringify(params || {})}\n  result: ${truncated}\n\n`;
+    const paramsStr = JSON.stringify(params || {});
+    const truncatedParams = paramsStr.length > 2000 ? paramsStr.slice(0, 2000) + "...[truncated]" : paramsStr;
+    const line = `[${ts}] ${toolName} (${Math.round(durationMs)}ms) status=${status}\n  params: ${truncatedParams}\n  result: ${truncated}\n\n`;
     appendFileSync(SESSION_LOG_PATH, line);
   } catch { /* never fail on logging */ }
 }
@@ -209,13 +211,16 @@ function getPatternLibrary(): Record<string, unknown> {
 
 /**
  * Wraps a backend result into an MCP tool response.
- * Sets isError: true when the result has status "error", so the AI client
- * knows the call failed and can read the structured error (including dialog text).
+ * Sets isError: true when the result has status "error" (synthetic COM-timeout path)
+ * or success === false (the Python backend's standard error shape from _error()), so
+ * the AI client knows the call failed and can read the structured error (including
+ * dialog text). Results with no `success` field (e.g. reference tools) are unaffected.
  */
 function toolResponse(result: any) {
+  const isError = result?.status === "error" || result?.success === false;
   return {
     content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    ...(result?.status === "error" ? { isError: true } : {}),
+    ...(isError ? { isError: true } : {}),
   };
 }
 
@@ -1339,6 +1344,23 @@ server.tool(
   },
   async ({ modelId, blockId, libraryName, blockName, maxDialogId }) => {
     return safeToolCall("block_discover_variables", () => backend.blockDiscoverVariables({ modelId, blockId, libraryName, blockName, maxDialogId }), { modelId, blockId, libraryName, blockName, maxDialogId });
+  }
+);
+
+server.tool(
+  "block_introspect",
+  "Unified block introspection: live dialog items + internal STAT storage variables (names/types from the .lbr, plus live values for scalars). Read-only.",
+  {
+    modelId: z.string().optional().describe("Model ID"),
+    blockId: z.number().optional().describe("Existing block ID in model (use this OR libraryName+blockName)"),
+    libraryName: z.string().optional().describe("Library name (e.g. 'Item.lbr') - places temporary block"),
+    blockName: z.string().optional().describe("Block type (e.g. 'Activity') - places temporary block"),
+    readScalarValues: z.boolean().optional().default(true).describe("Read live values for scalar STAT variables (default true)")
+  },
+  async ({ modelId, blockId, libraryName, blockName, readScalarValues }) => {
+    return safeToolCall("block_introspect",
+      () => backend.blockIntrospect({ modelId, blockId, libraryName, blockName, readScalarValues }),
+      { modelId, blockId, libraryName, blockName, readScalarValues });
   }
 );
 

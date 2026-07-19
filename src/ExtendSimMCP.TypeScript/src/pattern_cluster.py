@@ -10,6 +10,8 @@ stdlib only (self-contained Hungarian, no scipy). See spec
 import statistics
 from collections import Counter, defaultdict
 
+from patterns import split_ref_port as _split_ref_port, infer_port_role
+
 
 def _hungarian(cost):
     """Minimum-cost perfect assignment on a square cost matrix (Kuhn-Munkres, O(n^3)).
@@ -63,11 +65,6 @@ def _hungarian(cost):
         if p[j] != 0:
             total += cost[p[j] - 1][j - 1]
     return total
-
-
-def _split_ref_port(endpoint):
-    ref, _, port = endpoint.rpartition(".")
-    return ref, port
 
 
 def _node_label(node):
@@ -200,15 +197,6 @@ def _infer_param(values):
     return info
 
 
-def _role_of(internal):
-    port = internal.rpartition(".")[2].lower()
-    if "item" in port:
-        return "item"
-    if "value" in port:
-        return "value"
-    return None
-
-
 def infer_pattern(cluster):
     """Turn a cluster into a mined pattern candidate (params/interface/template)."""
     instances = cluster["instances"]
@@ -232,6 +220,25 @@ def infer_pattern(cluster):
                 seen.add(marker)
                 values[(lbl, k)].append(v)
 
+    # Collect each instance's setAttributes (whole list, verbatim) per WL
+    # label — structural, not a scalar param, so no varies/fixed treatment;
+    # just majority/first + a disagreement flag (W3-6b).
+    sa_by_label = defaultdict(list)  # label -> [(signature, original_list), ...]
+    for inst in instances:
+        labels = inst.get("wlLabels", {})
+        seen_sa = set()
+        for node in inst.get("nodes", []):
+            lbl = labels.get(node["ref"])
+            if lbl is None or not node.get("setAttributes"):
+                continue
+            sa = node["setAttributes"]
+            sig = tuple(tuple(sorted(e.items())) for e in sa)
+            marker = (lbl, sig)
+            if marker in seen_sa:
+                continue
+            seen_sa.add(marker)
+            sa_by_label[lbl].append((sig, sa))
+
     # Params + example keyed by the representative's refs.
     params, example = {}, {}
     for node in rep_nodes:
@@ -253,13 +260,20 @@ def infer_pattern(cluster):
             tn["params"] = p
         if node.get("isHBlock"):
             tn["isHBlock"] = True
+        sa_entries = sa_by_label.get(rep_labels.get(node["ref"]))
+        if sa_entries:
+            counts = Counter(sig for sig, _ in sa_entries)
+            top_sig, _ = counts.most_common(1)[0]
+            tn["setAttributes"] = next(sa for sig, sa in sa_entries if sig == top_sig)
+            if len(counts) > 1:
+                tn["setAttributesVaries"] = True
         tnodes.append(tn)
     template = {"nodes": tnodes, "edges": rep.get("edges", [])}
 
     # Interface from the representative's boundary edges.
     inlets, outlets = [], []
     for be in rep.get("boundaryEdges", []):
-        entry = {"binds": be.get("internal", ""), "role": _role_of(be.get("internal", ""))}
+        entry = {"binds": be.get("internal", ""), "role": infer_port_role(be.get("internal", ""))}
         if be.get("crosses") == "inlet":
             inlets.append(entry)
         elif be.get("crosses") == "outlet":

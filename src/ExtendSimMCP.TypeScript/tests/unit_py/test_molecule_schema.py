@@ -45,6 +45,13 @@ def test_resolve_params_substitutes_placeholders():
     node = {"ref": "act", "params": {"D": "{{process_time}}", "fixed": 5}}
     assert resolve_params(node, {"process_time": 3}) == {"D": 3, "fixed": 5}
 
+def test_resolve_params_raises_molecule_error_for_missing_value():
+    # declared param with no default and no caller-supplied value must raise
+    # an honest MoleculeError, not a raw KeyError (W2-9 follow-up).
+    node = {"ref": "act", "params": {"D": "{{process_time}}"}}
+    with pytest.raises(MoleculeError, match="process_time"):
+        resolve_params(node, {})
+
 def test_edge_kind_must_be_flow_or_side():
     m = {**VALID, "edges": [{"kind": "bogus", "from": "q.ItemOut", "to": "act.ItemIn"}]}
     with pytest.raises(MoleculeError, match="kind"):
@@ -87,7 +94,7 @@ def test_validate_accepts_valid_set_attribute():
     mol = {
         "nodes": [{"ref": "set", "lib": "Item.lbr", "type": "Set", "seed": True,
                    "setAttributes": [{"name": "partType", "value": "{{partType}}"}]}],
-        "edges": [], "interface": {}, "params": {},
+        "edges": [], "interface": {}, "params": {"partType": {"default": 1}},
     }
     validate_molecule(mol, {})   # must not raise
 
@@ -104,3 +111,47 @@ def test_resolve_resource_pool_resolves_placeholders():
 def test_resolve_resource_pool_none_when_absent():
     from molecule_schema import resolve_resource_pool
     assert resolve_resource_pool({}, {}) is None
+
+
+def test_validate_rejects_undeclared_placeholder_in_node_params():
+    m = {
+        "id": "m", "kind": "molecule", "params": {"process_time": {"type": "number"}},
+        "nodes": [{"ref": "act", "lib": "Item.lbr", "type": "Activity", "seed": True,
+                   "params": {"D": "{{typo}}"}}],
+        "edges": [], "interface": {},
+    }
+    with pytest.raises(MoleculeError, match="typo"):
+        validate_molecule(m, {"process_time": 3})
+
+
+def test_validate_rejects_undeclared_placeholder_in_set_attributes():
+    m = {
+        "id": "m", "kind": "molecule", "params": {},
+        "nodes": [{"ref": "set", "lib": "Item.lbr", "type": "Set", "seed": True,
+                   "setAttributes": [{"name": "partType", "value": "{{typo}}"}]}],
+        "edges": [], "interface": {},
+    }
+    with pytest.raises(MoleculeError, match="typo"):
+        validate_molecule(m, {})
+
+
+def test_validate_rejects_undeclared_placeholder_in_resource_pool():
+    m = {
+        "id": "m", "kind": "molecule", "params": {},
+        "nodes": [{"ref": "rp", "lib": "Item.lbr", "type": "Resource Pool", "seed": True}],
+        "resourcePool": {"poolNode": "rp", "queueNode": "rp", "releaseNode": "rp",
+                         "name": "{{pool_name_typo}}", "capacity": 1, "qty": 1},
+        "edges": [], "interface": {},
+    }
+    with pytest.raises(MoleculeError, match="pool_name_typo"):
+        validate_molecule(m, {})
+
+
+def test_validate_accepts_declared_placeholder():
+    m = {
+        "id": "m", "kind": "molecule", "params": {"partType": {"default": 5}},
+        "nodes": [{"ref": "set", "lib": "Item.lbr", "type": "Set", "seed": True,
+                   "setAttributes": [{"name": "partType", "value": "{{partType}}"}]}],
+        "edges": [], "interface": {},
+    }
+    validate_molecule(m, {})  # must not raise

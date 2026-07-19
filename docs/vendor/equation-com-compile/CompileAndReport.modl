@@ -1,0 +1,52 @@
+/*
+ * CompileAndReport - COM/OLE-drivable "compile & validate" entry point for the Equation block
+ * -------------------------------------------------------------------------------------------
+ * Proposed addition to the Value library Equation block.
+ *
+ * Purpose
+ *   Let an external OLE/COM automation client (e.g. a Python or C# host driving
+ *   ExtendSim.Application) compile the block's current equation and read back a
+ *   pass/fail verdict WITHOUT any modal dialog and WITHOUT running the model.
+ *
+ * How a client uses it
+ *   1. SetDialogVariable(blockNum, "EQ_EquationText",  <equation text>, 0, 0)
+ *   2. SetDialogVariable(blockNum, "CompileAndReport", 1,               0, 0)   // fires this handler
+ *   3. Read the verdict:  global0    -> 1 = compiled OK, 0 = compile error
+ *                         globalStr0 -> "" on success, else an error indication
+ *
+ * Why an in-block handler is required
+ *   app.Execute() from COM runs in SYSTEM context. From there a client cannot call the
+ *   equation compiler, nor read the block-private compiled-code array (EQ_CompiledEquation).
+ *   A dialog-item handler, by contrast, runs in BLOCK context and can do both. Setting the
+ *   CompileAndReport dialog variable from COM fires this handler, bridging the two worlds.
+ *
+ * Requires
+ *   A dialog item named "CompileAndReport" (checkbox) so that setting it from COM fires
+ *   this "on CompileAndReport" handler.
+ */
+on CompileAndReport
+{
+	integer compileError;
+
+	// Translate EQ_EquationText into ExtendSim's internal form (fills EQ_TranslatedEquationText).
+	EQ_TranslateEquation();
+
+	// Compile SILENTLY: this primitive returns a nonzero error code on bad syntax and does
+	// NOT pop a UserError dialog, unlike the interactive EQ_Compile() path (which also calls
+	// AbortAllSims()). It is the same silent primitive EQ_Compile() itself uses at OpenModel
+	// time. See the KNOWN ISSUE in README.md: this call currently HANGS on invalid equations
+	// when invoked outside a running simulation.
+	compileError = EquationCompileDynamicVariablesSilent("iVars_Values", "oVars_Values",
+		EQ_TranslatedEquationText, EQ_CompiledEquation, EQUATION_TAB_ORDER);
+
+	if (compileError == 0)
+	{
+		global0 = 1;		// ok: equation compiled cleanly
+		globalStr0 = "";	// no error
+	}
+	else
+	{
+		global0 = 0;		// compile / syntax error
+		globalStr0 = "Equation compile error code " + compileError;
+	}
+}//on CompileAndReport

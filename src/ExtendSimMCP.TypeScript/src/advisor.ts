@@ -54,16 +54,6 @@ export function analyzeWarnings(
     }
   }
 
-  const downstream = new Map<number, Set<string>>();
-  for (const c of connections) {
-    const fromId = c.from?.blockId;
-    const toName = c.to?.blockName;
-    if (fromId != null && toName) {
-      if (!downstream.has(fromId)) downstream.set(fromId, new Set());
-      downstream.get(fromId)!.add(toName);
-    }
-  }
-
   const allBlockNames = new Set(blocks.map(b => b.blockName));
 
   for (const b of blocks) {

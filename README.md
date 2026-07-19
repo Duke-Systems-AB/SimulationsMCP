@@ -13,7 +13,7 @@ AI Client (Claude, Gemini, Cursor, ChatGPT)
     │
     │  MCP Protocol (JSON-RPC 2.0)
     ▼
-TypeScript MCP Server (99 tools)
+TypeScript MCP Server (104 tools)
     │
     │  JSON over stdin/stdout
     ▼
@@ -24,14 +24,14 @@ Python COM Backend (pywin32)
 ExtendSim Application
 ```
 
-The server exposes **99 tools** across 17 categories:
+The server exposes **104 tools** across 18 categories:
 
 | Category | Tools |
 |----------|-------|
 | Model Management | `model_open`, `model_save`, `model_new`, `model_close`, `model_info`, `model_validate`, `model_extract`, `model_overview`, `model_snapshot`, `model_list` |
-| Block Operations | `block_add`, `block_add_batch`, `block_connect`, `block_disconnect`, `connect_chain`, `connect_graph`, `block_remove`, `block_list`, `connection_list`, `block_info`, `block_discover`, `block_discover_variables` |
+| Block Operations | `block_add`, `block_add_batch`, `block_connect`, `block_disconnect`, `connect_chain`, `connect_graph`, `block_remove`, `block_list`, `connection_list`, `block_info`, `block_discover`, `block_discover_variables`, `block_introspect` |
 | Block Layout | `block_move`, `block_get_position`, `block_align`, `block_duplicate`, `block_find` |
-| Configuration | `block_configure`, `block_set_value`, `block_get_value`, `execute_command`, `attribute_set`, `attribute_get` |
+| Configuration | `block_configure`, `block_set_value`, `block_get_value`, `execute_command`, `attribute_set`, `attribute_get`, `table_get`, `table_set`, `detect_attributes` |
 | Simulation | `simulation_run`, `simulation_stop`, `simulation_pause`, `simulation_resume`, `simulation_status`, `simulation_get_results`, `simulation_setup_get`, `simulation_setup_set`, `simulation_step`, `simulation_get_state` |
 | Statistics | `block_get_stats`, `simulation_get_block_stats`, `resource_pool_get_stats` |
 | Multi-Run | `simulation_run_multi`, `simulation_run_scenarios`, `scenario_manager_run`, `scenario_manager_status`, `scenario_manager_get_results`, `optimizer_run`, `optimizer_get_results` |
@@ -44,6 +44,7 @@ The server exposes **99 tools** across 17 categories:
 | Time/Date | `time_convert` |
 | Context | `context_set`, `context_get`, `context_clear` |
 | Status | `extendsim_status`, `extendsim_start`, `extendsim_get_license` |
+| Patterns & Mining | `instantiate_pattern`, `compose_flow`, `list_patterns`, `get_pattern`, `extract_psg`, `mine_candidates`, `cluster_patterns`, `approve_pattern` |
 | Telemetry | `telemetry_control` |
 
 ## Requirements
@@ -65,9 +66,11 @@ npm run build
 
 ### Install from Installer
 
-Download `SimulationsMCP-Setup-1.19.2.exe` from the `installer/` directory and run it.
+Download `SimulationsMCP-Setup-1.22.1.exe` from the `installer/` directory and run it.
 
-> **Note:** the prebuilt installer (`1.19.2`) predates the latest tools. For the current **1.20.0** server (99 tools, incl. `table_get`/`table_set`/`detect_attributes`), install from source (above) until the installer is rebuilt.
+The prebuilt installer matches the current source: **v1.22.1, 104 tools** (including
+`block_introspect`, `table_get`/`table_set`, `detect_attributes`, and the full
+pattern-mining pipeline). See `CHANGELOG.md` for release history.
 
 ### Configure Your AI Client
 
@@ -123,7 +126,7 @@ cd src/ExtendSimMCP.TypeScript
 # Build
 npm run build
 
-# Run tests (142 tests, no ExtendSim required)
+# Run tests (390 offline tests: 239 Python + 151 TypeScript; no ExtendSim required)
 npm test
 
 # Run live COM tests (requires running ExtendSim)

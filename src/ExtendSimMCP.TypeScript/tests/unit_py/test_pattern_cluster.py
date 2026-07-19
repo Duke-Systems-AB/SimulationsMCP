@@ -228,6 +228,55 @@ def test_cluster_skips_candidate_missing_wllabels():
     assert clusters[0]["instances"][0]["wl_fingerprint"] == "FP1"
 
 
+def test_infer_carries_set_attributes_from_exemplar_verbatim():
+    n1 = _pnode("b1", "Item", "Set")
+    n1["setAttributes"] = [{"name": "partType", "value": 5}]
+    cluster = {"fingerprint": "FP", "nearMiss": False, "instances": [
+        _inst("FP", [n1], wl={"b1": "L1"})]}
+    tnode = infer_pattern(cluster)["template"]["nodes"][0]
+    assert tnode["setAttributes"] == [{"name": "partType", "value": 5}]
+    assert "setAttributesVaries" not in tnode
+
+
+def test_infer_omits_set_attributes_key_when_absent():
+    n1 = _pnode("b1", "Item", "Activity", {"D": 5})
+    cluster = {"fingerprint": "FP", "nearMiss": False, "instances": [
+        _inst("FP", [n1], wl={"b1": "L1"})]}
+    tnode = infer_pattern(cluster)["template"]["nodes"][0]
+    assert "setAttributes" not in tnode
+
+
+def test_infer_set_attributes_disagreement_flags_varies_keeps_majority_first():
+    # two instances, each contributing one distinct setAttributes value for the
+    # same WL label -> tie -> first (the representative's) wins, flagged.
+    n1 = _pnode("b1", "Item", "Set")
+    n1["setAttributes"] = [{"name": "partType", "value": 5}]
+    n2 = _pnode("x1", "Item", "Set")
+    n2["setAttributes"] = [{"name": "partType", "value": 9}]
+    cluster = {"fingerprint": "FP", "nearMiss": False, "instances": [
+        _inst("FP", [n1], wl={"b1": "L1"}),
+        _inst("FP", [n2], wl={"x1": "L1"})]}
+    tnode = infer_pattern(cluster)["template"]["nodes"][0]
+    assert tnode["setAttributesVaries"] is True
+    assert tnode["setAttributes"] == [{"name": "partType", "value": 5}]
+
+
+def test_infer_set_attributes_majority_wins_over_minority():
+    n1 = _pnode("b1", "Item", "Set")
+    n1["setAttributes"] = [{"name": "partType", "value": 9}]
+    n2 = _pnode("x1", "Item", "Set")
+    n2["setAttributes"] = [{"name": "partType", "value": 5}]
+    n3 = _pnode("y1", "Item", "Set")
+    n3["setAttributes"] = [{"name": "partType", "value": 5}]
+    cluster = {"fingerprint": "FP", "nearMiss": False, "instances": [
+        _inst("FP", [n1], wl={"b1": "L1"}),
+        _inst("FP", [n2], wl={"x1": "L1"}),
+        _inst("FP", [n3], wl={"y1": "L1"})]}
+    tnode = infer_pattern(cluster)["template"]["nodes"][0]
+    assert tnode["setAttributesVaries"] is True
+    assert tnode["setAttributes"] == [{"name": "partType", "value": 5}]
+
+
 def test_infer_set_merges_symmetric_label_values():
     # Instance A has a symmetric pair (2 nodes, same label L, both "gold");
     # B and C each contribute one "silver". Without set-merge the doubled "gold"

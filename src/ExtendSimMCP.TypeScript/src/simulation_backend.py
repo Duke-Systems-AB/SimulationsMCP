@@ -8,8 +8,16 @@ Receives JSON commands via stdin, returns JSON results via stdout.
 import sys
 import json
 import os
+import tempfile
 import win32com.client
 from typing import Any, Optional
+from lbr_stat import read_stat_variables
+from instantiate import instantiate_pattern
+from compose import compose_flow
+from patterns import list_patterns, get_pattern
+from dialog_table import table_get_entry, table_set_entry
+from attribute_detect import detect_attributes_entry
+from pattern_approve import approve_pattern_entry
 
 # Startup log - written immediately on import to verify correct file is running
 _log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "temp")
@@ -71,14 +79,22 @@ def parse_float_nullable(value: str) -> Optional[float]:
 
 
 def _escape_modl_string(s: str) -> str:
-    """Escapes a string for safe use inside ModL f-string commands.
+    """Escapes a string for safe use inside a single-line ModL string literal.
 
-    Handles backslashes, double quotes, and parentheses that could
-    break or inject into ModL command strings.
+    Escapes backslashes and double quotes, and converts real control characters
+    (newline, carriage return, tab) into their two-character ModL escape sequences
+    so the literal never spans lines — a raw newline inside a ModL string raises an
+    "unterminated string" modal (BUG-009a). Order matters: backslashes are doubled
+    first, so the escape backslashes added for \\n/\\r/\\t below are not re-doubled.
     """
     if s is None:
         return ""
-    return str(s).replace("\\", "\\\\").replace('"', '\\"')
+    return (str(s)
+            .replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t"))
 
 
 # ============================================================================
@@ -111,13 +127,13 @@ def _set_var(app, block_id: int, var_name: str, value, row: int = 0, col: int = 
     if isinstance(var_name, str) and var_name.endswith(_TABLE_SUFFIXES):
         # Table variables — must use SetDialogVariable
         if isinstance(value, str):
-            app.Execute(f'SetDialogVariable({block_id}, "{var_name}", "{value}", {row}, {col});')
+            app.Execute(f'SetDialogVariable({block_id}, "{var_name}", "{_escape_modl_string(value)}", {row}, {col});')
         else:
             app.Execute(f'SetDialogVariable({block_id}, "{var_name}", {value}, {row}, {col});')
     elif isinstance(var_name, str) and var_name.endswith(_TEXT_SUFFIXES):
         # Dynamic text — SetDialogVariable (string value OK for _dtxt)
         if isinstance(value, str):
-            app.Execute(f'SetDialogVariable({block_id}, "{var_name}", "{value}", {row}, {col});')
+            app.Execute(f'SetDialogVariable({block_id}, "{var_name}", "{_escape_modl_string(value)}", {row}, {col});')
         else:
             app.Execute(f'SetDialogVariable({block_id}, "{var_name}", {value}, {row}, {col});')
     else:
@@ -194,6 +210,9 @@ class ErrorCode:
     WRONG_BLOCK_TYPE = "WRONG_BLOCK_TYPE"
     BLOCK_ADD_FAILED = "BLOCK_ADD_FAILED"
     BLOCK_REMOVE_FAILED = "BLOCK_REMOVE_FAILED"
+    INVALID_BLOCK_ID = "INVALID_BLOCK_ID"
+    BLOCK_QUERY_FAILED = "BLOCK_QUERY_FAILED"
+    MODEL_QUERY_FAILED = "MODEL_QUERY_FAILED"
 
     # Connector errors
     INVALID_CONNECTOR = "INVALID_CONNECTOR"
@@ -755,7 +774,7 @@ def model_new(save_path: Optional[str] = None) -> dict:
         # Save if path provided
         if save_path:
             save_path_normalized = save_path.replace("\\", "/")
-            app.Execute(f'SaveModelAs("{save_path_normalized}")')
+            app.Execute(f'SaveModelAs("{_escape_modl_string(save_path_normalized)}")')
             # Re-get model name after save
             app.Execute("globalStr0 = GetModelName();")
             model_name = app.Request("System", "globalStr0+:0:0:0")
@@ -835,7 +854,8 @@ def block_add(library_name: str, block_name: str, x: int = 100, y: int = 100,
         # placement is applied afterwards as an explicit move relative to the
         # neighbor's REAL position — PlaceBlock's own neighbor handling did not offset
         # reliably, so blocks stacked on top of each other.
-        cmd = f'PlaceBlock("{block_name}", "{library_name}", {x}, {y}, -1, {side});'
+        cmd = (f'PlaceBlock("{_escape_modl_string(block_name)}", '
+               f'"{_escape_modl_string(library_name)}", {x}, {y}, -1, {side});')
         app.Execute(cmd)
 
         # Collect all block IDs AFTER and find the new one
@@ -906,7 +926,14 @@ def block_add_batch(blocks: list, model_id: Optional[str] = None) -> dict:
     Each block in the list is a dict with keys:
       libraryName, blockName, x, y, label (optional), neighbor (optional), side (optional)
 
-    Returns list of results, one per block.
+    W1-5: delegates each item to block_add() instead of re-implementing placement.
+    block_add already owns the correct auto-flow/neighbor-offset logic (BUG-002 fix)
+    and reads back the block's real position via block_get_position; duplicating that
+    logic here previously reintroduced the pre-fix "pass neighbor straight into
+    PlaceBlock" bug and echoed input x/y as if it were the landed position.
+
+    Returns list of results, one per block. A failed item is recorded in the results
+    list and the batch continues (matches the prior per-item error handling contract).
     """
     try:
         app = get_extendsim_app()
@@ -927,66 +954,8 @@ def block_add_batch(blocks: list, model_id: Optional[str] = None) -> dict:
             side = b.get("side", 2)
             label = b.get("label", None)
 
-            # Collect IDs before
-            before_ids = set()
-            current_id = -1
-            while True:
-                app.Execute(f"global0 = objectIDNext({current_id}, 0);")
-                next_id = int(parse_float(app.Request("System", "global0+:0:0:0")))
-                if next_id == -1:
-                    break
-                before_ids.add(next_id)
-                current_id = next_id
-
-            # Calculate placement coords
-            place_x = x
-            place_y = y
-            if neighbor != -1:
-                HORIZONTAL_OFFSET = 120
-                VERTICAL_OFFSET = 80
-                if side == 0:
-                    place_x, place_y = -HORIZONTAL_OFFSET, 0
-                elif side == 1:
-                    place_x, place_y = 0, -VERTICAL_OFFSET
-                elif side == 2:
-                    place_x, place_y = HORIZONTAL_OFFSET, 0
-                elif side == 3:
-                    place_x, place_y = 0, VERTICAL_OFFSET
-
-            cmd = f'PlaceBlock("{name}", "{lib}", {place_x}, {place_y}, {neighbor}, {side});'
-            app.Execute(cmd)
-
-            # Find new block ID
-            block_id = -1
-            current_id = -1
-            while True:
-                app.Execute(f"global0 = objectIDNext({current_id}, 0);")
-                next_id = int(parse_float(app.Request("System", "global0+:0:0:0")))
-                if next_id == -1:
-                    break
-                if next_id not in before_ids:
-                    block_id = next_id
-                current_id = next_id
-
-            if block_id < 0:
-                results.append({
-                    "success": False,
-                    "error": f"Failed to place '{name}' from '{lib}'",
-                    "blockName": name, "library": lib
-                })
-                continue
-
-            if label:
-                app.Execute(f'SetBlockLabel({block_id}, "{_escape_modl_string(label)}");')
-
-            results.append({
-                "success": True,
-                "blockId": block_id,
-                "blockName": name,
-                "library": lib,
-                "label": label or "",
-                "position": {"x": x, "y": y}
-            })
+            item_result = block_add(lib, name, x, y, neighbor, side, label, model_id)
+            results.append(item_result)
 
         # Restore redraw (H13)
         app.Execute("SuppressWorksheetRedraw(0);")
@@ -1041,11 +1010,23 @@ def _get_array_info(app, block_id, con_name):
         return {"arraySize": 0}
 
 
+def _debug_log_to_temp(filename: str, msg: str):
+    """Append a debug message to a file under the system temp dir, gated by
+    EXTENDSIM_DEBUG. No-op (and never raises) when debug logging is disabled
+    or the write fails for any reason."""
+    if not _debug_logging:
+        return
+    try:
+        log_path = os.path.join(tempfile.gettempdir(), filename)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{msg}\n")
+    except Exception:
+        pass
+
+
 def _log_debug(msg: str):
-    """Append debug message to log file."""
-    log_path = r"C:\Dev\CluadeCode\ES_Extractor\temp\connector_debug.log"
-    with open(log_path, "a", encoding="utf-8") as f:
-        f.write(f"{msg}\n")
+    """Append debug message to log file (gated by EXTENDSIM_DEBUG, temp-dir path)."""
+    _debug_log_to_temp("simulationsmcp_connector_debug.log", msg)
 
 
 def _get_block_connectors(app, block_id: int) -> list:
@@ -1296,6 +1277,36 @@ def _resolve_connector(app, block_id: int, connector, auto_expand_array: bool = 
     return base_con
 
 
+def _diagnose_connection_failure(app, src_id: int, tgt_id: int, to_con) -> Optional[str]:
+    """Diagnoses a failed MakeConnection between src_id and tgt_id.
+
+    Covers the known Queue -> Workstation limitation (Workstation's built-in
+    internal queue already claims ItemIn). Returns a human-readable suggestion
+    string, or None if no specific diagnosis applies (caller should fall back
+    to a generic message).
+    """
+    try:
+        app.Execute(f"globalStr0 = BlockName({src_id});")
+        src_name = app.Request("System", "globalStr0+:0:0:0")
+        app.Execute(f"globalStr0 = BlockName({tgt_id});")
+        tgt_name = app.Request("System", "globalStr0+:0:0:0")
+
+        if src_name == "Queue" and tgt_name == "Workstation":
+            return ("Workstation blocks have a built-in internal queue. "
+                    "Connecting an external Queue to a Workstation's ItemIn fails "
+                    "because the internal queue already uses that connector. "
+                    "Solution: Use Workstation alone (it includes queue functionality) "
+                    "or use Queue + Activity instead of Queue + Workstation.")
+        elif tgt_name == "Workstation" and to_con == 0:
+            return ("Workstation ItemIn (connector 0) may already be used by its "
+                    "internal queue. Try connecting to a different connector or "
+                    "use Queue + Activity instead.")
+    except Exception:
+        pass
+
+    return None
+
+
 def block_connect(source_block_id: int, source_connector,
                   target_block_id: int, target_connector,
                   model_id: Optional[str] = None) -> dict:
@@ -1337,24 +1348,9 @@ def block_connect(source_block_id: int, source_connector,
 
             # Check for Queue → Workstation pattern (known limitation)
             suggestion = "Use block_info(blockId) to verify connector indices and directions."
-            try:
-                app.Execute(f"globalStr0 = BlockName({source_block_id});")
-                src_name = app.Request("System", "globalStr0+:0:0:0")
-                app.Execute(f"globalStr0 = BlockName({target_block_id});")
-                tgt_name = app.Request("System", "globalStr0+:0:0:0")
-
-                if src_name == "Queue" and tgt_name == "Workstation":
-                    suggestion = ("Workstation blocks have a built-in internal queue. "
-                                  "Connecting an external Queue to a Workstation's ItemIn fails "
-                                  "because the internal queue already uses that connector. "
-                                  "Solution: Use Workstation alone (it includes queue functionality) "
-                                  "or use Queue + Activity instead of Queue + Workstation.")
-                elif tgt_name == "Workstation" and to_con == 0:
-                    suggestion = ("Workstation ItemIn (connector 0) may already be used by its "
-                                  "internal queue. Try connecting to a different connector or "
-                                  "use Queue + Activity instead.")
-            except Exception:
-                pass
+            diagnosis = _diagnose_connection_failure(app, source_block_id, target_block_id, to_con)
+            if diagnosis:
+                suggestion = diagnosis
 
             return _error(ErrorCode.CONNECTION_FAILED,
                          f"MakeConnection failed: block {source_block_id} connector {from_con} "
@@ -1525,16 +1521,9 @@ def connect_chain(block_ids: list,
 
                 if conn_result != 1:
                     err_msg = f"MakeConnection failed (result={conn_result})"
-                    # Detect Queue → Workstation limitation
-                    try:
-                        app.Execute(f"globalStr0 = BlockName({src_id});")
-                        sn = app.Request("System", "globalStr0+:0:0:0")
-                        app.Execute(f"globalStr0 = BlockName({tgt_id});")
-                        tn = app.Request("System", "globalStr0+:0:0:0")
-                        if sn == "Queue" and tn == "Workstation":
-                            err_msg += ". Workstation has built-in queue; use Workstation alone or Queue+Activity instead."
-                    except Exception:
-                        pass
+                    diagnosis = _diagnose_connection_failure(app, src_id, tgt_id, to_con)
+                    if diagnosis:
+                        err_msg += f" {diagnosis}"
                     errors.append({"from": src_id, "to": tgt_id, "error": err_msg})
                 else:
                     connections.append({
@@ -1608,10 +1597,14 @@ def connect_graph(connections: list, model_id: Optional[str] = None) -> dict:
                 result = int(parse_float(app.Request("System", "global0+:0:0:0")))
 
                 if result != 1:
+                    err_msg = f"MakeConnection failed (result={result})"
+                    diagnosis = _diagnose_connection_failure(app, src_id, tgt_id, to_con)
+                    if diagnosis:
+                        err_msg += f" {diagnosis}"
                     errors.append({
                         "index": idx,
                         "from": src_id, "to": tgt_id,
-                        "error": f"MakeConnection failed (result={result})"
+                        "error": err_msg
                     })
                 else:
                     made.append({
@@ -2055,14 +2048,12 @@ def block_discover(library_name: str, block_name: str, model_id: Optional[str] =
 
     Returns structured connector data that can be used for block_reference.json.
     """
-    log_path = r"C:\Dev\CluadeCode\ES_Extractor\temp\block_discover_debug.log"
     step = 0
 
     def log(msg):
         nonlocal step
         step += 1
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"[{step}] {msg}\n")
+        _debug_log_to_temp("simulationsmcp_block_discover_debug.log", f"[{step}] {msg}")
 
     log(f"START block_discover('{library_name}', '{block_name}', model_id={model_id})")
 
@@ -2220,6 +2211,55 @@ DIALOG_ITEM_TYPES = {
 }
 
 
+def _enumerate_dialog_items(app, block_id, max_dialog_id: int = 200) -> list:
+    """Enumerate a block's dialog items via COM (DIGetName + GetDialogItemInfo).
+
+    Returns [{dialogId, name, type, typeCode, readOnly, enabled, value?}].
+    Stops after 20 consecutive Unused/empty slots. Pure COM orchestration -
+    shared by block_discover_variables and block_introspect.
+    """
+    variables = []
+    seen_names = set()
+    unused_count = 0
+    for dialog_id in range(max_dialog_id):
+        try:
+            app.Execute(f"globalStr0 = DIGetName({block_id}, {dialog_id});")
+            var_name = app.Request("System", "globalStr0+:0:0:0") or ""
+            if not var_name or var_name == "Unused":
+                unused_count += 1
+                if unused_count > 20:
+                    break
+                continue
+            unused_count = 0
+            if var_name in seen_names:
+                continue
+            seen_names.add(var_name)
+            app.Execute(f'global0 = GetDialogItemInfo({block_id}, "{var_name}", 4);')
+            item_type = int(parse_float(app.Request("System", "global0+:0:0:0")))
+            app.Execute(f'global0 = GetDialogItemInfo({block_id}, "{var_name}", 3);')
+            read_only = int(parse_float(app.Request("System", "global0+:0:0:0"))) == 1
+            app.Execute(f'global0 = GetDialogItemInfo({block_id}, "{var_name}", 2);')
+            enabled = int(parse_float(app.Request("System", "global0+:0:0:0"))) == 1
+            value = None
+            if item_type in (5, 8, 21):
+                try:
+                    app.Execute(f'globalStr0 = GetDialogVariable({block_id}, "{var_name}", 0, 0);')
+                    value = app.Request("System", "globalStr0+:0:0:0")
+                except Exception:
+                    pass
+            var_info = {
+                "dialogId": dialog_id, "name": var_name,
+                "type": DIALOG_ITEM_TYPES.get(item_type, f"unknown({item_type})"),
+                "typeCode": item_type, "readOnly": read_only, "enabled": enabled,
+            }
+            if value is not None:
+                var_info["value"] = value
+            variables.append(var_info)
+        except Exception:
+            continue
+    return variables
+
+
 def block_discover_variables(block_id: Optional[int] = None,
                               library_name: Optional[str] = None,
                               block_name: Optional[str] = None,
@@ -2264,71 +2304,7 @@ def block_discover_variables(block_id: Optional[int] = None,
             target_block_id = add_result["blockId"]
             temp_block = True
 
-        variables = []
-        seen_names = set()
-        unused_count = 0
-
-        # Iterate through dialogIDs
-        for dialog_id in range(max_dialog_id):
-            try:
-                # Get variable name using DIGetName
-                app.Execute(f"globalStr0 = DIGetName({target_block_id}, {dialog_id});")
-                var_name = app.Request("System", "globalStr0+:0:0:0") or ""
-
-                # Skip empty, "Unused", or already seen names
-                if not var_name or var_name == "Unused":
-                    unused_count += 1
-                    # Stop if we've seen too many unused in a row
-                    if unused_count > 20:
-                        break
-                    continue
-
-                unused_count = 0  # Reset counter
-
-                if var_name in seen_names:
-                    continue
-                seen_names.add(var_name)
-
-                # Get dialog item type (which=4)
-                app.Execute(f'global0 = GetDialogItemInfo({target_block_id}, "{var_name}", 4);')
-                item_type = int(parse_float(app.Request("System", "global0+:0:0:0")))
-
-                # Get display only / read-only status (which=3)
-                app.Execute(f'global0 = GetDialogItemInfo({target_block_id}, "{var_name}", 3);')
-                read_only = int(parse_float(app.Request("System", "global0+:0:0:0"))) == 1
-
-                # Get enabled status (which=2)
-                app.Execute(f'global0 = GetDialogItemInfo({target_block_id}, "{var_name}", 2);')
-                enabled = int(parse_float(app.Request("System", "global0+:0:0:0"))) == 1
-
-                # Get current value for parameters and editable text
-                value = None
-                if item_type in (5, 8, 21):  # parameter, edittext, edittext31
-                    try:
-                        app.Execute(f'globalStr0 = GetDialogVariable({target_block_id}, "{var_name}", 0, 0);')
-                        value = app.Request("System", "globalStr0+:0:0:0")
-                    except Exception:
-                        pass
-
-                type_name = DIALOG_ITEM_TYPES.get(item_type, f"unknown({item_type})")
-
-                var_info = {
-                    "dialogId": dialog_id,
-                    "name": var_name,
-                    "type": type_name,
-                    "typeCode": item_type,
-                    "readOnly": read_only,
-                    "enabled": enabled
-                }
-
-                if value is not None:
-                    var_info["value"] = value
-
-                variables.append(var_info)
-
-            except Exception as e:
-                # Skip errors for individual variables
-                continue
+        variables = _enumerate_dialog_items(app, target_block_id, max_dialog_id)
 
         # Remove temporary block
         if temp_block:
@@ -2352,6 +2328,95 @@ def block_discover_variables(block_id: Optional[int] = None,
 
     except Exception as e:
         return _com_error(e, "block_discover_variables")
+
+
+def _select_scalar_reads(stat_vars) -> list:
+    """Names of STAT vars whose live value is SAFE to read (scalars only).
+    Reading an array element out-of-range pops a modal that wedges COM."""
+    return [v.name for v in stat_vars if v.is_scalar and v.dim_count == 0]
+
+
+def block_introspect(block_id=None, library_name=None, block_name=None,
+                     read_scalar_values: bool = True, model_id=None) -> dict:
+    """Unified read-only introspection: live dialog items + STAT storage variables.
+
+    Works on an existing block_id, or temp-places library_name+block_name (auto-removed).
+    STAT values are read for SCALARS ONLY (array reads are unsafe - see _select_scalar_reads).
+    """
+    try:
+        app = get_extendsim_app()
+        if app is None:
+            return _error(ErrorCode.EXTENDSIM_NOT_RUNNING, "ExtendSim is not running")
+
+        temp_block = False
+        target_block_id = block_id
+        resolved_block_name = block_name
+        if target_block_id is None:
+            if not library_name or not block_name:
+                return _error(ErrorCode.INVALID_PARAMETER,
+                              "Either block_id or (library_name + block_name) required")
+            add_result = block_add(library_name, block_name, x=2000, y=2000)
+            if not add_result.get("success"):
+                return _error(ErrorCode.BLOCK_ADD_FAILED,
+                              f"Could not place block: {add_result.get('error')}")
+            target_block_id = add_result["blockId"]
+            temp_block = True
+
+        try:
+            # live half
+            dialog_items = _enumerate_dialog_items(app, target_block_id)
+
+            # resolve block type name + library path
+            if not resolved_block_name:
+                app.Execute(f"globalStr0 = BlockName({target_block_id});")
+                resolved_block_name = app.Request("System", "globalStr0+:0:0:0") or ""
+            app.Execute(f'globalStr0 = GetLibraryPathName({target_block_id}, 1);')
+            library_dir = app.Request("System", "globalStr0+:0:0:0") or ""
+            app.Execute(f'globalStr0 = GetLibraryPathName({target_block_id}, 2);')
+            library_name = app.Request("System", "globalStr0+:0:0:0") or ""
+            library_path = os.path.join(library_dir, library_name) if library_dir else library_name
+
+            # offline STAT half (graceful degrade)
+            stat_variables = []
+            stat_warning = None
+            try:
+                stat_vars = read_stat_variables(library_path, resolved_block_name)
+                safe_names = set(_select_scalar_reads(stat_vars)) if read_scalar_values else set()
+                for v in stat_vars:
+                    entry = {
+                        "name": v.name, "dataType": v.data_type_label,
+                        "dataTypeCode": v.data_type, "isScalar": v.is_scalar,
+                        "dimCount": v.dim_count, "dimSizes": list(v.dim_sizes),
+                    }
+                    if v.name in safe_names:
+                        try:
+                            app.Execute(
+                                f'globalStr0 = getStaticVariable({target_block_id}, "{v.name}", 0, 0);')
+                            entry["value"] = app.Request("System", "globalStr0+:0:0:0")
+                        except Exception:
+                            entry["value"] = None
+                    else:
+                        entry["value_omitted"] = "array" if not v.is_scalar else ("dimensioned" if v.dim_count else "not_requested")
+                    stat_variables.append(entry)
+            except Exception as e:
+                stat_warning = f"STAT introspection unavailable: {e}"
+        finally:
+            if temp_block:
+                try:
+                    block_remove(target_block_id, allow_undo=False)
+                except Exception:
+                    pass  # never let cleanup failure mask the original result/exception
+
+        return {
+            "success": True,
+            "block": {"blockId": target_block_id, "blockName": resolved_block_name,
+                      "library": library_name, "libraryPath": library_path},
+            "dialog_items": dialog_items,
+            "stat_variables": stat_variables,
+            "stat_warning": stat_warning,
+        }
+    except Exception as e:
+        return _com_error(e, "block_introspect")
 
 
 def simulation_run(model_id: Optional[str] = None, end_time: Optional[float] = None,
@@ -3118,11 +3183,17 @@ def queue_set_priority(block_id: int,
     try:
         app = get_extendsim_app()
 
-        # Set queue ranking type (QueueRank_Pop — uppercase P variant)
-        rank_code = QUEUE_RANK.get(rank_type.lower(), 1)
-        _set_var(app, block_id, "QueueRank_Pop", rank_code)
+        check = _validate_block_type(app, block_id, "Queue")
+        if not check.get("success"):
+            return check
 
         warnings = []
+
+        # Set queue ranking type (QueueRank_Pop — uppercase P variant), verified.
+        rank_code = QUEUE_RANK.get(rank_type.lower(), 1)
+        pop_result = _set_popup_verified(app, block_id, "QueueRank_Pop", rank_code)
+        if not pop_result["success"]:
+            warnings.append(pop_result["warning"])
 
         if rank_type.lower() == "attribute" and sort_attribute:
             # Set the sort attribute (SortAttrib_Pop)
@@ -3203,7 +3274,7 @@ def _validate_block_exists(app, block_id: int, operation: str = "operation") -> 
             return {
                 "success": False,
                 "error": f"Block {block_id} does not exist",
-                "errorCode": "INVALID_BLOCK_ID",
+                "errorCode": ErrorCode.INVALID_BLOCK_ID,
                 "suggestion": "Use block_list() to see all blocks and their IDs."
             }
         return {"success": True, "blockName": name}
@@ -3211,7 +3282,7 @@ def _validate_block_exists(app, block_id: int, operation: str = "operation") -> 
         return {
             "success": False,
             "error": str(e),
-            "errorCode": "BLOCK_QUERY_FAILED"
+            "errorCode": ErrorCode.BLOCK_QUERY_FAILED
         }
 
 
@@ -3239,7 +3310,7 @@ def _validate_model_open(app) -> dict:
         return {
             "success": False,
             "error": str(e),
-            "errorCode": "MODEL_QUERY_FAILED"
+            "errorCode": ErrorCode.MODEL_QUERY_FAILED
         }
 
 
@@ -3261,14 +3332,14 @@ def _validate_block_type(app, block_id: int, expected_type: str) -> dict:
             return {
                 "success": False,
                 "error": f"Block {block_id} does not exist",
-                "errorCode": "INVALID_BLOCK_ID",
+                "errorCode": ErrorCode.INVALID_BLOCK_ID,
                 "suggestion": "Use block_list() to see all blocks and their IDs."
             }
         if actual_name.lower() != expected_type.lower():
             return {
                 "success": False,
                 "error": f"Block {block_id} is '{actual_name}', not '{expected_type}'",
-                "errorCode": "WRONG_BLOCK_TYPE",
+                "errorCode": ErrorCode.WRONG_BLOCK_TYPE,
                 "actualType": actual_name,
                 "expectedType": expected_type,
                 "suggestion": f"Use block_list() to find a '{expected_type}' block, or use block_configure which auto-detects block type."
@@ -3278,7 +3349,7 @@ def _validate_block_type(app, block_id: int, expected_type: str) -> dict:
         return {
             "success": False,
             "error": str(e),
-            "errorCode": "BLOCK_QUERY_FAILED"
+            "errorCode": ErrorCode.BLOCK_QUERY_FAILED
         }
 
 
@@ -4074,9 +4145,12 @@ def select_item_out_set_mode(block_id: int,
         if not check.get("success"):
             return check
 
-        # Set routing mode
+        # Set routing mode, verified
         mode_code = SELECT_OUT_MODE.get(mode.lower(), 1)
-        _set_var(app, block_id, "SelectType_pop", mode_code)
+        warnings = []
+        pop_result = _set_popup_verified(app, block_id, "SelectType_pop", mode_code)
+        if not pop_result["success"]:
+            warnings.append(pop_result["warning"])
 
         # Set attribute name for attribute-based routing (string value)
         if mode.lower() == "attribute" and attribute_name:
@@ -4094,7 +4168,7 @@ def select_item_out_set_mode(block_id: int,
         if predict_path is not None:
             _set_var(app, block_id, "Predict_chk", 1 if predict_path else 0)
 
-        return {
+        result = {
             "success": True,
             "blockId": block_id,
             "mode": mode,
@@ -4103,6 +4177,9 @@ def select_item_out_set_mode(block_id: int,
             "ifBlocked": if_blocked,
             "predictPath": predict_path
         }
+        if warnings:
+            result["warnings"] = warnings
+        return result
     except Exception as e:
         return _error(ErrorCode.SET_VALUE_FAILED, str(e),
                       blockId=block_id, operation="select_item_out_set_mode")
@@ -4131,15 +4208,18 @@ def select_item_in_set_mode(block_id: int,
         if not check.get("success"):
             return check
 
-        # Set selection mode
+        # Set selection mode, verified
         mode_code = SELECT_IN_MODE.get(mode.lower(), 1)
-        _set_var(app, block_id, "SelectType_pop", mode_code)
+        pop_result = _set_popup_verified(app, block_id, "SelectType_pop", mode_code)
 
-        return {
+        result = {
             "success": True,
             "blockId": block_id,
             "mode": mode
         }
+        if not pop_result["success"]:
+            result["warnings"] = [pop_result["warning"]]
+        return result
     except Exception as e:
         return _error(ErrorCode.SET_VALUE_FAILED, str(e),
                       blockId=block_id, operation="select_item_in_set_mode")
@@ -4157,7 +4237,7 @@ def _resolve_db_indices(app, db_name: str, table_name: Optional[str] = None,
     Returns dict with 'success' and index values, or error on failure.
     """
     # Resolve database index
-    app.Execute(f'globalInt0 = DBDatabaseGetIndex("{db_name}");')
+    app.Execute(f'globalInt0 = DBDatabaseGetIndex("{_escape_modl_string(db_name)}");')
     raw = app.Request("System", "globalInt0+:0:0:0")
     db_idx = int(parse_float(raw))
     if db_idx < 0:
@@ -4167,7 +4247,7 @@ def _resolve_db_indices(app, db_name: str, table_name: Optional[str] = None,
     result = {"success": True, "dbIdx": db_idx}
 
     if table_name is not None:
-        app.Execute(f'globalInt0 = DBTableGetIndex({db_idx}, "{table_name}");')
+        app.Execute(f'globalInt0 = DBTableGetIndex({db_idx}, "{_escape_modl_string(table_name)}");')
         raw = app.Request("System", "globalInt0+:0:0:0")
         tbl_idx = int(parse_float(raw))
         if tbl_idx < 0:
@@ -4178,7 +4258,7 @@ def _resolve_db_indices(app, db_name: str, table_name: Optional[str] = None,
 
     if field_name is not None and table_name is not None:
         tbl_idx = result["tblIdx"]
-        app.Execute(f'globalInt0 = DBFieldGetIndex({db_idx}, {tbl_idx}, "{field_name}");')
+        app.Execute(f'globalInt0 = DBFieldGetIndex({db_idx}, {tbl_idx}, "{_escape_modl_string(field_name)}");')
         raw = app.Request("System", "globalInt0+:0:0:0")
         fld_idx = int(parse_float(raw))
         if fld_idx < 0:
@@ -4586,9 +4666,13 @@ def batch_set_config(block_id: int,
         if not check.get("success"):
             return check
 
+        warnings = []
+
         if batch_type is not None:
             bt = BATCH_TYPE.get(batch_type.lower(), 1)
-            _set_var(app, block_id, "BatchType_pop", bt)
+            pop_result = _set_popup_verified(app, block_id, "BatchType_pop", bt)
+            if not pop_result["success"]:
+                warnings.append(pop_result["warning"])
 
         if batch_size is not None:
             # Batch size is in the Quantity table, row 0
@@ -4612,7 +4696,7 @@ def batch_set_config(block_id: int,
         if batch_size_when is not None:
             _set_var(app, block_id, "BatchSizeWhen_pop", batch_size_when)
 
-        return {
+        result = {
             "success": True,
             "blockId": block_id,
             "batchType": batch_type,
@@ -4624,6 +4708,9 @@ def batch_set_config(block_id: int,
             "allowZeroBatchSize": allow_zero_batch_size,
             "batchSizeWhen": batch_size_when
         }
+        if warnings:
+            result["warnings"] = warnings
+        return result
     except Exception as e:
         return _error(ErrorCode.SET_VALUE_FAILED, str(e),
                       blockId=block_id, operation="batch_set_config")
@@ -4710,10 +4797,13 @@ def resource_pool_set_config(block_id: int, pool_name=None, initial_resources=No
     if res.get("success") and allocation_rule is not None:
         try:
             app = get_extendsim_app()
-            _set_var(app, block_id, "AllocRule", RESOURCE_ALLOC_RULE.get(allocation_rule.lower(), 1))
+            rule_code = RESOURCE_ALLOC_RULE.get(allocation_rule.lower(), 1)
+            pop_result = _set_popup_verified(app, block_id, "AllocRule", rule_code)
+            if not pop_result["success"]:
+                res.setdefault("warnings", []).append(pop_result["warning"])
         except Exception as e:
             # Surface the failure instead of swallowing it (no silent false-success).
-            res["allocationRuleWarning"] = f"allocation_rule not applied: {e}"
+            res.setdefault("warnings", []).append(f"allocation_rule not applied: {e}")
     return res
 
 
@@ -5533,6 +5623,51 @@ def workstation_set_config(block_id: int,
                       blockId=block_id, operation="workstation_set_config")
 
 
+def _normalize_equation_text(equation: str) -> str:
+    """Collapses a (possibly multi-line) equation into a single line.
+
+    ModL statements are `;`-separated and ModL stores a literal backslash-n
+    rather than a real newline, so a single-line string is the correct
+    representation of a multi-statement equation.
+    """
+    if equation is None:
+        return ""
+    return (str(equation)
+            .replace("\r\n", " ")
+            .replace("\n", " ")
+            .replace("\r", " "))
+
+
+def _write_equation_text_verified(app, block_id: int, equation: str, operation: str) -> dict:
+    """Writes equation text to the REAL storage and verifies it persisted.
+
+    Live-probing (2026-07-18) proved `Equation_dtxt` does NOT persist — it reads
+    back garbage because of a broken dialog handle. The real storage is the STAT
+    scalar `EQ_EquationText`, read/write verified via SetDialogVariable/
+    GetDialogVariable. This helper normalizes the equation to a single line,
+    writes EQ_EquationText, reads it back, and fails closed (returns an _error()
+    dict) on any mismatch instead of reporting a false success.
+
+    Returns:
+        On success: {"success": True, "normalized": <normalized equation text>}
+        On failure: an _error() dict (SET_VALUE_FAILED) — callers should return
+        it directly.
+    """
+    normalized = _normalize_equation_text(equation)
+    escaped = _escape_modl_string(normalized)
+    app.Execute(f'SetDialogVariable({block_id}, "EQ_EquationText", "{escaped}", 0, 0);')
+
+    app.Execute(f'globalStr0 = GetDialogVariable({block_id}, "EQ_EquationText", 0, 0);')
+    readback = app.Request("System", "globalStr0+:0:0:0")
+
+    if readback != normalized:
+        return _error(ErrorCode.SET_VALUE_FAILED,
+                      "equation text did not persist (read-back mismatch)",
+                      blockId=block_id, operation=operation)
+
+    return {"success": True, "normalized": normalized}
+
+
 def equation_set_formula(block_id: int,
                          equation: str = "",
                          model_id: Optional[str] = None) -> dict:
@@ -5545,14 +5680,17 @@ def equation_set_formula(block_id: int,
     try:
         app = get_extendsim_app()
 
-        # Escape backslashes and quotes in the equation string for ModL
-        # _dtxt suffix routes through SetDialogVariable correctly
-        _set_var(app, block_id, "Equation_dtxt", _escape_modl_string(equation))
+        # Real storage is the STAT var EQ_EquationText — Equation_dtxt does not
+        # persist (broken dialog handle). Write + fail-closed read-back verify.
+        write_result = _write_equation_text_verified(app, block_id, equation, "equation_set_formula")
+        if not write_result.get("success"):
+            return write_result
 
         return {
             "success": True,
             "blockId": block_id,
-            "equation": equation
+            "equation": write_result["normalized"],
+            "note": "equation stored; ExtendSim compiles it at the next CheckData/simulation run"
         }
     except Exception as e:
         return _error(ErrorCode.SET_VALUE_FAILED, str(e),
@@ -5592,8 +5730,16 @@ def equation_i_set_formula(block_id: int,
         if not check.get("success"):
             return check
 
+        # Real storage is the STAT var EQ_EquationText — Equation_dtxt does not
+        # persist (broken dialog handle). Write + fail-closed read-back verify.
+        equation_out = equation
+        note = None
         if equation:
-            _set_var(app, block_id, "Equation_dtxt", _escape_modl_string(equation))
+            write_result = _write_equation_text_verified(app, block_id, equation, "equation_i_set_formula")
+            if not write_result.get("success"):
+                return write_result
+            equation_out = write_result["normalized"]
+            note = "equation stored; ExtendSim compiles it at the next CheckData/simulation run"
 
         # v1.17.4.5 — I/O configuration
         if show_input_names is not None:
@@ -5611,10 +5757,10 @@ def equation_i_set_formula(block_id: int,
         if expand_records is not None:
             _set_var(app, block_id, "ExpandRecords_chk", 1 if expand_records else 0)
 
-        return {
+        result = {
             "success": True,
             "blockId": block_id,
-            "equation": equation,
+            "equation": equation_out,
             "showInputNames": show_input_names,
             "showInputValues": show_input_values,
             "showOutputNames": show_output_names,
@@ -5623,6 +5769,9 @@ def equation_i_set_formula(block_id: int,
             "includeEnabled": include_enabled,
             "expandRecords": expand_records
         }
+        if note:
+            result["note"] = note
+        return result
     except Exception as e:
         return _error(ErrorCode.SET_VALUE_FAILED, str(e),
                       blockId=block_id, operation="equation_i_set_formula")
@@ -5649,20 +5798,31 @@ def queue_equation_set_config(block_id: int,
         if not check.get("success"):
             return check
 
+        # Real storage is the STAT var EQ_EquationText — Equation_dtxt does not
+        # persist (broken dialog handle). Write + fail-closed read-back verify.
+        equation_out = equation
+        note = None
         if equation:
-            _set_var(app, block_id, "Equation_dtxt", _escape_modl_string(equation))
+            write_result = _write_equation_text_verified(app, block_id, equation, "queue_equation_set_config")
+            if not write_result.get("success"):
+                return write_result
+            equation_out = write_result["normalized"]
+            note = "equation stored; ExtendSim compiles it at the next CheckData/simulation run"
 
         if release_rule:
             rule_map = {"highestrank": 1, "lowestrank": 2, "firsttrue": 3, "alltrue": 4}
             rule_code = rule_map.get(release_rule.lower(), 1)
             _set_var(app, block_id, "ReleaseRule_pop", rule_code)
 
-        return {
+        result = {
             "success": True,
             "blockId": block_id,
-            "equation": equation,
+            "equation": equation_out,
             "releaseRule": release_rule
         }
+        if note:
+            result["note"] = note
+        return result
     except Exception as e:
         return _error(ErrorCode.SET_VALUE_FAILED, str(e),
                       blockId=block_id, operation="queue_equation_set_config")
@@ -6014,20 +6174,18 @@ def valve_set_config(block_id: int,
                       blockId=block_id, operation="valve_set_config")
 
 
-def merge_set_config(block_id: int,
-                     mode: Optional[int] = None,
-                     initial_value_selected=None,
-                     initialize_selected=None,
-                     param_from_connectors=None,
-                     model_id: Optional[str] = None) -> dict:
-    """Configures a Merge block (Rate.lbr) - combines multiple flow inputs.
+def _merge_or_diverge_set_config(block_id: int,
+                                 mode: Optional[int],
+                                 initial_value_selected,
+                                 initialize_selected,
+                                 param_from_connectors,
+                                 model_id: Optional[str],
+                                 operation: str) -> dict:
+    """Shared body for merge_set_config/diverge_set_config (Rate.lbr blocks).
 
-    Args:
-        block_id: Merge block ID
-        mode: Popup index for Mode_pop
-        initial_value_selected: Initial selected branch index
-        initialize_selected: Initialize selected branch at start
-        param_from_connectors: Get branch params from value connectors
+    Both blocks expose identical dialog variables (Mode_pop,
+    InitialValueSelected_prm, InitializeSelected_chk, ParamFromConnectors_chk);
+    only the operation name reported on error differs.
     """
     try:
         app = get_extendsim_app()
@@ -6054,7 +6212,27 @@ def merge_set_config(block_id: int,
         }
     except Exception as e:
         return _error(ErrorCode.SET_VALUE_FAILED, str(e),
-                      blockId=block_id, operation="merge_set_config")
+                      blockId=block_id, operation=operation)
+
+
+def merge_set_config(block_id: int,
+                     mode: Optional[int] = None,
+                     initial_value_selected=None,
+                     initialize_selected=None,
+                     param_from_connectors=None,
+                     model_id: Optional[str] = None) -> dict:
+    """Configures a Merge block (Rate.lbr) - combines multiple flow inputs.
+
+    Args:
+        block_id: Merge block ID
+        mode: Popup index for Mode_pop
+        initial_value_selected: Initial selected branch index
+        initialize_selected: Initialize selected branch at start
+        param_from_connectors: Get branch params from value connectors
+    """
+    return _merge_or_diverge_set_config(
+        block_id, mode, initial_value_selected, initialize_selected,
+        param_from_connectors, model_id, operation="merge_set_config")
 
 
 def diverge_set_config(block_id: int,
@@ -6072,32 +6250,9 @@ def diverge_set_config(block_id: int,
         initialize_selected: Initialize selected branch at start
         param_from_connectors: Get branch params from value connectors
     """
-    try:
-        app = get_extendsim_app()
-
-        if mode is not None:
-            _set_var(app, block_id, "Mode_pop", mode)
-
-        if initial_value_selected is not None:
-            _set_var(app, block_id, "InitialValueSelected_prm", initial_value_selected)
-
-        if initialize_selected is not None:
-            _set_var(app, block_id, "InitializeSelected_chk", 1 if initialize_selected else 0)
-
-        if param_from_connectors is not None:
-            _set_var(app, block_id, "ParamFromConnectors_chk", 1 if param_from_connectors else 0)
-
-        return {
-            "success": True,
-            "blockId": block_id,
-            "mode": mode,
-            "initialValueSelected": initial_value_selected,
-            "initializeSelected": initialize_selected,
-            "paramFromConnectors": param_from_connectors
-        }
-    except Exception as e:
-        return _error(ErrorCode.SET_VALUE_FAILED, str(e),
-                      blockId=block_id, operation="diverge_set_config")
+    return _merge_or_diverge_set_config(
+        block_id, mode, initial_value_selected, initialize_selected,
+        param_from_connectors, model_id, operation="diverge_set_config")
 
 
 def interchange_set_config(block_id: int,
@@ -8472,14 +8627,19 @@ def block_configure(block_id, config, model_id=None):
             results = []
 
             if has_priority or (not has_resource):
-                # Call priority handler (default if no resource params)
+                # Call priority handler (default if no resource params).
+                # Forward every _QUEUE_PRIORITY_PARAMS key present in config (not just
+                # rankType/sortAttribute/ascending) — queue_set_priority's dispatch entry
+                # (COMMANDS["queue_set_priority"]) reads these exact camelCase keys via p.get(...).
                 priority_params = {
                     "blockId": block_id,
                     "rankType": config.get("rankType", "fifo"),
-                    "sortAttribute": config.get("sortAttribute"),
                     "ascending": config.get("ascending", True),
                     "modelId": model_id,
                 }
+                for key in _QUEUE_PRIORITY_PARAMS:
+                    if key in config:
+                        priority_params[key] = config[key]
                 result = COMMANDS["queue_set_priority"](priority_params)
                 results.append(result)
 
@@ -9555,25 +9715,17 @@ def db_relations_list(database_name: str, model_id: Optional[str] = None) -> dic
         app.Execute(f'globalInt0 = DBRelationsGetNum({db_idx});')
         num_rels = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-        relations = []
-        for rel_idx in range(num_rels):
-            # DBRelationsGetNames fills globalStr array: child table, child field, parent table, parent field
-            app.Execute(f'DBRelationsGetNames({db_idx}, {rel_idx}, globalStr0);')
-            # Read the 4 strings back
-            child_table = app.Request("System", "globalStr0+:0:0:0")
-            app.Execute(f'DBRelationsGetNames({db_idx}, {rel_idx}, globalStr0);')
-            # Since we can't easily read an array of strings, we'll use individual calls
-            # Try reading relation info through field properties instead
-            relations.append({
-                "index": rel_idx
-            })
-
-        return {
-            "success": True,
-            "databaseName": database_name,
-            "relationCount": num_rels,
-            "relations": relations
-        }
+        # Relation COUNT is cheaply available via DBRelationsGetNum, but relation
+        # NAMES are not: DBRelationsGetNames fills a ModL string array, and there is
+        # no confirmed ModL API to read individual elements of that array back over
+        # COM (see history below) — so we do not fabricate per-relation entries.
+        return _error(
+            ErrorCode.COMMAND_FAILED,
+            "db_relations_list is not fully implemented: relation names are not "
+            "readable via the current ModL string-array API",
+            databaseName=database_name,
+            relationCount=num_rels,
+        )
     except Exception as e:
         return _com_error(e, "db_relations_list")
 
@@ -9725,7 +9877,66 @@ EXTRACT_PARAMS = {
         ("maxRate", "MaxRate_prm"),
     ],
     "Exit": [],  # No configurable parameters to extract
+    "Set": [],  # No scalar dialog vars — attribute rows come from the AttribsTable_ttbl
+                # table read (_read_set_attributes), not the scalar mechanism (W3-6a).
+    "Shutdown": [
+        ("tbfDistribution", "SF_TBF_Distribs_pop"),
+        ("tbfArg1", "SF_TBF_Arg1_prm"),
+        ("tbfArg2", "SF_TBF_Arg2_prm"),
+        ("ttrDistribution", "SF_TTR_Distribs_pop"),
+        ("ttrArg1", "SF_TTR_Arg1_prm"),
+        ("ttrArg2", "SF_TTR_Arg2_prm"),
+    ],
+    "Resource Pool Release": [
+        ("releaseQuantity", "NumReleased_PRM"),
+    ],
 }
+
+# Block-type -> list of (friendly_name, dialog_variable_name) for suffix-less
+# string dialog vars that GetVariableNumeric cannot read (returns NaN for a
+# text cell) — must go through GetDialogVariable-as-string (_get_dialog_string)
+# instead of the generic _get_var used by EXTRACT_PARAMS (W3-6a).
+EXTRACT_STRING_PARAMS = {
+    "Resource Pool Release": [("poolName", "ResourcePoolName")],
+}
+
+
+def _map_set_attributes(rows):
+    """Pure shape mapping: raw (name, value) rows read from a Set block's
+    AttribsTable_ttbl dialog table -> the setAttributes list shape used by
+    hand-authored molecules (patterns/molecules/*.json), e.g.
+    [{"name": "partType", "value": 5.0}, ...]. Stops at the first row whose
+    name is blank/"nan" (table terminator, mirrors attribute_detect's
+    empty-name convention). The live COM read that produces the raw rows
+    (_read_set_attributes) isn't unit-testable; this mapping is (W3-6a)."""
+    out = []
+    for name, value in rows:
+        name = (name or "").strip()
+        if not name or name.lower() == "nan":
+            break
+        try:
+            value = parse_float(value)
+        except (ValueError, TypeError):
+            pass
+        out.append({"name": name, "value": value})
+    return out
+
+
+def _read_set_attributes(app, bid):
+    """Live COM read of a Set block's attribute assignments via
+    AttribsTable_ttbl (name col / value col per attribute_config.py's pinned
+    layout). Loops until a blank name terminates the table."""
+    import attribute_config
+    rows = []
+    row = 0
+    while True:
+        name = _get_var(app, bid, "AttribsTable_ttbl", row, attribute_config.ATTR_NAME_COL) or ""
+        if not name.strip() or name.strip().lower() == "nan":
+            break
+        value = _get_var(app, bid, "AttribsTable_ttbl", row, attribute_config.ATTR_VALUE_COL)
+        rows.append((name, value))
+        row += 1
+    return _map_set_attributes(rows)
 
 
 def _extract_blocks(app) -> list:
@@ -9834,8 +10045,6 @@ def _extract_parameters(app, blocks: list) -> dict:
         if param_defs is None:
             skipped.append({"id": bid, "type": block_type})
             continue
-        if not param_defs:
-            continue  # Known type but no params to read (e.g. Exit)
 
         params = {"blockType": block_type}
         for friendly_name, dialog_var in param_defs:
@@ -9849,7 +10058,22 @@ def _extract_parameters(app, blocks: list) -> dict:
             except Exception:
                 params[friendly_name] = None
 
-        parameters[str(bid)] = params
+        for friendly_name, dialog_var in EXTRACT_STRING_PARAMS.get(block_type, []):
+            try:
+                params[friendly_name] = _get_dialog_string(app, bid, dialog_var) or ""
+            except Exception:
+                params[friendly_name] = None
+
+        if block_type == "Set":
+            # Attribute rows live in a dialog TABLE (AttribsTable_ttbl), not a
+            # scalar var — the generic mechanism above can't express it (W3-6a).
+            try:
+                params["setAttributes"] = _read_set_attributes(app, bid)
+            except Exception:
+                params["setAttributes"] = []
+
+        if len(params) > 1:  # more than just the "blockType" marker
+            parameters[str(bid)] = params
 
     result = {"blocks": parameters}
     if skipped:
@@ -10117,12 +10341,23 @@ def _psg_gather_scope(app, scope_id, kind, parent_scope_id, label, block_ids, ou
     for m in meta:
         bid = m["id"]
         child_scope = f"h{bid}" if m["isHBlock"] else None
-        blocks.append({
+        # _extract_parameters folds a "blockType" marker (and, for Set blocks,
+        # a structural "setAttributes" list) into the same per-block dict as
+        # the scalar params — split them back out here (W3-6a): setAttributes
+        # is carried as its own sibling key (psg_extract._node), never as a
+        # scalar param.
+        entry = dict(param_map.get(str(bid), {}))
+        set_attributes = entry.pop("setAttributes", None)
+        entry.pop("blockType", None)
+        blk = {
             "blockId": bid, "lib": m["lib"], "type": m["type"],
             "isHBlock": m["isHBlock"], "childScopeId": child_scope,
-            "params": param_map.get(str(bid), {}),
+            "params": entry,
             "connectors": _psg_read_connectors(app, bid),
-        })
+        }
+        if set_attributes is not None:
+            blk["setAttributes"] = set_attributes
+        blocks.append(blk)
         if m["isHBlock"]:
             child_hblocks.append(bid)
 
@@ -10339,17 +10574,17 @@ COMMANDS = {
     ),
     "block_list": lambda p: block_list(p.get("modelId"), p.get("detail", "summary")),
     "connection_list": lambda p: connection_list(p.get("modelId")),
-    "instantiate_pattern": lambda p: __import__("instantiate").instantiate_pattern(
+    "instantiate_pattern": lambda p: instantiate_pattern(
         p.get("moleculeId"), p.get("params"), p.get("modelId")),
-    "compose_flow": lambda p: __import__("compose").compose_flow(
+    "compose_flow": lambda p: compose_flow(
         p.get("flow"), p.get("modelId")),
-    "list_patterns": lambda p: __import__("patterns").list_patterns(p.get("intent")),
-    "get_pattern": lambda p: __import__("patterns").get_pattern(p.get("patternId")),
-    "table_get": lambda p: __import__("dialog_table").table_get_entry(
+    "list_patterns": lambda p: list_patterns(p.get("intent")),
+    "get_pattern": lambda p: get_pattern(p.get("patternId")),
+    "table_get": lambda p: table_get_entry(
         p.get("blockId"), p.get("variableName"), p.get("row", 0), p.get("col", 0)),
-    "table_set": lambda p: __import__("dialog_table").table_set_entry(
+    "table_set": lambda p: table_set_entry(
         p.get("blockId"), p.get("variableName"), p.get("value"), p.get("row", 0), p.get("col", 0)),
-    "detect_attributes": lambda p: __import__("attribute_detect").detect_attributes_entry(
+    "detect_attributes": lambda p: detect_attributes_entry(
         p.get("blockId"), p.get("modelId")),
     "block_info": lambda p: block_info(
         query=p.get("query"), block_id=p.get("blockId"),
@@ -10361,6 +10596,10 @@ COMMANDS = {
     "block_discover_variables": lambda p: block_discover_variables(
         p.get("blockId"), p.get("libraryName"), p.get("blockName"),
         p.get("maxDialogId", 200), p.get("modelId")
+    ),
+    "block_introspect": lambda p: block_introspect(
+        p.get("blockId"), p.get("libraryName"), p.get("blockName"),
+        p.get("readScalarValues", True), p.get("modelId")
     ),
     "simulation_run": lambda p: simulation_run(
         p.get("modelId"), p.get("endTime"), p.get("runMode", "normal"),
@@ -10526,9 +10765,7 @@ COMMANDS = {
         p["blockId"], p.get("modelId")
     ),
     "resource_pool_release_set_config": lambda p: resource_pool_release_set_config(
-        p["blockId"],
-        pool_name=p.get("poolName"),
-        release_quantity=p.get("releaseQuantity"), model_id=p.get("modelId")
+        p["blockId"], p.get("poolName"), p.get("releaseQuantity"), p.get("modelId")
     ),
     "queue_set_resource_pool": lambda p: queue_set_resource_pool(
         p["blockId"], p["resourcePoolBlockId"],
@@ -10856,7 +11093,7 @@ COMMANDS = {
     "cluster_patterns": lambda p: cluster_patterns(
         p.get("candidatesPaths"), p.get("filePaths"), p.get("psgPaths"), p.get("savePath")
     ),
-    "approve_pattern": lambda p: __import__("pattern_approve").approve_pattern_entry(
+    "approve_pattern": lambda p: approve_pattern_entry(
         p.get("candidate"), p.get("patternsPath"), p.get("patternFingerprint"),
         p.get("naming"), p.get("dryRun", False), p.get("overwrite", False)
     ),

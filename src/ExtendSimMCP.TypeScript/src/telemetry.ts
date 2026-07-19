@@ -80,7 +80,7 @@ export function recordToolCall(
 ): void {
   try {
     const durMs = Math.round(performance.now() - startTime);
-    const ok = result?.status !== "error";
+    const ok = result?.status !== "error" && result?.success !== false;
 
     const event: Record<string, unknown> = {
       ts: new Date().toISOString(),
@@ -180,6 +180,7 @@ export function extractContext(
   switch (toolName) {
     case "block_add":
     case "block_discover":
+    case "block_introspect":
       return pick(params, "libraryName", "blockName");
 
     case "block_add_batch":

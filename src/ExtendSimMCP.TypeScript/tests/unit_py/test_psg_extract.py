@@ -5,6 +5,7 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 from psg_extract import _port, _pair
+import simulation_backend as backend
 
 
 def _blk(bid, connectors):
@@ -126,10 +127,14 @@ def test_pair_two_ins_on_one_node_are_boundary_inlets():
 from psg_extract import build_psg
 
 
-def _raw_block(bid, lib, btype, is_h=False, child=None, params=None, connectors=None):
-    return {"blockId": bid, "lib": lib, "type": btype, "isHBlock": is_h,
-            "childScopeId": child, "params": params or {},
-            "connectors": connectors or []}
+def _raw_block(bid, lib, btype, is_h=False, child=None, params=None, connectors=None,
+               set_attributes=None):
+    blk = {"blockId": bid, "lib": lib, "type": btype, "isHBlock": is_h,
+           "childScopeId": child, "params": params or {},
+           "connectors": connectors or []}
+    if set_attributes is not None:
+        blk["setAttributes"] = set_attributes
+    return blk
 
 
 def test_build_psg_flat_model_single_root_scope():
@@ -189,6 +194,27 @@ def test_build_psg_root_scope_omits_hblock_only_fields():
     assert "hblockType" not in root and "label" not in root
 
 
+def test_build_psg_carries_set_attributes_through_when_present():
+    raw = {"modelName": "s.mox", "scopes": [
+        {"scopeId": "root", "kind": "root", "parentScopeId": None, "blocks": [
+            _raw_block(20, "Item", "Set",
+                       set_attributes=[{"name": "partType", "value": 5.0}]),
+        ]},
+    ]}
+    node = build_psg(raw)["scopes"][0]["nodes"][0]
+    assert node["setAttributes"] == [{"name": "partType", "value": 5.0}]
+
+
+def test_build_psg_omits_set_attributes_key_when_absent():
+    raw = {"modelName": "s.mox", "scopes": [
+        {"scopeId": "root", "kind": "root", "parentScopeId": None, "blocks": [
+            _raw_block(10, "Item", "Create", connectors=[_c(0, "outCon0", "out", 5)]),
+        ]},
+    ]}
+    node = build_psg(raw)["scopes"][0]["nodes"][0]
+    assert "setAttributes" not in node
+
+
 def test_build_psg_nested_hblocks_every_depth_is_a_scope():
     raw = {"modelName": "n.mox", "scopes": [
         {"scopeId": "root", "kind": "root", "parentScopeId": None, "blocks": [
@@ -203,3 +229,33 @@ def test_build_psg_nested_hblocks_every_depth_is_a_scope():
     ids = [s["scopeId"] for s in psg["scopes"]]
     assert ids == ["root", "h140", "h150"]
     assert psg["scopes"][2]["parentScopeId"] == "h140"
+
+
+# ---------------------------------------------------------------------------
+# _map_set_attributes (simulation_backend.py) — pure shape mapping from a
+# Set block's AttribsTable_ttbl raw (name, value) rows to the setAttributes
+# list shape used by hand-authored molecules (patterns/molecules/*.json).
+# The live COM read that produces the raw rows isn't unit-testable; this
+# mapping is (W3-6a).
+# ---------------------------------------------------------------------------
+
+def test_map_set_attributes_parses_numeric_values():
+    rows = [("partType", "5"), ("priority", "2")]
+    assert backend._map_set_attributes(rows) == [
+        {"name": "partType", "value": 5.0},
+        {"name": "priority", "value": 2.0},
+    ]
+
+
+def test_map_set_attributes_keeps_non_numeric_value_as_string():
+    rows = [("color", "gold")]
+    assert backend._map_set_attributes(rows) == [{"name": "color", "value": "gold"}]
+
+
+def test_map_set_attributes_stops_at_first_blank_name():
+    rows = [("partType", "5"), ("", "9"), ("ignored", "1")]
+    assert backend._map_set_attributes(rows) == [{"name": "partType", "value": 5.0}]
+
+
+def test_map_set_attributes_empty_rows_is_empty_list():
+    assert backend._map_set_attributes([]) == []

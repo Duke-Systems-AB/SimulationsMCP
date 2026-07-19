@@ -154,6 +154,11 @@ describe("No raw SetDialogVariable/SetVariableNumeric outside helpers", () => {
         trimmed.includes("_escape_modl_string(value)")
       )
         return false;
+      // Allowed: _write_equation_text_verified — equations MUST bypass _set_var:
+      // the Equation_dtxt dialog handle _set_var would route to is broken (does
+      // not persist); the real storage is the STAT var EQ_EquationText, which
+      // only direct SetDialogVariable reaches (live-verified 2026-07-18).
+      if (trimmed.includes("EQ_EquationText")) return false;
       // Allowed: _read_sm_config Scenarios_tbl checkbox access
       // Scenarios_tbl is a stringtable with _tbl suffix (not _dtbl/_ttbl),
       // so _set_var routes it to SetVariableNumeric which fails.

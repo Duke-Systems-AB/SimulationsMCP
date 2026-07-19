@@ -62,7 +62,6 @@ def _uia_find_main_window(uia):
         elem = children.GetElement(i)
         try:
             name = elem.CurrentName or ""
-            cls = elem.CurrentClassName or ""
             if "ExtendSim" in name and ("[" in name or "Pro" in name):
                 return elem
         except Exception:
@@ -348,7 +347,7 @@ def try_win32gui_strategy():
                 break
 
     # 2. Handle Qt ExtendSim dialogs (SetForegroundWindow + SendInput Enter)
-    qt_dialogs, main_hwnd = _find_extendsim_dialog_windows()
+    qt_dialogs, _main_hwnd = _find_extendsim_dialog_windows()
     for d in qt_dialogs:
         if d.get("is_maintenance"):
             # Dismiss maintenance dialog too

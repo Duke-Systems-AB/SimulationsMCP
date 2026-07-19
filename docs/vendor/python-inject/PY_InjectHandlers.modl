@@ -1,0 +1,57 @@
+/*
+ * Python-code injection handlers - COM/OLE-drivable population of dsPythonCode[]
+ * -----------------------------------------------------------------------------
+ * Proposed pattern for the Value library Python Bridge block.
+ *
+ * Purpose
+ *   Let an external OLE/COM automation client set the block's Python script
+ *   (the dsPythonCode[] String array) WITHOUT the interactive code editor.
+ *
+ * Why an in-block handler is required
+ *   dsPythonCode[] is a block-private STAT array. A COM client cannot address it
+ *   through the dialog API: SetDialogVariable/GetDialogVariable(id,"dsPythonCode",row,0)
+ *   raises "Row or column index out of range for static variable". A dialog-item
+ *   handler, by contrast, runs in BLOCK context and can index the array directly.
+ *   Setting the item's dialog variable from COM fires the handler.
+ *
+ * Client protocol (one line per array element - avoids embedding newlines in a
+ * single ModL string literal, which the parser cannot carry):
+ *
+ *   SetDialogVariable(blockNum, "PY_SizeTrig", <lineCount>)          // size the array
+ *   for each line i:
+ *       SetDialogVariable(blockNum, "PY_LineIndex", i)
+ *       SetDialogVariable(blockNum, "PY_InjectBuf", "<code line i>")
+ *       SetDialogVariable(blockNum, "PY_InjectTrig", 1)              // fires the inject handler
+ *   // verify:
+ *       SetDialogVariable(blockNum, "PY_LineIndex", i)
+ *       SetDialogVariable(blockNum, "PY_ReadTrig", 1)                // fires the read handler
+ *       Request("globalStr0")  ->  dsPythonCode[i]
+ *
+ * Requires these dialog items: PY_SizeTrig (parameter), PY_LineIndex (parameter),
+ * PY_InjectBuf (edittext / string), PY_InjectTrig (checkbox), PY_ReadTrig (checkbox).
+ *
+ * NOTE: this pattern populates dsPythonCode[]. To make the injected code executable
+ * the block should additionally register it (e.g. PythonEditorAddRelatedCode) - see
+ * README.md, request #2.
+ */
+
+// Size dsPythonCode[] to the number of lines the client is about to inject.
+on PY_SizeTrig
+{
+	MakeArray(dsPythonCode, PY_SizeTrig);
+	global0 = GetDimension(dsPythonCode);	// echo the new size back to COM
+}
+
+// Store one COM-supplied code line at the client-selected row.
+on PY_InjectTrig
+{
+	dsPythonCode[PY_LineIndex] = PY_InjectBuf;
+	global0 = GetDimension(dsPythonCode);
+}
+
+// Read one row back so the client can verify the injected script.
+on PY_ReadTrig
+{
+	globalStr0 = dsPythonCode[PY_LineIndex];
+	global0 = GetDimension(dsPythonCode);
+}

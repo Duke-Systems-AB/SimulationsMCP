@@ -13,10 +13,18 @@ attributes through the AttribsTable_ttbl dialog table.
 # not the number, and a discovery adjustment does not churn the tests.
 ATTR_NAME_COL = 0       # string column: attribute name
 ATTR_VALUE_COL = 1      # value column: constant value
+# ATTR_TYPE_COL is None by design: the 2024 Set block's AttribsTable_ttbl has no
+# value-source popup column today (only name+value). It is kept (not deleted) as
+# a forward-compat hook for a future column layout that adds one; the
+# `if ATTR_TYPE_COL is not None:` branch below is intentionally dormant until then.
 ATTR_TYPE_COL = None    # value-source popup column, or None if absent
 _CONSTANT_CODE = 1      # popup code for "constant" (used only if ATTR_TYPE_COL set)
 
 
+# Local copy of simulation_backend._error (also duplicated in
+# resource_pool_config.py and dialog_table.py) — deliberate: keeps this
+# zero-dep module importable without a module-level import of
+# simulation_backend (win32com) or a shared helper module.
 def _err(code, message, **extra):
     result = {"success": False, "errorCode": code, "error": message}
     result.update(extra)

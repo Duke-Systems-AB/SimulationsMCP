@@ -7,6 +7,27 @@ _BASE = os.path.join(os.path.dirname(__file__), "..", "patterns")
 _DIRS = {"molecule": "molecules", "flow": "flows"}
 
 
+def split_ref_port(endpoint):
+    """'b141.inCon0' -> ('b141', 'inCon0'); rightmost dot separates ref from port.
+
+    Shared by pattern_mine.py and pattern_cluster.py (was duplicated in both)."""
+    ref, _, port = endpoint.rpartition(".")
+    return ref, port
+
+
+def infer_port_role(name):
+    """Heuristic port-role guess from a port/endpoint name's final segment.
+
+    Shared by pattern_cluster.py's boundary-edge role inference and
+    pattern_approve.py's naming-override fallback (was duplicated in both)."""
+    port = name.rpartition(".")[2].lower()
+    if "item" in port:
+        return "item"
+    if "value" in port:
+        return "value"
+    return None
+
+
 def _iter_defs():
     for kind, sub in _DIRS.items():
         d = os.path.join(_BASE, sub)

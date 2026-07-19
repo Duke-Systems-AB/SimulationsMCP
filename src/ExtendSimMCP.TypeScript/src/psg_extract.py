@@ -86,6 +86,10 @@ def _node(blk):
         "isHBlock": bool(blk.get("isHBlock")),
         "params": blk.get("params", {}),
     }
+    if blk.get("setAttributes"):
+        # Structural (e.g. a Set block's attribute assignments) — carried
+        # verbatim, not treated as a scalar param (W3-6a).
+        node["setAttributes"] = blk["setAttributes"]
     if node["isHBlock"] and blk.get("childScopeId"):
         node["scopeId"] = blk["childScopeId"]
     return node

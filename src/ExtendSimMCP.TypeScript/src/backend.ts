@@ -34,12 +34,15 @@ const COMMAND_TIMEOUTS: Record<string, number> = {
   // 30s - medium: file I/O, multi-block ops, bulk reads
   model_open: 30_000,
   model_save: 30_000,
+  model_close: 30_000,  // saveFirst runs SaveModel, same op model_save gets 30s for
+  detect_license: 30_000,  // opens+closes a temp model; called by MCP_init
   model_new: 30_000,
   model_validate: 30_000,
   block_template: 30_000,
   block_add_batch: 30_000,
   block_discover: 30_000,
   block_discover_variables: 30_000,
+  block_introspect: 30_000,
   simulation_get_results: 60_000,  // Large models: lightweight scan of 24k+ blocks
   simulation_get_block_stats: 30_000,
   block_list: 120_000,  // Large models: 5 COM calls per block, 24k+ blocks
@@ -51,8 +54,6 @@ const COMMAND_TIMEOUTS: Record<string, number> = {
   hierarchy_get_contents: 30_000,
   // 60s - save/close/reopen cycle
   block_configure: 60_000,
-  activity_set_delay: 60_000,
-  create_set_arrivals: 60_000,
   // 2-10min - long-running operations
   extendsim_start: 120_000,
   simulation_run: 300_000,
@@ -79,6 +80,12 @@ const HEARTBEAT_INTERVAL = 60_000; // 1 minute
 /** Max consecutive retries when Python process dies */
 const MAX_RETRIES = 2;
 
+/** Grace window in ms given to an in-flight command after a blocking dialog has
+ * been successfully auto-dismissed, for the real response to still arrive before
+ * we fall back to a synthetic COM_TIMEOUT error (W2-2). A benign popup (e.g. an
+ * informational message) shouldn't fail an otherwise-successful command. */
+export const DIALOG_DISMISS_GRACE_MS = 5_000;
+
 // ============================================================================
 // PROCESS STATE
 // ============================================================================
@@ -90,12 +97,19 @@ let isInitialized = false;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
 // Request queue for handling sequential calls
-interface PendingRequest {
+export interface PendingRequest {
   resolve: (value: any) => void;
   reject: (error: Error) => void;
   command: string;
   params: object;
   retryCount: number;
+  // Timers armed per send attempt (W2-1: re-armed fresh on every actual send,
+  // including retries, so a retry never inherits a leftover countdown).
+  timeoutId?: ReturnType<typeof setTimeout>;
+  earlyDialogTimerId?: ReturnType<typeof setTimeout>;
+  earlyResolved?: boolean;
+  // Grace-window timer after a successful dialog dismiss (W2-2).
+  graceTimerId?: ReturnType<typeof setTimeout>;
 }
 const requestQueue: PendingRequest[] = [];
 let isProcessingRequest = false;
@@ -201,6 +215,11 @@ function handleProcessDeath(): void {
     isProcessingRequest = false;
     if (failed.retryCount < MAX_RETRIES) {
       console.error(`Retrying command '${failed.command}' (attempt ${failed.retryCount + 1}/${MAX_RETRIES})`);
+      // W2-1: drop the timers armed for the original (now-dead) attempt so the
+      // retry doesn't inherit a countdown that's already partially elapsed.
+      // Fresh timers are re-armed in processNextRequest() when the retry is
+      // actually resent.
+      clearRequestTimers(failed);
       failed.retryCount++;
       requestQueue.unshift(failed);
       // Will be picked up after reinit
@@ -304,7 +323,7 @@ export async function initBackend(): Promise<void> {
 /**
  * Handles response from Python
  */
-function processResponse(response: any): void {
+export function processResponse(response: any): void {
   // Discard stale responses from timed-out requests (A4 fix)
   if (staleResponseCount > 0) {
     staleResponseCount--;
@@ -342,6 +361,11 @@ function processNextRequest(): void {
   const current = requestQueue[0];
   if (current) {
     isProcessingRequest = true;
+    // W2-1: (re-)arm fresh timers for this send attempt. This is the single
+    // choke point where a command is actually written to Python's stdin, so
+    // both first sends and retries after a process death get a full,
+    // un-decayed timeout/early-dialog-check window.
+    armRequestTimers(current);
     const request = JSON.stringify({
       command: current.command,
       params: current.params,
@@ -362,6 +386,205 @@ function getTimeout(command: string): number {
   return COMMAND_TIMEOUTS[command] ?? DEFAULT_TIMEOUT;
 }
 
+export type DialogInfo = { found: boolean; text?: string; dismissed?: boolean; details?: any[] };
+
+/**
+ * Clears every timer that may be armed for a request (main timeout, early
+ * dialog check, dialog-dismiss grace window) and resets their bookkeeping.
+ * Safe to call repeatedly / when some timers were never armed (W2-1, W2-2).
+ */
+export function clearRequestTimers(req: PendingRequest): void {
+  clearTimeout(req.timeoutId);
+  clearTimeout(req.earlyDialogTimerId);
+  clearTimeout(req.graceTimerId);
+  req.timeoutId = undefined;
+  req.earlyDialogTimerId = undefined;
+  req.graceTimerId = undefined;
+  req.earlyResolved = false;
+}
+
+/**
+ * Resolves a pending request with a synthetic COM_TIMEOUT/dialog error and
+ * cleans it out of the request queue. Used for failed (or absent) dismisses
+ * immediately, and as the fallback once a successful dismiss's grace window
+ * lapses without a real response (W2-2).
+ */
+export function resolveWithDialogError(req: PendingRequest, dialogInfo: DialogInfo, source: string): void {
+  const index = requestQueue.indexOf(req);
+  if (index === -1) return; // already resolved (e.g. real response arrived during grace window)
+
+  if (index === 0 && isProcessingRequest) {
+    staleResponseCount++;
+  }
+  requestQueue.splice(index, 1);
+  isProcessingRequest = false;
+
+  const timeout = getTimeout(req.command);
+  let message: string;
+  let suggestion: string;
+  if (dialogInfo.found && dialogInfo.dismissed) {
+    message = `Command '${req.command}' blocked by ExtendSim dialog (detected by ${source}). Dialog has been dismissed.`;
+    suggestion = "Read the dialog text in the 'dialog.text' field to understand the error. Adjust your parameters and retry.";
+  } else if (dialogInfo.found && !dialogInfo.dismissed) {
+    message = `Command '${req.command}' blocked by ExtendSim dialog (detected by ${source}). Dialog could NOT be dismissed automatically.`;
+    suggestion = "HUMAN INTERVENTION REQUIRED: The user must manually dismiss the dialog in ExtendSim before retrying.";
+  } else {
+    message = `Command '${req.command}' timed out after ${timeout / 1000}s. No blocking dialog was detected.`;
+    suggestion = "ExtendSim may be busy or unresponsive. Check extendsim_status or retry the command.";
+  }
+
+  req.resolve({
+    status: "error",
+    errorCode: "COM_TIMEOUT",
+    message,
+    dialog: dialogInfo,
+    suggestion,
+  });
+  processNextRequest();
+}
+
+/**
+ * Handles a dialog-detection result from either the early check or the main
+ * timeout. A failed (or absent) dismiss resolves immediately as before. A
+ * SUCCESSFUL dismiss (W2-2) does not resolve right away: the popup may have
+ * been benign and the underlying command can still complete, so we give the
+ * in-flight request a grace window to deliver its real response first. If the
+ * window lapses with no response, we fall back to the synthetic error.
+ */
+/**
+ * Pure decision: does a dialog-detection result warrant deferring resolution
+ * into the grace window (W2-2), rather than resolving immediately with a
+ * synthetic error? True only for a CONFIRMED, successfully-dismissed dialog -
+ * a benign popup shouldn't fail an otherwise-successful command. Extracted so
+ * this branch can be unit-tested directly, without driving the full
+ * timer/queue machinery.
+ */
+export function shouldDeferDialogError(dialogInfo: DialogInfo): boolean {
+  return dialogInfo.found === true && dialogInfo.dismissed === true;
+}
+
+export function handleDialogResult(req: PendingRequest, dialogInfo: DialogInfo, source: string): void {
+  if (!shouldDeferDialogError(dialogInfo)) {
+    resolveWithDialogError(req, dialogInfo, source);
+    return;
+  }
+
+  if (!requestQueue.includes(req)) return; // already resolved elsewhere
+
+  console.error(
+    `Dialog dismissed for '${req.command}' (${source}); waiting up to ${DIALOG_DISMISS_GRACE_MS / 1000}s for the real response before treating this as an error...`,
+  );
+  req.graceTimerId = setTimeout(() => {
+    req.graceTimerId = undefined;
+    if (!requestQueue.includes(req)) return; // real response already resolved it
+    console.error(`Grace window lapsed for '${req.command}' with no response; falling back to synthetic dialog error`);
+    resolveWithDialogError(req, dialogInfo, source);
+  }, DIALOG_DISMISS_GRACE_MS);
+}
+
+/**
+ * Arms the early-dialog-check and main-timeout timers for one send attempt of
+ * a request. Called from processNextRequest() at the moment the command is
+ * actually written to Python's stdin, so every attempt - including retries
+ * after a process death (W2-1) - gets a full, fresh window instead of
+ * inheriting a countdown left over from a previous attempt.
+ */
+export function armRequestTimers(req: PendingRequest): void {
+  clearRequestTimers(req);
+
+  const timeout = getTimeout(req.command);
+
+  // Early dialog check: fires before main timeout while ExtendSim is still responsive.
+  // A dialog appearing within 3s always indicates a config error, even for long-running ops.
+  // Skip for commands that intentionally trigger dialogs (SM, optimizer).
+  req.earlyDialogTimerId = SKIP_EARLY_DIALOG_CHECK.has(req.command)
+    ? undefined
+    : setTimeout(async () => {
+        // Skip if request already completed
+        if (!requestQueue.includes(req)) return;
+
+        try {
+          console.error(`Early dialog check on '${req.command}' (${EARLY_DIALOG_CHECK_MS / 1000}s)...`);
+          const dialogResult = await dismissExtendSimDialog(3);
+          // Skip if request completed while we were checking
+          if (!requestQueue.includes(req)) return;
+
+          if (dialogResult.found && dialogResult.dialogs?.length) {
+            const allTexts = dialogResult.dialogText || "";
+            const allDismissed = dialogResult.dialogs.every((d: any) => d.dismissed);
+            console.error(`Early dialog check found dialog: ${allTexts} (dismissed: ${allDismissed})`);
+            req.earlyResolved = true;
+            clearTimeout(req.timeoutId);
+            handleDialogResult(
+              req,
+              { found: true, text: allTexts, dismissed: allDismissed, details: dialogResult.dialogs },
+              "early check",
+            );
+          } else {
+            console.error(`Early dialog check: no dialog found`);
+          }
+        } catch (e) {
+          console.error(`Early dialog check failed: ${e}`);
+        }
+      }, EARLY_DIALOG_CHECK_MS);
+
+  // Main timeout: fires after full timeout period (fallback if early check found nothing)
+  req.timeoutId = setTimeout(async () => {
+    if (req.earlyResolved) return; // early check already handled this
+
+    if (!requestQueue.includes(req)) return;
+
+    let dialogInfo: DialogInfo = { found: false };
+    try {
+      console.error(`Timeout on '${req.command}' - checking for blocking dialog...`);
+      const dialogResult = await dismissExtendSimDialog(5);
+      if (dialogResult.found && dialogResult.dialogs?.length) {
+        const allTexts = dialogResult.dialogText || "";
+        const allDismissed = dialogResult.dialogs.every((d: any) => d.dismissed);
+        dialogInfo = {
+          found: true,
+          text: allTexts,
+          dismissed: allDismissed,
+          details: dialogResult.dialogs,
+        };
+        if (allDismissed) {
+          console.error(`Dismissed ExtendSim dialog: ${allTexts}`);
+        } else {
+          console.error(`ExtendSim dialog found but NOT dismissed: ${allTexts}`);
+        }
+      } else {
+        console.error(`No blocking dialog found`);
+      }
+    } catch (e) {
+      console.error(`Dialog watcher failed: ${e}`);
+    }
+
+    handleDialogResult(req, dialogInfo, "timeout");
+  }, timeout);
+}
+
+/**
+ * Wraps a PendingRequest's resolve/reject so that whichever fires first also
+ * clears every timer armed for this request (main timeout, early dialog
+ * check, dialog-dismiss grace window). Extracted out of sendCommand so tests
+ * can build a PendingRequest with the exact same wiring production uses,
+ * without spawning a Python process.
+ */
+export function wrapResolveReject(
+  pendingRequest: PendingRequest,
+  resolve: (value: any) => void,
+  reject: (error: Error) => void,
+): void {
+  pendingRequest.resolve = (value: any) => {
+    clearRequestTimers(pendingRequest);
+    resolve(value);
+  };
+  pendingRequest.reject = (error: Error) => {
+    clearRequestTimers(pendingRequest);
+    reject(error);
+  };
+}
+
 /**
  * Sends a command to Python backend
  */
@@ -370,8 +593,6 @@ async function sendCommand(command: string, params: object): Promise<any> {
   if (!isInitialized || !pythonProcess || pythonProcess.killed) {
     await initBackend();
   }
-
-  const timeout = getTimeout(command);
 
   return new Promise((resolve, reject) => {
     const pendingRequest: PendingRequest = {
@@ -382,144 +603,38 @@ async function sendCommand(command: string, params: object): Promise<any> {
       retryCount: 0,
     };
 
-    // Helper: resolve with dialog-based timeout error and clean up request queue
-    const resolveWithDialogError = (
-      dialogInfo: { found: boolean; text?: string; dismissed?: boolean; details?: any[] },
-      source: string,
-    ) => {
-      const index = requestQueue.indexOf(pendingRequest);
-      if (index === -1) return; // already resolved
+    // Wrap resolve/reject to clear any timers armed for this request (main
+    // timeout, early dialog check, dialog-dismiss grace window).
+    wrapResolveReject(pendingRequest, resolve, reject);
 
-      if (index === 0 && isProcessingRequest) {
-        staleResponseCount++;
-      }
-      requestQueue.splice(index, 1);
-      isProcessingRequest = false;
-
-      let message: string;
-      let suggestion: string;
-      if (dialogInfo.found && dialogInfo.dismissed) {
-        message = `Command '${command}' blocked by ExtendSim dialog (detected by ${source}). Dialog has been dismissed.`;
-        suggestion = "Read the dialog text in the 'dialog.text' field to understand the error. Adjust your parameters and retry.";
-      } else if (dialogInfo.found && !dialogInfo.dismissed) {
-        message = `Command '${command}' blocked by ExtendSim dialog (detected by ${source}). Dialog could NOT be dismissed automatically.`;
-        suggestion = "HUMAN INTERVENTION REQUIRED: The user must manually dismiss the dialog in ExtendSim before retrying.";
-      } else {
-        message = `Command '${command}' timed out after ${timeout / 1000}s. No blocking dialog was detected.`;
-        suggestion = "ExtendSim may be busy or unresponsive. Check extendsim_status or retry the command.";
-      }
-
-      resolve({
-        status: "error",
-        errorCode: "COM_TIMEOUT",
-        message,
-        dialog: dialogInfo,
-        suggestion,
-      });
-      processNextRequest();
-    };
-
-    // Track whether early check already resolved this request
-    let earlyResolved = false;
-
-    // Early dialog check: fires before main timeout while ExtendSim is still responsive.
-    // A dialog appearing within 3s always indicates a config error, even for long-running ops.
-    // Skip for commands that intentionally trigger dialogs (SM, optimizer).
-    const earlyDialogTimerId = SKIP_EARLY_DIALOG_CHECK.has(command) ? undefined : setTimeout(async () => {
-      // Skip if request already completed
-      if (!requestQueue.includes(pendingRequest)) return;
-
-      try {
-        console.error(`Early dialog check on '${command}' (${EARLY_DIALOG_CHECK_MS / 1000}s)...`);
-        const dialogResult = await dismissExtendSimDialog(3);
-        // Skip if request completed while we were checking
-        if (!requestQueue.includes(pendingRequest)) return;
-
-        if (dialogResult.found && dialogResult.dialogs?.length) {
-          const allTexts = dialogResult.dialogText || "";
-          const allDismissed = dialogResult.dialogs.every((d: any) => d.dismissed);
-          console.error(`Early dialog check found dialog: ${allTexts} (dismissed: ${allDismissed})`);
-          earlyResolved = true;
-          clearTimeout(timeoutId);
-          resolveWithDialogError(
-            { found: true, text: allTexts, dismissed: allDismissed, details: dialogResult.dialogs },
-            "early check",
-          );
-        } else {
-          console.error(`Early dialog check: no dialog found`);
-        }
-      } catch (e) {
-        console.error(`Early dialog check failed: ${e}`);
-      }
-    }, EARLY_DIALOG_CHECK_MS);
-
-    // Main timeout: fires after full timeout period (fallback if early check found nothing)
-    const timeoutId = setTimeout(async () => {
-      if (earlyResolved) return; // early check already handled this
-
-      const index = requestQueue.indexOf(pendingRequest);
-      if (index > -1) {
-        let dialogInfo: { found: boolean; text?: string; dismissed?: boolean; details?: any[] } = { found: false };
-        try {
-          console.error(`Timeout on '${command}' - checking for blocking dialog...`);
-          const dialogResult = await dismissExtendSimDialog(5);
-          if (dialogResult.found && dialogResult.dialogs?.length) {
-            const allTexts = dialogResult.dialogText || "";
-            const allDismissed = dialogResult.dialogs.every((d: any) => d.dismissed);
-            dialogInfo = {
-              found: true,
-              text: allTexts,
-              dismissed: allDismissed,
-              details: dialogResult.dialogs,
-            };
-            if (allDismissed) {
-              console.error(`Dismissed ExtendSim dialog: ${allTexts}`);
-            } else {
-              console.error(`ExtendSim dialog found but NOT dismissed: ${allTexts}`);
-            }
-          } else {
-            console.error(`No blocking dialog found`);
-          }
-        } catch (e) {
-          console.error(`Dialog watcher failed: ${e}`);
-        }
-
-        resolveWithDialogError(dialogInfo, "timeout");
-      }
-    }, timeout);
-
-    // Wrap resolve to clear both timers
-    const originalResolve = resolve;
-    pendingRequest.resolve = (value) => {
-      clearTimeout(timeoutId);
-      clearTimeout(earlyDialogTimerId);
-      originalResolve(value);
-    };
-
-    // Wrap reject to clear both timers
-    const originalReject = reject;
-    pendingRequest.reject = (error) => {
-      clearTimeout(timeoutId);
-      clearTimeout(earlyDialogTimerId);
-      originalReject(error);
-    };
-
-    // Add to queue
+    // Add to queue. Timers are armed by processNextRequest() at the moment the
+    // command is actually sent (covers both the immediate case and any wait
+    // behind an in-flight command).
     requestQueue.push(pendingRequest);
-
-    // If this is the first request, start processing
-    if (requestQueue.length === 1) {
-      // Send directly
-      isProcessingRequest = true;
-      const request = JSON.stringify({ command, params });
-      try {
-        pythonProcess!.stdin!.write(request + "\n");
-      } catch (e) {
-        console.error(`Failed to write to Python stdin: ${e}`);
-        handleProcessDeath();
-      }
-    }
+    processNextRequest();
   });
+}
+
+// ============================================================================
+// TEST-ONLY SEAMS
+// ============================================================================
+// Exposed only so tests/unit/backend-lifecycle.test.ts can drive the real
+// request-queue/timer/grace-window machinery directly (constructing
+// PendingRequest objects and inspecting the queue) without spawning a real
+// Python subprocess. Production code (index.ts) never imports these; they
+// only read/reset existing module state and change no runtime behavior.
+
+/** The live request queue (same array instance the module mutates). */
+export function __getRequestQueueForTests(): PendingRequest[] {
+  return requestQueue;
+}
+
+/** Resets all mutable backend queue/process-flag state between tests. */
+export function __resetBackendStateForTests(): void {
+  requestQueue.length = 0;
+  isProcessingRequest = false;
+  staleResponseCount = 0;
+  isHandlingProcessDeath = false;
 }
 
 // ============================================================================
@@ -730,6 +845,13 @@ export async function blockDiscoverVariables(params: {
   return await sendCommand("block_discover_variables", params);
 }
 
+export async function blockIntrospect(params: {
+  modelId?: string; blockId?: number; libraryName?: string;
+  blockName?: string; readScalarValues?: boolean;
+}) {
+  return await sendCommand("block_introspect", params);
+}
+
 export async function blockSetValue(params: {
   modelId?: string;
   blockId: number;
@@ -758,29 +880,6 @@ export async function executeCommand(params: {
   resultType?: string;
 }) {
   return await sendCommand("execute_command", params);
-}
-
-export async function activitySetDelay(params: {
-  modelId?: string;
-  blockId: number;
-  delayType?: string;
-  value?: number;
-  distribution?: string;
-  arg1?: number;
-  arg2?: number;
-  arg3?: number;
-}) {
-  return await sendCommand("activity_set_delay", params);
-}
-
-export async function queueSetPriority(params: {
-  modelId?: string;
-  blockId: number;
-  rankType?: string;
-  sortAttribute?: string;
-  ascending?: boolean;
-}) {
-  return await sendCommand("queue_set_priority", params);
 }
 
 export async function templateList() {
@@ -838,30 +937,6 @@ export async function simulationGetResults(params: { modelId?: string }) {
 // BLOCK CONFIGURATION OPERATIONS
 // ============================================================================
 
-export async function createSetArrivals(params: {
-  modelId?: string;
-  blockId: number;
-  arrivalType?: string;
-  distribution?: string;
-  arg1?: number;
-  arg2?: number;
-  arg3?: number;
-  maxArrivals?: number;
-}) {
-  return await sendCommand("create_set_arrivals", params);
-}
-
-export async function gateSetCondition(params: {
-  modelId?: string;
-  blockId: number;
-  demandType?: string;
-  initialState?: string;
-  openValue?: number;
-  closeValue?: number;
-}) {
-  return await sendCommand("gate_set_condition", params);
-}
-
 // ============================================================================
 // ATTRIBUTE OPERATIONS
 // ============================================================================
@@ -886,28 +961,6 @@ export async function attributeGet(params: {
   attributeName: string;
 }) {
   return await sendCommand("attribute_get", params);
-}
-
-// ============================================================================
-// ROUTING OPERATIONS
-// ============================================================================
-
-export async function selectItemOutSetMode(params: {
-  modelId?: string;
-  blockId: number;
-  mode: string;
-  attributeName?: string;
-  probabilities?: number[];
-}) {
-  return await sendCommand("select_item_out_set_mode", params);
-}
-
-export async function selectItemInSetMode(params: {
-  modelId?: string;
-  blockId: number;
-  mode: string;
-}) {
-  return await sendCommand("select_item_in_set_mode", params);
 }
 
 // ============================================================================
@@ -1042,65 +1095,14 @@ export async function dbDeleteRecords(params: {
 }
 
 // ============================================================================
-// BATCH / UNBATCH OPERATIONS
-// ============================================================================
-
-export async function batchSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  batchType?: string;
-  batchSize?: number;
-  preserveUniqueness?: boolean;
-  matchAttribute?: string;
-}) {
-  return await sendCommand("batch_set_config", params);
-}
-
-export async function unbatchSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  preserveUniqueness?: boolean;
-  quantityPerOutput?: number;
-}) {
-  return await sendCommand("unbatch_set_config", params);
-}
-
-// ============================================================================
 // RESOURCE POOL OPERATIONS
 // ============================================================================
-
-export async function resourcePoolSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  poolName?: string;
-  initialResources?: number;
-  allocationRule?: string;
-}) {
-  return await sendCommand("resource_pool_set_config", params);
-}
 
 export async function resourcePoolGetStats(params: {
   modelId?: string;
   blockId: number;
 }) {
   return await sendCommand("resource_pool_get_stats", params);
-}
-
-export async function resourcePoolReleaseSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  releaseQuantity?: number;
-}) {
-  return await sendCommand("resource_pool_release_set_config", params);
-}
-
-export async function queueSetResourcePool(params: {
-  modelId?: string;
-  blockId: number;
-  resourcePoolBlockId: number;
-  resourcesNeeded?: number;
-}) {
-  return await sendCommand("queue_set_resource_pool", params);
 }
 
 // ============================================================================
@@ -1171,190 +1173,6 @@ export async function simulationRunScenarios(params: {
   return await sendCommand("simulation_run_scenarios", params);
 }
 
-// ============================================================================
-// v1.3 TOOLS: WORKSTATION, EQUATION, SHIFT, TRANSPORT, CONVEY ITEM, SHUTDOWN
-// ============================================================================
-
-export async function workstationSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  maxServers?: number;
-  maxQueueLength?: number;
-  delayType?: string;
-  distribution?: string;
-  arg1?: number;
-  arg2?: number;
-  arg3?: number;
-  value?: number;
-  costPerTime?: number;
-  costPerItem?: number;
-}) {
-  return await sendCommand("workstation_set_config", params);
-}
-
-export async function equationSetFormula(params: {
-  modelId?: string;
-  blockId: number;
-  equation: string;
-}) {
-  return await sendCommand("equation_set_formula", params);
-}
-
-export async function shiftSetSchedule(params: {
-  modelId?: string;
-  blockId: number;
-  schedule: { startTime: number; endTime: number; capacity: number }[];
-}) {
-  return await sendCommand("shift_set_schedule", params);
-}
-
-export async function transportSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  defaultDistance?: number;
-  defaultSpeed?: number;
-}) {
-  return await sendCommand("transport_set_config", params);
-}
-
-export async function conveyItemSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  conveyorLength?: number;
-  defaultSpeed?: number;
-  accumulating?: boolean;
-}) {
-  return await sendCommand("convey_item_set_config", params);
-}
-
-export async function shutdownSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  tbfDistribution?: string;
-  tbfArg1?: number;
-  tbfArg2?: number;
-  ttrDistribution?: string;
-  ttrArg1?: number;
-  ttrArg2?: number;
-}) {
-  return await sendCommand("shutdown_set_config", params);
-}
-
-export async function tankSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  capacity?: number;
-  initialLevel?: number;
-  maxInputRate?: number;
-  maxOutputRate?: number;
-}) {
-  return await sendCommand("tank_set_config", params);
-}
-
-export async function valveSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  maxRate?: number;
-  goal?: number;
-}) {
-  return await sendCommand("valve_set_config", params);
-}
-
-export async function mergeSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  mode?: number;
-}) {
-  return await sendCommand("merge_set_config", params);
-}
-
-export async function divergeSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  mode?: number;
-}) {
-  return await sendCommand("diverge_set_config", params);
-}
-
-export async function interchangeSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  capacity?: number;
-  initialLevel?: number;
-  maxInputRate?: number;
-  maxOutputRate?: number;
-}) {
-  return await sendCommand("interchange_set_config", params);
-}
-
-export async function conveyFlowSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  speed?: number;
-  length?: number;
-  capacityMax?: number;
-  accumulating?: number;
-}) {
-  return await sendCommand("convey_flow_set_config", params);
-}
-
-export async function changeUnitsSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  factor?: number;
-}) {
-  return await sendCommand("change_units_set_config", params);
-}
-
-export async function biasSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  biasOrder?: number;
-}) {
-  return await sendCommand("bias_set_config", params);
-}
-
-export async function catchFlowSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  position?: number;
-}) {
-  return await sendCommand("catch_flow_set_config", params);
-}
-
-export async function throwFlowSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  position?: number;
-  connectorNum?: number;
-}) {
-  return await sendCommand("throw_flow_set_config", params);
-}
-
-export async function historyRSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  maxRows?: number;
-  enableDatabaseLog?: boolean;
-}) {
-  return await sendCommand("history_r_set_config", params);
-}
-
-export async function getRSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  locationBlockId?: number;
-}) {
-  return await sendCommand("get_r_set_config", params);
-}
-
-export async function setRSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-}) {
-  return await sendCommand("set_r_set_config", params);
-}
-
 // v1.5 tools - Hierarchies, Optimizer, Scenario Manager, Analysis Manager
 
 export async function hierarchyList(params: {
@@ -1370,22 +1188,6 @@ export async function hierarchyGetContents(params: {
   return await sendCommand("hierarchy_get_contents", params);
 }
 
-export async function optimizerSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  populationSize?: number;
-  maxGenerations?: number;
-  convergencePercent?: number;
-  minGenerations?: number;
-  maxSampleSize?: number;
-  truncate?: boolean;
-  truncatePercent?: number;
-  antithetic?: boolean;
-  showPlotter?: boolean;
-}) {
-  return await sendCommand("optimizer_set_config", params);
-}
-
 export async function optimizerRun(params: {
   modelId?: string;
   timeout?: number;
@@ -1399,19 +1201,6 @@ export async function optimizerGetResults(params: {
   blockId: number;
 }) {
   return await sendCommand("optimizer_get_results", params);
-}
-
-export async function scenarioManagerSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  runsPerScenario?: number;
-  confidenceInterval?: number;
-  simStart?: number;
-  simEnd?: number;
-  reportDetails?: boolean;
-  saveScenarios?: boolean;
-}) {
-  return await sendCommand("scenario_manager_set_config", params);
 }
 
 export async function scenarioManagerRun(params: {
@@ -1432,21 +1221,6 @@ export async function scenarioManagerGetResults(params: {
   modelId?: string;
 }) {
   return await sendCommand("scenario_manager_get_results", params);
-}
-
-export async function analysisManagerSetConfig(params: {
-  modelId?: string;
-  blockId: number;
-  enableDbResponses?: boolean;
-  enableBlockResponses?: boolean;
-  enableReliabilityResponses?: boolean;
-  enableDbFactors?: boolean;
-  enableBlockFactors?: boolean;
-  enableReliabilityFactors?: boolean;
-  enableResultsTable?: boolean;
-  autoExport?: boolean;
-}) {
-  return await sendCommand("analysis_manager_set_config", params);
 }
 
 // v1.7 - Universal block configuration

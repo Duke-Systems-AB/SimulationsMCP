@@ -4,7 +4,6 @@ _SRC = os.path.join(os.path.dirname(__file__), "..", "..", "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-import resource_pool_config as rpc
 from resource_pool_config import configure_pool, configure_queue_pool, configure_release
 
 
@@ -138,13 +137,3 @@ def test_configure_release_write_and_read_failures_have_distinct_codes():
 def test_cores_propagate_model_and_block_checks():
     assert configure_pool(FakeBackend(model_open=False), 1, "P", 1)["errorCode"] == "MODEL_NOT_OPEN"
     assert configure_pool(FakeBackend(block_ok=False), 1, "P", 1)["errorCode"] == "WRONG_BLOCK_TYPE"
-
-
-def test_entries_exist_with_expected_arity():
-    import inspect
-    for fn, params in [
-        (rpc.configure_pool_entry, ["block_id", "name", "capacity"]),
-        (rpc.configure_queue_pool_entry, ["block_id", "pool_name", "qty"]),
-        (rpc.configure_release_entry, ["block_id", "pool_name", "qty"]),
-    ]:
-        assert list(inspect.signature(fn).parameters) == params

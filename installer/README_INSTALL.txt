@@ -1,9 +1,9 @@
 Simulations MCP Server - Installation Guide
 ============================================
 Duke Systems AB
-Version 1.21.0 — 103 tools
+Version 1.22.1 — 104 tools
 Build the installer with installer\build-installer.bat (requires Inno Setup 6 +
-Node + Python) -> output\SimulationsMCP-Setup-1.21.0.exe
+Node + Python) -> output\SimulationsMCP-Setup-1.22.1.exe
 
 PREREQUISITES
 -------------
@@ -147,7 +147,7 @@ FIRST SESSION — IMPORTANT
 When your AI client connects, it should call MCP_init first.
 This returns critical usage rules, available tools, and workflow guidance.
 
-The server provides 103 tools across these categories:
+The server provides 104 tools across these categories:
   Model, Block, Block Layout, Values, Config, Attributes,
   Simulation, Statistics, Multi-run, Database, DB Relations,
   Global Arrays, Hierarchy, Analysis (Optimizer, Scenario Manager),

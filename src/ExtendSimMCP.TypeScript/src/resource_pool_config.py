@@ -15,6 +15,10 @@ freshly-built H-block (confirmed from the block ModL source).
 """
 
 
+# Local copy of simulation_backend._error (also duplicated in attribute_config.py
+# and dialog_table.py) — deliberate: keeps this zero-dep module importable
+# without a module-level import of simulation_backend (win32com) or a shared
+# helper module.
 def _err(code, message, **extra):
     result = {"success": False, "errorCode": code, "error": message}
     result.update(extra)
@@ -110,18 +114,3 @@ def configure_release(backend, block_id, pool_name, pool_block_id=None, qty=1):
                     blockId=block_id, requested=str(pool_name), actual=str(name_rb))
     return {"success": True, "blockId": block_id, "poolName": pool_name,
             "poolBlock": int(pool_block_id), "qty": qty}
-
-
-def configure_pool_entry(block_id, name, capacity):
-    import simulation_backend as backend
-    return configure_pool(backend, block_id, name, capacity)
-
-
-def configure_queue_pool_entry(block_id, pool_name, qty=1):
-    import simulation_backend as backend
-    return configure_queue_pool(backend, block_id, pool_name, qty)
-
-
-def configure_release_entry(block_id, pool_name, qty=1):
-    import simulation_backend as backend
-    return configure_release(backend, block_id, pool_name, pool_block_id=None, qty=qty)

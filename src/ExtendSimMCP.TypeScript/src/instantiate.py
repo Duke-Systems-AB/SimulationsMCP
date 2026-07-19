@@ -26,7 +26,13 @@ def _flow_chain(flow_edges):
     """Flow node refs from chain head to tail (single linear chain assumed)."""
     if not flow_edges:
         return []
-    nxt = {e["from"].split(".")[0]: e["to"].split(".")[0] for e in flow_edges}
+    nxt = {}
+    for e in flow_edges:
+        from_ref = e["from"].split(".")[0]
+        if from_ref in nxt:
+            raise BuildError(
+                f"flow edges branch at '{from_ref}': flow must be a single linear chain")
+        nxt[from_ref] = e["to"].split(".")[0]
     tos = set(nxt.values())
     heads = [f for f in nxt if f not in tos]
     if len(heads) != 1:
@@ -78,85 +84,111 @@ def build_molecule(molecule: Dict[str, Any], params: Dict[str, Any], ops) -> Dic
 
     seed = next(n for n in molecule["nodes"] if n.get("seed"))
 
-    # Phase 1: wrap seed in context -> interfaced 1-block H-block, then drop stubs.
-    up = ops.add_block("Item.lbr", "Create")
-    seed_id = ops.add_block(seed["lib"], seed["type"])
-    down = ops.add_block("Item.lbr", "Exit")
-    ops.connect(up, ops.con_index(up, "ItemOut"), seed_id, ops.con_index(seed_id, "ItemIn"))
-    ops.connect(seed_id, ops.con_index(seed_id, "ItemOut"), down, ops.con_index(down, "ItemIn"))
-    hblock_id = ops.create_hblock(seed_id, molecule["id"])
-    ops.remove_block(up)
-    ops.remove_block(down)
+    # From the FIRST mutation onward, a failure can leave stray blocks (or a
+    # stray H-block) behind. Track everything as it's created and, on ANY
+    # exception (not just BuildError), attach orphan info before re-raising
+    # so instantiate_pattern/compose_flow can surface it (W2-3). orphaned_ids
+    # holds whatever top-level blocks currently exist outside of (or not yet
+    # absorbed into) the H-block; hblock_id is None until CreateHblock is
+    # effect-verified.
+    orphaned_ids = []
+    hblock_id = None
+    try:
+        # Phase 1: wrap seed in context -> interfaced 1-block H-block, then drop stubs.
+        up = ops.add_block("Item.lbr", "Create")
+        orphaned_ids.append(up)
+        seed_id = ops.add_block(seed["lib"], seed["type"])
+        orphaned_ids.append(seed_id)
+        down = ops.add_block("Item.lbr", "Exit")
+        orphaned_ids.append(down)
+        ops.connect(up, ops.con_index(up, "ItemOut"), seed_id, ops.con_index(seed_id, "ItemIn"))
+        ops.connect(seed_id, ops.con_index(seed_id, "ItemOut"), down, ops.con_index(down, "ItemIn"))
+        hblock_id = ops.create_hblock(seed_id, molecule["id"])
+        # The seed is now absorbed into the H-block (removing the H-block
+        # would take it with it); only the two stub blocks remain top-level.
+        orphaned_ids = [up, down]
 
-    internal = {seed["ref"]: seed_id}
+        ops.remove_block(up)
+        orphaned_ids.remove(up)
+        ops.remove_block(down)
+        orphaned_ids.remove(down)
 
-    # Phase 2: prepend earlier flow nodes at the inlet, disconnect-first.
-    # Uses only proven COM ops (connect inlet-boundary->inner and inner->inner);
-    # the seed must be the chain TAIL (bound to the outlet). Connecting an inner
-    # block INTO the outlet boundary is unreliable, so we grow from the tail.
-    chain = _flow_chain([e for e in molecule["edges"] if e["kind"] == "flow"])
-    if chain:
-        if chain[-1] != seed["ref"]:
-            raise BuildError(f"seed must be the flow-chain tail; chain={chain}, seed={seed['ref']}")
-        first_id = seed_id
-        for ref in reversed(chain[:-1]):
-            node = _node(molecule, ref)
-            new_id = ops.place_in_hblock(node["lib"], node["type"], hblock_id)
-            internal[ref] = new_id
-            inlet = ops.inlet_connector(hblock_id)
-            # disconnect inlet <-> current-first.in, then inlet -> new.in, new.out -> current-first.in
-            ops.disconnect(inlet, 0, first_id, ops.con_index(first_id, "ItemIn"))
-            ops.connect(inlet, 0, new_id, ops.con_index(new_id, "ItemIn"))
-            ops.connect(new_id, ops.con_index(new_id, "ItemOut"), first_id, ops.con_index(first_id, "ItemIn"))
-            _assert_clean(ops, new_id, first_id)
-            first_id = new_id
+        internal = {seed["ref"]: seed_id}
 
-    # Phase 3: place + wire side nodes (non-flow blocks), by name, node-verified.
-    flow_refs = set(internal)
-    for node in molecule["nodes"]:
-        if node["ref"] in flow_refs:
-            continue
-        internal[node["ref"]] = ops.place_in_hblock(node["lib"], node["type"], hblock_id)
-    for e in molecule["edges"]:
-        if e["kind"] != "side":
-            continue
-        a_ref, a_con = e["from"].split(".")
-        b_ref, b_con = e["to"].split(".")
-        a_id, b_id = internal[a_ref], internal[b_ref]
-        ops.connect(a_id, ops.con_index(a_id, a_con), b_id, ops.con_index(b_id, b_con))
-        if ops.node_of(a_id, ops.con_index(a_id, a_con)) != ops.node_of(b_id, ops.con_index(b_id, b_con)):
-            raise BuildError(f"side connection failed (not on shared node): {e['from']} -> {e['to']}")
+        # Phase 2: prepend earlier flow nodes at the inlet, disconnect-first.
+        # Uses only proven COM ops (connect inlet-boundary->inner and inner->inner);
+        # the seed must be the chain TAIL (bound to the outlet). Connecting an inner
+        # block INTO the outlet boundary is unreliable, so we grow from the tail.
+        chain = _flow_chain([e for e in molecule["edges"] if e["kind"] == "flow"])
+        if chain:
+            if chain[-1] != seed["ref"]:
+                raise BuildError(f"seed must be the flow-chain tail; chain={chain}, seed={seed['ref']}")
+            first_id = seed_id
+            for ref in reversed(chain[:-1]):
+                node = _node(molecule, ref)
+                new_id = ops.place_in_hblock(node["lib"], node["type"], hblock_id)
+                internal[ref] = new_id
+                inlet = ops.inlet_connector(hblock_id)
+                # disconnect inlet <-> current-first.in, then inlet -> new.in, new.out -> current-first.in
+                ops.disconnect(inlet, 0, first_id, ops.con_index(first_id, "ItemIn"))
+                ops.connect(inlet, 0, new_id, ops.con_index(new_id, "ItemIn"))
+                ops.connect(new_id, ops.con_index(new_id, "ItemOut"), first_id, ops.con_index(first_id, "ItemIn"))
+                _assert_clean(ops, new_id, first_id)
+                first_id = new_id
 
-    # Phase 4: set parameters (placeholders resolved).
-    for node in molecule["nodes"]:
-        for var, value in resolve_params(node, params).items():
-            ops.set_value(internal[node["ref"]], var, value)
+        # Phase 3: place + wire side nodes (non-flow blocks), by name, node-verified.
+        flow_refs = set(internal)
+        for node in molecule["nodes"]:
+            if node["ref"] in flow_refs:
+                continue
+            internal[node["ref"]] = ops.place_in_hblock(node["lib"], node["type"], hblock_id)
+        for e in molecule["edges"]:
+            if e["kind"] != "side":
+                continue
+            a_ref, a_con = e["from"].split(".")
+            b_ref, b_con = e["to"].split(".")
+            a_id, b_id = internal[a_ref], internal[b_ref]
+            ops.connect(a_id, ops.con_index(a_id, a_con), b_id, ops.con_index(b_id, b_con))
+            if ops.node_of(a_id, ops.con_index(a_id, a_con)) != ops.node_of(b_id, ops.con_index(b_id, b_con)):
+                raise BuildError(f"side connection failed (not on shared node): {e['from']} -> {e['to']}")
 
-    # Phase 4b: apply attribute-set configs (Set blocks tag items).
-    for node in molecule["nodes"]:
-        for a in resolve_set_attributes(node, params):
-            ops.set_attribute(internal[node["ref"]], a["name"], a["value"], a["valueType"])
+        # Phase 4: set parameters (placeholders resolved).
+        for node in molecule["nodes"]:
+            for var, value in resolve_params(node, params).items():
+                ops.set_value(internal[node["ref"]], var, value)
 
-    # Phase 4c: apply the resource-pool config (pool + queue + release), if any.
-    rp_cfg = resolve_resource_pool(molecule, params)
-    if rp_cfg:
-        ops.configure_resource_pool(
-            internal[rp_cfg["poolNode"]], internal[rp_cfg["queueNode"]],
-            internal[rp_cfg["releaseNode"]], rp_cfg["name"], rp_cfg["capacity"], rp_cfg["qty"])
+        # Phase 4b: apply attribute-set configs (Set blocks tag items).
+        for node in molecule["nodes"]:
+            for a in resolve_set_attributes(node, params):
+                ops.set_attribute(internal[node["ref"]], a["name"], a["value"], a["valueType"])
 
-    # Phase 4d: layout - spread blocks so they don't stack on top of each other.
-    _layout(molecule, internal, ops)
+        # Phase 4c: apply the resource-pool config (pool + queue + release), if any.
+        rp_cfg = resolve_resource_pool(molecule, params)
+        if rp_cfg:
+            ops.configure_resource_pool(
+                internal[rp_cfg["poolNode"]], internal[rp_cfg["queueNode"]],
+                internal[rp_cfg["releaseNode"]], rp_cfg["name"], rp_cfg["capacity"], rp_cfg["qty"])
 
-    # Phase 5: interface map (molecule port -> inner block + outer connector).
-    iface = {}
-    for port in molecule["interface"].get("inlets", []):
-        ref = port["binds"].split(".")[0]
-        iface[port["port"]] = {"blockId": internal[ref], "outerCon": ops.outer_index(hblock_id, "in")}
-    for port in molecule["interface"].get("outlets", []):
-        ref = port["binds"].split(".")[0]
-        iface[port["port"]] = {"blockId": internal[ref], "outerCon": ops.outer_index(hblock_id, "out")}
+        # Phase 4d: layout - spread blocks so they don't stack on top of each other.
+        _layout(molecule, internal, ops)
 
-    return {"hblockId": hblock_id, "internalBlockIds": internal, "interfaceMap": iface}
+        # Phase 5: interface map (molecule port -> inner block + outer connector).
+        iface = {}
+        for port in molecule["interface"].get("inlets", []):
+            ref = port["binds"].split(".")[0]
+            iface[port["port"]] = {"blockId": internal[ref], "outerCon": ops.outer_index(hblock_id, "in")}
+        for port in molecule["interface"].get("outlets", []):
+            ref = port["binds"].split(".")[0]
+            iface[port["port"]] = {"blockId": internal[ref], "outerCon": ops.outer_index(hblock_id, "out")}
+
+        return {"hblockId": hblock_id, "internalBlockIds": internal, "interfaceMap": iface}
+    except Exception as e:
+        e.partial = {
+            "partialBuild": True,
+            "orphanedBlockIds": list(orphaned_ids),
+            "orphanedHblockIds": [hblock_id] if hblock_id is not None else [],
+        }
+        raise
 
 
 class RealOps:
@@ -307,6 +339,17 @@ def instantiate_pattern(molecule_id, params, model_id=None):
         molecule = _load_molecule(molecule_id)
         return {"success": True, **build_molecule(molecule, params or {}, RealOps(backend))}
     except MoleculeError as e:
-        return {"success": False, "errorCode": "INVALID_MOLECULE", "error": str(e)}
+        # A MoleculeError raised mid-build (e.g. an unresolvable param during
+        # Phase 4, after the H-block already exists) still carries orphan
+        # info via e.partial; surface it instead of silently dropping it.
+        result = {"success": False, "errorCode": "INVALID_MOLECULE", "error": str(e)}
+        partial = getattr(e, "partial", None)
+        if partial:
+            result.update(partial)
+        return result
     except Exception as e:
-        return {"success": False, "errorCode": "INSTANTIATE_FAILED", "error": str(e)}
+        result = {"success": False, "errorCode": "INSTANTIATE_FAILED", "error": str(e)}
+        partial = getattr(e, "partial", None)
+        if partial:
+            result.update(partial)
+        return result

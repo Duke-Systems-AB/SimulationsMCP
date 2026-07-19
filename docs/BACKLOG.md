@@ -3,6 +3,35 @@
 Future work items, newest first. Not a committed roadmap — a parking lot for
 things we've agreed are worth doing but haven't scheduled.
 
+## Deferred review minors (from 2026-07-19 codebase review)
+
+See docs/superpowers/reviews/2026-07-19-codebase-review-findings.md section W3-7:
+watcher-spawn-per-early-check load behavior, block_configure inline doc drift,
+hierarchy_list O(n^2) depth walk, NUMERIC_FIELD_TYPES duplicate source of truth,
+_get_array_connector_index 256-slot magic, dialog_watcher classification-helper tests,
+wider *_set_config consolidation via a _simple_var_setter factory.
+
+## Unified runtime block introspection (`block_introspect`) — MUST-HAVE
+
+Today block introspection is split and incomplete: `block_discover_variables`
+(runtime, live, COM) only sees what COM exposes — dialog items, connectors, popups —
+NOT a block's internal ModL **STAT storage variables**, whose names live only in the
+compiled `.lbr` blob. `block_inspect` (the authoring MCP, offline) parses that blob and
+sees the STAT layer, but it's a separate MCP reading a file, not a live block.
+
+This gap bit us on the 2026 Python Bridge block: `block_discover_variables` surfaced the
+textframe *widget* `PythonScript_frm` (which doesn't round-trip), while the real script
+storage variable `dsPythonCode` (a STAT var) was invisible at runtime — we had to
+cross-reference the `.lbr` blob by hand.
+
+**Build:** a runtime `block_introspect` that UNIFIES both layers — live COM discovery +
+parsing the block's `.lbr` STAT section (locate the library via `GetLibraryPathName`,
+read the blob like the authoring MCP does) — so any block, any time, reports its dialog
+items AND its underlying storage variables. Bonus: `block_get_value`/`block_set_value`
+could then auto-resolve "textframe widget → bound STAT variable" instead of hardcoding
+names like `dsPythonCode`. Requested 2026-07-17, flagged a MUST by Jonas.
+
+
 ## M7 extract_psg — live verification (Task 5)
 
 `extract_psg` shipped (M7, `src/psg_extract.py` + reader in `simulation_backend.py`),

@@ -11,6 +11,7 @@ import re
 import json
 
 from molecule_schema import validate_molecule, MoleculeError
+from patterns import infer_port_role
 
 _PLACEHOLDER = re.compile(r"^\{\{(.+?)\}\}$")
 _WORD = re.compile(r"^\w+$")
@@ -59,17 +60,39 @@ def _infer_edge_kind(frm, to, override):
     return "flow" if "item" in text else "side"
 
 
+def _infer_attribute_contract(nodes):
+    """Infer {reads, writes} from a molecule's (already-rewritten) nodes.
+
+    writes = attribute names appearing in any node's setAttributes.
+    reads = attribute names referenced by other nodes' params: a literal
+    (non-placeholder) string value on a param whose key names an attribute
+    reference (matches the friendly-param convention used across
+    simulation_backend.py — sortAttribute, attributeName, matchAttribute,
+    ...). Mirrors the flat reads/writes list shape compose.py's
+    _check_attribute_contract consumes."""
+    writes = []
+    for n in nodes:
+        for entry in (n.get("setAttributes") or []):
+            name = entry.get("name")
+            if name and name not in writes:
+                writes.append(name)
+    reads = []
+    for n in nodes:
+        for k, v in (n.get("params") or {}).items():
+            if isinstance(v, str) and "attribute" in k.lower() and not _PLACEHOLDER.match(v):
+                if v not in reads:
+                    reads.append(v)
+    return {"reads": reads, "writes": writes}
+
+
 def _role_for(binds, candidate):
+    """Prefer the candidate's own inferred role for this bind; fall back to the
+    shared name-based heuristic (patterns.infer_port_role) if not found there."""
     for grp in ("inlets", "outlets"):
         for p in candidate.get("interface", {}).get(grp, []):
             if p.get("binds") == binds:
                 return p.get("role")
-    port = binds.rpartition(".")[2].lower()
-    if "item" in port:
-        return "item"
-    if "value" in port:
-        return "value"
-    return None
+    return infer_port_role(binds)
 
 
 def build_library_entry(candidate, naming):
@@ -115,6 +138,20 @@ def build_library_entry(candidate, naming):
             p[k] = v
         if p:
             on["params"] = p
+        sa = []
+        for entry in (n.get("setAttributes") or []):
+            value = entry.get("value")
+            if isinstance(value, str):
+                m = _PLACEHOLDER.match(value)
+                if m:
+                    inner = m.group(1)
+                    value = "{{" + fmap.get(inner, _sanitize(inner)) + "}}"
+            new_entry = {"name": entry.get("name"), "value": value}
+            if "valueType" in entry:
+                new_entry["valueType"] = entry["valueType"]
+            sa.append(new_entry)
+        if sa:
+            on["setAttributes"] = sa
         if n["ref"] == seed:
             on["seed"] = True
         if n.get("isHBlock"):
@@ -139,13 +176,15 @@ def build_library_entry(candidate, naming):
 
     example = {fmap.get(k, _sanitize(k)): v for k, v in (candidate.get("example") or {}).items()}
 
+    attributes = naming.get("attributes") or _infer_attribute_contract(out_nodes)
+
     return {
         "id": naming["id"],
         "version": "1.0",
         "kind": "molecule",
         "intent": naming.get("intent", ""),
         "params": params,
-        "attributes": {"reads": [], "writes": []},
+        "attributes": attributes,
         "nodes": out_nodes,
         "edges": out_edges,
         "interface": {"inlets": inlets, "outlets": outlets},

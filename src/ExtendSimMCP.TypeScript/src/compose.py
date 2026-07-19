@@ -98,17 +98,41 @@ def build_flow(flow_def, ops):
                 raise FlowError(str(e))      # unknown pattern -> INVALID_FLOW, not generic
     validate_flow(flow_def, molecules)
 
+    # Track every H-block successfully built so far; if a later instance or
+    # the wiring phase fails, all of them are orphaned (W2-3).
     instances = {}
+    built_hblock_ids = []
     for i in flow_def["instances"]:
-        res = build_molecule(molecules[i["pattern"]], i.get("params") or {}, ops)
+        try:
+            res = build_molecule(molecules[i["pattern"]], i.get("params") or {}, ops)
+        except Exception as e:
+            orphaned = list(built_hblock_ids)
+            orphaned_blocks = []
+            partial = getattr(e, "partial", None)
+            if partial:
+                orphaned.extend(partial.get("orphanedHblockIds", []))
+                # Preserve stray non-H-block stubs from a pre-hblock failure
+                # inside build_molecule (W2-3) — do not drop them on re-wrap.
+                orphaned_blocks = list(partial.get("orphanedBlockIds", []))
+            e.partial = {"partialBuild": True, "orphanedHblockIds": orphaned,
+                         "orphanedBlockIds": orphaned_blocks}
+            raise
         instances[i["ref"]] = {"hblockId": res["hblockId"], "interfaceMap": res["interfaceMap"]}
+        built_hblock_ids.append(res["hblockId"])
 
-    for w in flow_def.get("wiring", []):
-        a_ref, a_port = w["from"].split(".", 1)
-        b_ref, b_port = w["to"].split(".", 1)
-        a, b = instances[a_ref], instances[b_ref]
-        ops.connect(a["hblockId"], a["interfaceMap"][a_port]["outerCon"],
-                    b["hblockId"], b["interfaceMap"][b_port]["outerCon"])
+    try:
+        for w in flow_def.get("wiring", []):
+            a_ref, a_port = w["from"].split(".", 1)
+            b_ref, b_port = w["to"].split(".", 1)
+            a, b = instances[a_ref], instances[b_ref]
+            ops.connect(a["hblockId"], a["interfaceMap"][a_port]["outerCon"],
+                        b["hblockId"], b["interfaceMap"][b_port]["outerCon"])
+    except Exception as e:
+        # Wiring phase: every molecule completed, so no stray stub blocks exist —
+        # but keep the shape consistent with the per-instance handler above.
+        e.partial = {"partialBuild": True, "orphanedHblockIds": list(built_hblock_ids),
+                     "orphanedBlockIds": []}
+        raise
 
     return {"flowId": flow_def.get("id"), "instances": instances,
             "wiring": flow_def.get("wiring", [])}
@@ -127,6 +151,17 @@ def compose_flow(flow_def, model_id=None):
     except FlowError as e:
         return {"success": False, "errorCode": "INVALID_FLOW", "error": str(e)}
     except MoleculeError as e:
-        return {"success": False, "errorCode": "INVALID_MOLECULE", "error": str(e)}
+        # A MoleculeError raised mid-build (e.g. an unresolvable param) still
+        # carries orphan info via e.partial (attached by build_molecule /
+        # build_flow); surface it instead of silently dropping it.
+        result = {"success": False, "errorCode": "INVALID_MOLECULE", "error": str(e)}
+        partial = getattr(e, "partial", None)
+        if partial:
+            result.update(partial)
+        return result
     except Exception as e:
-        return {"success": False, "errorCode": "COMPOSE_FAILED", "error": str(e)}
+        result = {"success": False, "errorCode": "COMPOSE_FAILED", "error": str(e)}
+        partial = getattr(e, "partial", None)
+        if partial:
+            result.update(partial)
+        return result
