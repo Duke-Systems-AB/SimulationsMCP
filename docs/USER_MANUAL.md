@@ -675,8 +675,7 @@ recovery hint — treat it as a bonus, not a guarantee.
 | Error Code | Meaning |
 |------------|---------|
 | `NOT_CONNECTED` | No active COM connection to ExtendSim |
-| `COM_CONNECTION_LOST` | The COM connection dropped mid-operation |
-| `COM_ERROR` | COM communication failure with ExtendSim |
+| `COM_ERROR` | COM communication failure with ExtendSim, including a connection dropped mid-operation |
 | `EXTENDSIM_NOT_RUNNING` | ExtendSim is not running — start it and retry |
 | `EXTENDSIM_START_FAILED` | Failed to start ExtendSim |
 | `LICENSE_DETECTION_FAILED` | Could not read the ExtendSim license or library set |
@@ -686,7 +685,6 @@ recovery hint — treat it as a bonus, not a guarantee.
 | Error Code | Meaning |
 |------------|---------|
 | `MODEL_NOT_OPEN` | The operation needs an open model; none is open |
-| `MODEL_NOT_FOUND` | The given `modelId` does not match an open model |
 | `MODEL_OPEN_FAILED` | The model file could not be opened |
 | `MODEL_SAVE_FAILED` | The model could not be saved |
 | `MODEL_QUERY_FAILED` | Reading model metadata failed |
@@ -701,8 +699,7 @@ recovery hint — treat it as a bonus, not a guarantee.
 | `NOT_AN_HBLOCK` | The target is not a hierarchy block |
 | `BLOCK_ADD_FAILED` / `BLOCK_REMOVE_FAILED` | Placing or deleting the block failed |
 | `BLOCK_QUERY_FAILED` | Reading the block's properties failed |
-| `CONNECTOR_NOT_FOUND` / `INVALID_CONNECTOR` | The named connector does not exist, or the reference is malformed |
-| `CONNECTION_FAILED` | Failed to establish or use a block connection |
+| `CONNECTION_FAILED` | Failed to establish or use a block connection. This also covers a connector that does not exist on the block — the error message names the connector, but the code does not distinguish the two cases |
 
 **Values, tables and databases**
 
