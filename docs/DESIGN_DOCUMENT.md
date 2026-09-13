@@ -1,8 +1,8 @@
 # Simulations MCP Server — Architecture and Design Document
 
-**Version:** 1.19.1
+**Version:** 1.22.1
 **Author:** Duke Systems AB
-**Date:** 2026-03-13
+**Date:** 2026-09-13
 **Classification:** Technical — for IT security specialists, software architects, and power users
 
 ---
@@ -26,7 +26,7 @@
 
 ## 1. Executive Summary
 
-The Simulations MCP Server is a Model Context Protocol (MCP) server that bridges AI assistants to the ExtendSim discrete-event simulation platform. It exposes 92 tools across 17 categories, enabling AI-driven model construction, simulation execution, and result analysis.
+The Simulations MCP Server is a Model Context Protocol (MCP) server that bridges AI assistants to the ExtendSim discrete-event simulation platform. It exposes 104 tools across 18 categories, enabling AI-driven model construction, simulation execution, result analysis, and the mining of reusable modelling patterns out of existing models.
 
 **Key architectural properties:**
 
@@ -58,7 +58,7 @@ The Simulations MCP Server is a Model Context Protocol (MCP) server that bridges
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
 │  │  MCP SDK     │  │  Tool        │  │  Reference Data      │  │
 │  │  Protocol    │  │  Definitions │  │  (JSON files, lazy)  │  │
-│  │  Handler     │  │  (92 tools)  │  │                      │  │
+│  │  Handler     │  │  (104 tools) │  │                      │  │
 │  └──────┬───────┘  └──────┬───────┘  └──────────────────────┘  │
 │         │                 │                                     │
 │         │    ┌────────────┴─────────────┐                      │
@@ -126,11 +126,11 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 
 ## 3. Component Design
 
-### 3.1 MCP Server (index.ts, ~2380 lines)
+### 3.1 MCP Server (index.ts, ~2540 lines)
 
 **Responsibilities:**
 - MCP protocol handling via `@modelcontextprotocol/sdk`
-- Tool registration with Zod schema validation (92 tools)
+- Tool registration with Zod schema validation (104 tools)
 - Reference data management (lazy-loaded JSON files)
 - Search engines (ModL functions, blocks, dialog variables)
 - Session logging and telemetry integration
@@ -141,8 +141,9 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - Tool responses are wrapped in a consistent format with `isError` flag for MCP clients
 - `safeToolCall()` wrapper provides uniform error handling, telemetry, and session logging
 - Server version is read dynamically from `package.json`, not hardcoded
+- One error contract at one boundary: the Python backend's standard failure shape is `{success: false, errorCode, error}`, and `toolResponse()`/`recordToolCall()` treat `success === false` exactly like `status === "error"`. Without that normalization, backend failures reach the client flagged as successes and telemetry counts only timeouts as errors
 
-### 3.2 Backend Bridge (backend.ts, ~1220 lines)
+### 3.2 Backend Bridge (backend.ts, ~1530 lines)
 
 **Responsibilities:**
 - Python subprocess lifecycle management
@@ -159,12 +160,14 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - Early dialog check (1s) fires before main timeout for fast error feedback
 - Certain commands (SM, optimizer) skip early dialog check — they manage their own lifecycle
 - Stale response counter ensures late responses from timed-out commands don't corrupt subsequent results
+- A dismissed dialog does not immediately fail the command: after a successful auto-dismiss the bridge holds a 5-second grace window (`DIALOG_DISMISS_GRACE_MS`) for the real response to arrive, so a benign informational popup cannot fail an otherwise-successful command
+- A retried command (after a backend restart) is re-armed with a fresh timeout rather than inheriting the dying request's remaining countdown
 
-### 3.3 Python COM Backend (simulation_backend.py, ~9100 lines)
+### 3.3 Python COM Backend (simulation_backend.py, ~11150 lines)
 
 **Responsibilities:**
 - COM communication with ExtendSim via `win32com.client.GetActiveObject`
-- 80+ command handler functions mapped via dispatch table
+- 138 command handlers mapped via the `COMMANDS` dispatch table (more entries than MCP tools: several tools share a handler, and some handlers serve internal sub-commands)
 - Input validation and parameter type coercion
 - ModL command construction and execution
 - Fire-and-forget threading for `simulation_run`
@@ -177,7 +180,7 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - Fire-and-forget simulation uses a background thread with `CoInitialize()` + separate `GetActiveObject()` for COM apartment safety
 - `_escape_modl_string()` sanitizes all user input before ModL command construction to prevent injection
 
-### 3.4 Dialog Watcher (dialog_watcher.py, ~280 lines)
+### 3.4 Dialog Watcher (dialog_watcher.py, ~420 lines)
 
 **Responsibilities:**
 - Windows UI Automation (UIA) to detect ExtendSim modal dialogs
@@ -190,7 +193,7 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - Configurable poll interval and timeout
 - Returns dialog text in JSON for inclusion in error messages
 
-### 3.5 Advisor (advisor.ts, ~200 lines)
+### 3.5 Advisor (advisor.ts, ~280 lines)
 
 **Responsibilities:**
 - Pure analysis functions operating on model state (no COM calls)
@@ -206,6 +209,43 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - Event sequencing and counting
 - File rotation at 10 MB
 - Privacy-safe: no user data, file paths, or model content
+
+### 3.7 Auxiliary Python Modules (~1600 lines across 13 files)
+
+Capabilities added after v1.19 live in their own modules rather than growing
+`simulation_backend.py` further. They fall into two groups.
+
+**Pattern library — use half** (build models from curated patterns):
+
+| Module | Purpose |
+|--------|---------|
+| `patterns.py` | Discovery over the molecule + flow library (`list_patterns`, `get_pattern`) |
+| `molecule_schema.py` | Validation and parameter resolution for molecule definitions |
+| `instantiate.py` | Deterministic molecule → H-block construction engine (`instantiate_pattern`) |
+| `compose.py` | Composes molecule instances into a whole flow (`compose_flow`) |
+
+**Pattern mining — learn half** (distil patterns out of existing models):
+
+| Module | Purpose |
+|--------|---------|
+| `psg_extract.py` | Model → Pattern Structure Graph: multi-scale nodes and ports, boundary-crossing edges marked per H-block |
+| `pattern_mine.py` | Boundary detection + Weisfeiler–Lehman fingerprint; one candidate per H-block scope |
+| `pattern_cluster.py` | Clusters candidates (exact WL bucket + near-miss graph edit distance), infers parameter schema and interface |
+| `pattern_approve.py` | Assembles, validates and writes an approved library entry — fail-closed, nothing enters the library unapproved |
+
+**Block-level helpers:** `attribute_config.py` (Set-block attribute tables),
+`attribute_detect.py` (which attributes an equation block reads/writes),
+`resource_pool_config.py`, `dialog_table.py` (string-table `*_ttbl` cells), and
+`lbr_stat.py` (offline parser for a block's internal STAT storage variables, read
+straight out of the compiled `.lbr` blob — these names are invisible to the COM
+dialog API, which is what `block_introspect` needs them for).
+
+**Design decision — pure core + injected backend.** Every one of these modules takes
+the COM layer as an injected dependency (`backend`, `EsOps`, or a reader object)
+instead of importing it. The production call passes `simulation_backend`; tests pass
+a fake. This is why 239 of the 390 offline tests can cover COM-shaped logic with no
+ExtendSim installed, and why the mining pipeline can also run fully offline from
+saved JSON (`psgPath`, `candidatesPaths`).
 
 ---
 
@@ -687,7 +727,10 @@ Timeouts are defined in `backend.ts` and cannot be changed without rebuilding. C
 | `dist/index.js` | Server entry point |
 | `dist/simulation_backend.py` | Python COM backend |
 | `dist/dialog_watcher.py` | Dialog auto-dismisser |
+| `dist/*.py` (13 more) | Auxiliary modules — see §3.7 |
 | `dist/*.json` | Reference data (7 files) |
+| `patterns/molecules/*.json` | Molecule library — read by `list_patterns`/`instantiate_pattern`, written by `approve_pattern` |
+| `patterns/flows/*.json` | Flow library — read by `list_patterns`/`compose_flow` |
 | `temp/telemetry/telemetry.jsonl` | Local telemetry |
 | `temp/mcp_session.log` | Session log (opt-in) |
 | `temp/python_startup.log` | Python startup diagnostics |

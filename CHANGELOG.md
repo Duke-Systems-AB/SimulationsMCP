@@ -3,6 +3,25 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
+## Unreleased
+
+Documentation accuracy pass — no code changes, so the version and the 104-tool count
+are unchanged.
+
+- **User Manual**: the tool reference documented only 92 of the 104 tools. Added
+  `block_introspect`, `table_get`, `table_set`, `detect_attributes` and a new
+  "Patterns and Mining" section covering all eight pattern tools. Error-code appendix
+  expanded from 10 to the full set, grouped by area — it also named a `TIMEOUT` code
+  that does not exist (the real one is `COM_TIMEOUT`) and promised a `suggestion`
+  field on every error, which is optional. Timeout table now matches
+  `backend.ts` command for command. New section on `EXTENDSIM_DEBUG` logging.
+- **Design Document**: was still stamped v1.19.1 / 92 tools / 17 categories, with
+  component line counts up to 25% low. Refreshed against the code, plus a new §3.7
+  describing the 13 auxiliary Python modules and the injected-backend pattern that
+  makes them offline-testable.
+- **README**: the test command claimed `npm test` runs all 390 offline tests; it runs
+  the 151 TypeScript ones. The 239 Python tests need `python -m pytest tests/unit_py`.
+
 ## 1.22.1 — 2026-07-19
 
 Quality release: a full codebase health review (4 parallel review agents) followed by

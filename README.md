@@ -126,10 +126,13 @@ cd src/ExtendSimMCP.TypeScript
 # Build
 npm run build
 
-# Run tests (390 offline tests: 239 Python + 151 TypeScript; no ExtendSim required)
+# Run the TypeScript tests (151 tests, no ExtendSim required)
 npm test
 
-# Run live COM tests (requires running ExtendSim)
+# Run the Python tests (239 tests + 3 skipped, no ExtendSim required)
+python -m pytest tests/unit_py
+
+# Run live COM tests (requires a running ExtendSim)
 npm run test:live
 ```
 

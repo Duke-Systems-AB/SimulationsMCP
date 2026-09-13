@@ -268,6 +268,7 @@ The server provides 104 tools organized into categories. Each tool accepts struc
 | `block_info` | Get detailed information about a specific block |
 | `block_discover` | Discover a block's connectors, variables, and capabilities |
 | `block_discover_variables` | List all dialog variables for a block |
+| `block_introspect` | Unified introspection: live dialog items **plus** the block's internal STAT storage variables (names and types read from the `.lbr`, with live values for scalars). Read-only. Surfaces variables such as `EQ_EquationText` that the dialog API cannot see |
 
 ### 6.3 Block Layout
 
@@ -289,6 +290,9 @@ The server provides 104 tools organized into categories. Each tool accepts struc
 | `block_configure` | Auto-detecting block configurator — handles Activity, Queue, Create, Exit, Select Item In/Out, Gate, Resource Item, Batch/Unbatch, Equation, Tank, Valve, and more. Single tool replaces 33 individual config tools. |
 | `attribute_set` | Set an item attribute value |
 | `attribute_get` | Get an item attribute value |
+| `table_get` | Read a string-table cell (`*_ttbl` dialog tables such as `IVars_ttbl`/`OVars_ttbl`). Use this where `block_get_value` cannot — it is numeric and returns `ERR` on string cells |
+| `table_set` | Write a string-table cell. Read-back verified: fails closed with `TABLE_WRITE_REJECTED` if the cell does not hold the written value (block-controlled cells reject writes silently) |
+| `detect_attributes` | Detect which item attributes a block reads and writes (equation blocks: from their in/out variable tables). Returns `{ reads, writes, confidence }` |
 
 ### 6.5 Simulation Control
 
@@ -413,6 +417,37 @@ The server provides 104 tools organized into categories. Each tool accepts struc
 | Tool | Description |
 |------|-------------|
 | `telemetry_control` | Check local telemetry status (event count, error count, file size) |
+
+### 6.18 Patterns and Mining
+
+Two halves of one library. The **use** half builds models from curated patterns; the
+**learn** half distils new patterns out of models you already have. A *molecule* is a
+reusable sub-model that becomes one H-block; a *flow* is several molecules wired together.
+
+Using patterns:
+
+| Tool | Description |
+|------|-------------|
+| `list_patterns` | List available molecule and flow patterns. Optional intent substring filter. Returns id, kind, intent, params, interface |
+| `get_pattern` | Get the full definition of a molecule or flow pattern by id |
+| `instantiate_pattern` | Build a molecule as an H-block in the open model (e.g. `machine-with-breakdowns` with `process_time`/`mtbf`/`mttr`) |
+| `compose_flow` | Build a whole process flow from molecule instances plus wiring (`m1.out` → `m2.in`) |
+
+Mining patterns out of existing models — run in this order:
+
+| Tool | Description |
+|------|-------------|
+| `extract_psg` | Model → Pattern Structure Graph: multi-scale nodes (`lib:blocktype` + params) and edges (`srcPort`→`dstPort`), with boundary-crossing edges marked per H-block. Reads the open model, or opens `filePath` read-only. `savePath` writes JSON |
+| `mine_candidates` | One candidate subgraph per H-block scope, each with a stable Weisfeiler–Lehman fingerprint (topology-only, parameter-independent), kind, and boundary edges |
+| `cluster_patterns` | Group candidates by exact WL fingerprint, merge near-misses via graph edit distance (flagged for review), and infer each cluster's parameter schema (fixed/required + median/range), interface and template |
+| `approve_pattern` | Turn a clustered candidate plus a naming into a validated library entry and write `patterns/molecules/<id>.json`. `dryRun` previews without writing. **Fail-closed — nothing enters the library without deliberate approval** |
+
+Each mining step can run offline from the previous step's saved JSON (`psgPath`,
+`candidatesPaths`), so you can mine without ExtendSim open once the PSG is extracted.
+
+> **Scope note:** mining treats a pure/library H-block as the molecule boundary.
+> Flat models with no H-blocks are a deliberate non-goal — the miner never guesses
+> boundaries from loose blocks.
 
 ---
 
@@ -539,6 +574,10 @@ Create an empty file at `[Install Dir]/temp/mcp_session_enable`
 
 **Log location:** `[Install Dir]/temp/mcp_session.log`
 
+Params and results are each truncated at 2000 characters — a long entry ends in
+`...[truncated]`. Logging never fails a tool call: if the write fails, it is dropped
+silently.
+
 **Log format:**
 ```
 [2026-03-13T14:22:01.123Z] block_add (245ms) status=success
@@ -558,6 +597,23 @@ Local-only telemetry is always active. It records which tools were called, in wh
 **Check status:** Use the `telemetry_control` tool
 
 Telemetry data never leaves the machine automatically. You can inspect the file and optionally share it with Duke Systems AB for support purposes.
+
+### 9.3 Backend Debug Logging
+
+The Python COM backend can write low-level diagnostics — connector resolution, array
+slot selection, block discovery — when you need to see why a connection or a block
+lookup behaved unexpectedly.
+
+**Enable:**
+```json
+"env": { "EXTENDSIM_DEBUG": "1" }
+```
+
+**Log location:** your system temp directory (`%TEMP%`), as
+`simulationsmcp_connector_debug.log` and `simulationsmcp_block_discover_debug.log`.
+
+Debug logging is off by default and never affects tool results: if the write fails,
+it is silently skipped.
 
 ---
 
@@ -599,6 +655,7 @@ The server spawns a Python subprocess for COM communication. If the Python proce
 
 **Check Python startup log:** `[Install Dir]/temp/python_startup.log`
 **Verify pywin32:** `python -c "import win32com.client; print('OK')"`
+**Deeper diagnostics:** set `EXTENDSIM_DEBUG=1` (see §9.3) to log connector resolution and block discovery to your temp directory.
 
 ### Port Conflict (HTTP Mode)
 
@@ -609,32 +666,99 @@ The server spawns a Python subprocess for COM communication. If the Python proce
 
 ## 11. Appendix: Error Codes
 
-All error responses include a structured `errorCode` and human-readable `error` message, plus a `suggestion` field with recovery hints.
+Every failure returns `success: false` together with a structured `errorCode` and a
+human-readable `error` message. Some errors also carry a `suggestion` field with a
+recovery hint — treat it as a bonus, not a guarantee.
+
+**Connection and process**
 
 | Error Code | Meaning |
 |------------|---------|
-| `COM_ERROR` | COM communication failure with ExtendSim |
-| `BLOCK_NOT_FOUND` | Specified block ID does not exist |
-| `CONNECTION_FAILED` | Failed to establish or use a block connection |
 | `NOT_CONNECTED` | No active COM connection to ExtendSim |
-| `MISSING_PARAMETER` | Required parameter not provided |
-| `EXTENDSIM_NOT_RUNNING` | ExtendSim is not running |
+| `COM_CONNECTION_LOST` | The COM connection dropped mid-operation |
+| `COM_ERROR` | COM communication failure with ExtendSim |
+| `EXTENDSIM_NOT_RUNNING` | ExtendSim is not running — start it and retry |
 | `EXTENDSIM_START_FAILED` | Failed to start ExtendSim |
-| `INVALID_JSON` | Invalid JSON response from Python backend |
+| `LICENSE_DETECTION_FAILED` | Could not read the ExtendSim license or library set |
+
+**Model**
+
+| Error Code | Meaning |
+|------------|---------|
+| `MODEL_NOT_OPEN` | The operation needs an open model; none is open |
+| `MODEL_NOT_FOUND` | The given `modelId` does not match an open model |
+| `MODEL_OPEN_FAILED` | The model file could not be opened |
+| `MODEL_SAVE_FAILED` | The model could not be saved |
+| `MODEL_QUERY_FAILED` | Reading model metadata failed |
+
+**Blocks and connections**
+
+| Error Code | Meaning |
+|------------|---------|
+| `BLOCK_NOT_FOUND` | Specified block ID does not exist |
+| `INVALID_BLOCK_ID` | Block ID is malformed or out of range |
+| `WRONG_BLOCK_TYPE` | The tool requires a different block type than the one given |
+| `NOT_AN_HBLOCK` | The target is not a hierarchy block |
+| `BLOCK_ADD_FAILED` / `BLOCK_REMOVE_FAILED` | Placing or deleting the block failed |
+| `BLOCK_QUERY_FAILED` | Reading the block's properties failed |
+| `CONNECTOR_NOT_FOUND` / `INVALID_CONNECTOR` | The named connector does not exist, or the reference is malformed |
+| `CONNECTION_FAILED` | Failed to establish or use a block connection |
+
+**Values, tables and databases**
+
+| Error Code | Meaning |
+|------------|---------|
+| `GET_VALUE_FAILED` / `SET_VALUE_FAILED` | Reading or writing a dialog variable failed |
+| `TABLE_NOT_FOUND` | The named table does not exist on the block |
+| `TABLE_WRITE_REJECTED` | `table_set` read the cell back and it did not hold the written value — block-controlled cells reject writes silently |
+| `DATABASE_NOT_FOUND` / `FIELD_NOT_FOUND` | No such database table or field |
+| `DB_OPERATION_FAILED` | The database operation failed |
+
+**Simulation**
+
+| Error Code | Meaning |
+|------------|---------|
+| `SIMULATION_RUN_FAILED` | The run could not be started or completed |
+| `SIMULATION_TIMEOUT` | The run exceeded its timeout |
+| `MULTI_RUN_FAILED` | A multi-run or scenario sweep failed |
+| `OPTIMIZER_FAILED` / `OPTIMIZER_TIMEOUT` | The Optimizer failed or exceeded its timeout |
+
+**Request validation**
+
+| Error Code | Meaning |
+|------------|---------|
+| `MISSING_PARAMETER` | Required parameter not provided |
+| `INVALID_PARAMETER` | Parameter present but not valid for this tool |
+| `UNKNOWN_COMMAND` | The backend has no handler for the command |
+| `COMMAND_FAILED` | A raw ModL command failed |
+| `TEMPLATE_NOT_FOUND` | No such block template |
+
+**Raised by the TypeScript layer, not the backend**
+
+| Error Code | Meaning |
+|------------|---------|
+| `COM_TIMEOUT` | Command timed out (see the per-command timeout table below). Also used for the synthetic error raised when a blocking dialog was dismissed and no real response arrived within the 5-second grace window |
+| `INVALID_JSON` | Invalid JSON response from the Python backend |
 | `TOOL_ERROR` | Unhandled error in tool execution |
-| `TIMEOUT` | Command timed out (see per-command timeout table) |
 
 ### Per-Command Timeouts
 
-| Command | Timeout |
-|---------|---------|
-| Most commands | 10 seconds |
-| File I/O (open, save, import, export) | 30 seconds |
-| `block_configure` | 60 seconds |
-| `extendsim_start` | 2 minutes |
-| `simulation_run` (blocking mode) | 5 minutes |
-| `block_list` (large models) | 2 minutes |
-| `simulation_run_multi`, `scenario_manager_run`, `optimizer_run` | 10 minutes |
+Timeouts are compiled into `backend.ts` and cannot be changed without rebuilding.
+
+| Timeout | Commands |
+|---------|----------|
+| 10 s (default) | Everything not listed below |
+| 30 s | `model_open`, `model_save`, `model_close`, `model_new`, `model_validate`, `detect_license`, `block_template`, `block_add_batch`, `block_discover`, `block_discover_variables`, `block_introspect`, `simulation_get_block_stats`, `db_get_records`, `db_import`, `db_export`, `db_create`, `hierarchy_list`, `hierarchy_get_contents`, `scenario_manager_status`, `scenario_manager_get_results` |
+| 60 s | `block_configure` (save/close/reopen cycle), `simulation_get_results` |
+| 2 min | `extendsim_start`, `block_list`, `model_extract` |
+| 5 min | `simulation_run` (blocking mode only) |
+| 10 min | `simulation_run_multi`, `simulation_run_scenarios`, `scenario_manager_run`, `optimizer_run` — the last two only with `waitForCompletion=true` |
+
+A separate **early dialog check** fires 1 second into any command: a modal dialog
+appearing that fast always means a configuration error, never a long-running
+operation, so you get the real message instead of waiting out the full timeout.
+`scenario_manager_run`, `scenario_manager_status` and `optimizer_run` skip it —
+they open dialogs as part of normal operation.
 
 ---
 

@@ -151,8 +151,8 @@ The server provides 104 tools across these categories:
   Model, Block, Block Layout, Values, Config, Attributes,
   Simulation, Statistics, Multi-run, Database, DB Relations,
   Global Arrays, Hierarchy, Analysis (Optimizer, Scenario Manager),
-  Templates, Annotations, Time/Date, Context, Patterns, Advisor,
-  Reference, and Status tools.
+  Templates, Annotations, Time/Date, Context, Patterns and Mining,
+  Advisor, Reference, and Status tools.
 
 Key tools for AI assistants:
   - modeling_guide  — Step-by-step guidance for common scenarios
