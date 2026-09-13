@@ -16,7 +16,7 @@ import * as backend from "./backend.js";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { analyzeWarnings, analyzeSuggestions, analyzeCompletions } from "./advisor.js";
-import { initTelemetry, recordToolCall, getStatus as getTelemetryStatus, closeTelemetry, updateEnvInfo } from "./telemetry.js";
+import { initTelemetry, recordToolCall, getStatus as getTelemetryStatus, closeTelemetry } from "./telemetry.js";
 import { appendFileSync, mkdirSync, existsSync } from "fs";
 
 // Session logging — opt-in via MCP_SESSION_LOG=1 env var OR temp/mcp_session_enable marker file.
@@ -2414,7 +2414,7 @@ server.tool(
   {
     action: z.enum(["get_status"]).describe("Action to perform")
   },
-  async ({ action }) => {
+  async ({ action: _action }) => {
     const startTime = performance.now();
     const status = getTelemetryStatus();
     recordToolCall("telemetry_control", startTime, { status: "ok" });

@@ -119,8 +119,8 @@ def graph_edit_distance(a, b):
     for k in range(m):
         for j in range(m):
             cost[n + k][j] = (1.0 + 0.5 * len(lb[k])) if k == j else INF
-        for l in range(n):
-            cost[n + k][m + l] = 0.0
+        for li in range(n):
+            cost[n + k][m + li] = 0.0
     return _hungarian(cost)
 
 

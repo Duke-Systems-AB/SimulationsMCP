@@ -1,0 +1,14 @@
+# Runtime dependencies for the Python COM backend.
+#
+# Install with:  pip install -r requirements.txt
+#
+# pywin32   - the COM bridge to ExtendSim. Hard requirement; nothing works without it.
+# comtypes  - Windows UI Automation, used by dialog_watcher.py to READ the text of a
+#             blocking ExtendSim dialog. Its import is guarded, so the server still
+#             starts without it and still dismisses dialogs through the win32gui
+#             fallback — but it loses the dialog text, which is the difference between
+#             a bare COM_TIMEOUT and an error that says what ExtendSim complained
+#             about. Install it.
+
+pywin32>=306
+comtypes>=1.2.0

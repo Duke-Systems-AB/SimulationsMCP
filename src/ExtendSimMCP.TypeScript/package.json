@@ -15,7 +15,12 @@
     "dev": "ts-node src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:py": "python -m pytest",
+    "test:all": "npm run test && npm run test:py",
     "test:live": "python -m pytest tests/live/ -v --tb=short",
+    "lint": "eslint src",
+    "lint:py": "python -m ruff check src tests",
+    "lint:all": "npm run lint && npm run lint:py",
     "clean": "rimraf dist",
     "install-service": "node ../installer/scripts/install-service.js",
     "uninstall-service": "node ../installer/scripts/uninstall-service.js"
@@ -27,11 +32,14 @@
     "zod": "^3.22.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/express": "^5.0.6",
     "@types/node": "^20.0.0",
+    "eslint": "^9.39.5",
     "rimraf": "^5.0.0",
     "ts-node": "^10.9.0",
     "typescript": "^5.3.0",
+    "typescript-eslint": "^8.70.0",
     "vitest": "^1.6.1"
   },
   "engines": {

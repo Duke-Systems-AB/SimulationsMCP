@@ -20,7 +20,6 @@ let errorCount = 0;
 let writeStream: WriteStream | null = null;
 let filePath = "";
 let mcpVersion = "";
-let envInfo: Record<string, string> = {};
 
 // ── Public API ──────────────────────────────────────────────────────────
 
@@ -129,12 +128,6 @@ export function getStatus(): Record<string, unknown> {
     mcpVersion,
     submitTo: "mcp-bug-report@duke.se",
   };
-}
-
-export function updateEnvInfo(key: string, value: string): void {
-  try {
-    envInfo[key] = value;
-  } catch { /* ignore */ }
 }
 
 export function closeTelemetry(): void {

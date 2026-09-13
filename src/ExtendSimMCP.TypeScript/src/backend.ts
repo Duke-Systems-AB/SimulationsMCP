@@ -143,7 +143,7 @@ async function dismissExtendSimDialog(timeoutSec: number = 5): Promise<{
       "python",
       ["-u", DIALOG_WATCHER_SCRIPT, String(timeoutSec), "0.5"],
       { timeout: (timeoutSec + 3) * 1000 },
-      (error, stdout, stderr) => {
+      (error, stdout, _stderr) => {
         clearTimeout(timer);
         if (error) {
           console.error(`Dialog watcher error: ${error.message}`);
@@ -288,7 +288,7 @@ export async function initBackend(): Promise<void> {
       try {
         const response = JSON.parse(line);
         processResponse(response);
-      } catch (e) {
+      } catch {
         console.error(`Failed to parse Python response: ${line}`);
         // Still try to process next request
         processResponse({ error: `Invalid JSON response: ${line}`, errorCode: "INVALID_JSON" });

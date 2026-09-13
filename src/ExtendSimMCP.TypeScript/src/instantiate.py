@@ -5,6 +5,8 @@ Orchestrates an injected EsOps interface so the COM construction sequence
 is testable. Every COM-affecting step is effect-verified, never trusting a
 success flag (krav 12). See spec 2026-06-27-m3-instantiate-pattern-design.md.
 """
+import json as _json
+import os as _os
 from typing import Any, Dict
 from molecule_schema import (
     validate_molecule, resolve_params, resolve_set_attributes, resolve_resource_pool, MoleculeError,
@@ -313,9 +315,6 @@ class RealOps:
             f"global0 = NodeGetIDIndex({block_id}, {con_index});", get_result=True)
         return int(r.get("result") or 0)
 
-
-import json as _json
-import os as _os
 
 _MOLECULE_DIR = _os.path.join(_os.path.dirname(__file__), "..", "patterns", "molecules")
 

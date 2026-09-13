@@ -95,7 +95,7 @@ def build_flow(flow_def, ops):
             try:
                 molecules[i["pattern"]] = _load_molecule(i["pattern"])
             except BuildError as e:
-                raise FlowError(str(e))      # unknown pattern -> INVALID_FLOW, not generic
+                raise FlowError(str(e)) from e      # unknown pattern -> INVALID_FLOW, not generic
     validate_flow(flow_def, molecules)
 
     # Track every H-block successfully built so far; if a later instance or

@@ -51,7 +51,11 @@ The server exposes **104 tools** across 18 categories:
 
 - **Windows 10/11** (64-bit)
 - **Node.js** 18+
-- **Python 3.x** with pywin32: `pip install pywin32`
+- **Python 3.9+** — developed and tested on 3.13; the backend uses no syntax newer than 3.7
+- **Python packages:** `pip install -r src/ExtendSimMCP.TypeScript/requirements.txt`
+  (`pywin32` for COM, `comtypes` for reading the text of blocking ExtendSim dialogs —
+  without the latter the server still runs and still dismisses dialogs, but a timeout
+  can no longer tell you what ExtendSim complained about)
 - **ExtendSim** installed with COM component registered
 
 ## Quick Start
@@ -126,13 +130,17 @@ cd src/ExtendSimMCP.TypeScript
 # Build
 npm run build
 
-# Run the TypeScript tests (151 tests, no ExtendSim required)
-npm test
+# Run every offline test: 151 TypeScript + 239 Python. No ExtendSim required.
+npm run test:all
 
-# Run the Python tests (239 tests + 3 skipped, no ExtendSim required)
-python -m pytest tests/unit_py
+# ...or one language at a time
+npm test          # vitest, 151 tests
+npm run test:py   # pytest, 239 tests + 3 skipped
 
-# Run live COM tests (requires a running ExtendSim)
+# Lint both languages (eslint + ruff)
+npm run lint:all
+
+# Run live COM tests (requires a running ExtendSim; they skip themselves if absent)
 npm run test:live
 ```
 

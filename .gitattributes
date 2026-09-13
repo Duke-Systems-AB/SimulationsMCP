@@ -1,0 +1,19 @@
+# Normalize line endings so the index is always LF and the working tree is
+# predictable. Without this, every commit on Windows warns "LF will be replaced
+# by CRLF", and mixed endings turn text comparisons (comm, diff, sort) into
+# silent false results.
+
+* text=auto eol=lf
+
+# Windows-native scripts: the shell genuinely wants CRLF.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Binary — never touch, never diff as text.
+*.exe   binary
+*.lbr   binary
+*.mox   binary
+*.ico   binary
+*.zip   binary
+*.png   binary
+*.pyc   binary

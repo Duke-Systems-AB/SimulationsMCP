@@ -9,6 +9,7 @@ import sys
 import json
 import os
 import tempfile
+import math
 import win32com.client
 from typing import Any, Optional
 from lbr_stat import read_stat_variables
@@ -26,7 +27,7 @@ if not os.path.isdir(_log_dir):
 _startup_log = os.path.join(_log_dir, "python_startup.log")
 try:
     with open(_startup_log, "w", encoding="utf-8") as _f:
-        _f.write(f"Python started\n")
+        _f.write("Python started\n")
         _f.write(f"__file__ = {__file__}\n")
         _f.write(f"cwd = {os.getcwd()}\n")
         _f.write(f"sys.argv = {sys.argv}\n")
@@ -981,12 +982,13 @@ def _is_array_connector(app, block_id, con_name, log=None):
     Calls ConArrayGetNumCons - returns number of open connectors (>= 0) for array, -1 for non-array.
     """
     if log is None:
-        log = lambda msg: None  # No-op if no log passed
+        def log(msg):  # No-op if no log passed
+            return None
     try:
         cmd = f'global0 = ConArrayGetNumCons({block_id}, "{con_name}");'
         log(f"[_is_array_connector] BEFORE Execute: {cmd}")
         app.Execute(cmd)
-        log(f"[_is_array_connector] AFTER Execute - OK")
+        log("[_is_array_connector] AFTER Execute - OK")
         req_result = app.Request("System", "global0+:0:0:0")
         log(f"[_is_array_connector] Request result: '{req_result}'")
         result = int(parse_float(req_result))
@@ -1034,7 +1036,7 @@ def _get_block_connectors(app, block_id: int) -> list:
 
     Returns list of dicts: [{"index": 0, "name": "ItemIn"}, {"index": 1, "name": "ItemsOut"}, ...]
     """
-    _log_debug(f"=== _get_block_connectors START ===")
+    _log_debug("=== _get_block_connectors START ===")
     _log_debug(f"  block_id={block_id}")
 
     # Get number of connectors
@@ -1050,7 +1052,7 @@ def _get_block_connectors(app, block_id: int) -> list:
         connectors.append({"index": i, "name": name})
         _log_debug(f"  connector[{i}] = '{name}'")
 
-    _log_debug(f"=== _get_block_connectors END ===")
+    _log_debug("=== _get_block_connectors END ===")
     return connectors
 
 
@@ -1065,7 +1067,7 @@ def _find_connector_by_direction_dynamic(app, block_id: int, direction: str) -> 
     Returns:
         Dict with 'index' and 'name', or None if not found
     """
-    _log_debug(f"=== _find_connector_by_direction_dynamic START ===")
+    _log_debug("=== _find_connector_by_direction_dynamic START ===")
     _log_debug(f"  block_id={block_id}, direction='{direction}'")
 
     connectors = _get_block_connectors(app, block_id)
@@ -1095,7 +1097,7 @@ def _find_connector_by_direction_dynamic(app, block_id: int, direction: str) -> 
             return con
 
     _log_debug(f"  No connector found for direction '{direction}'")
-    _log_debug(f"=== _find_connector_by_direction_dynamic END ===")
+    _log_debug("=== _find_connector_by_direction_dynamic END ===")
     return None
 
 
@@ -1133,7 +1135,7 @@ def _find_free_array_slot(app, block_id, con_name):
     """
     global _used_array_slots
 
-    _log_debug(f"=== _find_free_array_slot START ===")
+    _log_debug("=== _find_free_array_slot START ===")
     _log_debug(f"  block_id={block_id}, con_name='{con_name}'")
 
     # Get or create session tracking for this block/connector
@@ -1159,7 +1161,7 @@ def _find_free_array_slot(app, block_id, con_name):
 
     if num_slots < 1:
         num_slots = 1  # At least one slot (the base connector)
-        _log_debug(f"  num_slots was < 1, set to 1")
+        _log_debug("  num_slots was < 1, set to 1")
 
     # Step 3 & 4: Find a free slot by checking NodeGetIDIndex AND session tracking
     free_con_idx = None
@@ -1188,7 +1190,7 @@ def _find_free_array_slot(app, block_id, con_name):
 
     # Step 5: If no free slot found, expand the array
     if free_con_idx is None:
-        _log_debug(f"  No free slot found, expanding array...")
+        _log_debug("  No free slot found, expanding array...")
         new_size = num_slots + 1
         cmd4 = f'ConArraySetNumCons({block_id}, "{con_name}", {new_size}, 0);'
         _log_debug(f"  CMD4: {cmd4}")
@@ -1206,7 +1208,7 @@ def _find_free_array_slot(app, block_id, con_name):
         _log_debug(f"  Marked slot {free_slot} as used. Updated tracking: {used_slots}")
 
     _log_debug(f"  Returning connector index: {free_con_idx}")
-    _log_debug(f"=== _find_free_array_slot END ===")
+    _log_debug("=== _find_free_array_slot END ===")
     return free_con_idx
 
 
@@ -1220,7 +1222,7 @@ def _resolve_connector(app, block_id: int, connector, auto_expand_array: bool = 
     If the connector name doesn't exist on the block, tries to find a matching
     connector by direction (in/out) based on the name pattern.
     """
-    _log_debug(f"=== _resolve_connector START ===")
+    _log_debug("=== _resolve_connector START ===")
     _log_debug(f"  block_id={block_id}, connector='{connector}', auto_expand_array={auto_expand_array}")
 
     if isinstance(connector, int):
@@ -1316,23 +1318,23 @@ def block_connect(source_block_id: int, source_connector,
     - int: connector index (0-based)
     - str: connector name (e.g. "ItemOut", "ItemIn")
     """
-    _log_debug(f"")
-    _log_debug(f"########## block_connect START ##########")
+    _log_debug("")
+    _log_debug("########## block_connect START ##########")
     _log_debug(f"  source_block_id={source_block_id}, source_connector='{source_connector}'")
     _log_debug(f"  target_block_id={target_block_id}, target_connector='{target_connector}'")
     try:
         app = get_extendsim_app()
-        _log_debug(f"  Got ExtendSim app")
+        _log_debug("  Got ExtendSim app")
 
         model_check = _validate_model_open(app)
         if not model_check.get("success"):
             return model_check
 
-        _log_debug(f"  Resolving source connector...")
+        _log_debug("  Resolving source connector...")
         from_con = _resolve_connector(app, source_block_id, source_connector)
         _log_debug(f"  from_con={from_con}")
 
-        _log_debug(f"  Resolving target connector...")
+        _log_debug("  Resolving target connector...")
         to_con = _resolve_connector(app, target_block_id, target_connector)
         _log_debug(f"  to_con={to_con}")
 
@@ -1344,7 +1346,7 @@ def block_connect(source_block_id: int, source_connector,
 
         if result != 1:
             _log_debug(f"  MakeConnection FAILED (result={result})")
-            _log_debug(f"########## block_connect END (with error) ##########")
+            _log_debug("########## block_connect END (with error) ##########")
 
             # Check for Queue → Workstation pattern (known limitation)
             suggestion = "Use block_info(blockId) to verify connector indices and directions."
@@ -1359,8 +1361,8 @@ def block_connect(source_block_id: int, source_connector,
                          targetBlockId=target_block_id, targetConnector=to_con,
                          suggestion=suggestion)
 
-        _log_debug(f"  MakeConnection executed successfully")
-        _log_debug(f"########## block_connect END ##########")
+        _log_debug("  MakeConnection executed successfully")
+        _log_debug("########## block_connect END ##########")
 
         return {
             "success": True,
@@ -1371,7 +1373,7 @@ def block_connect(source_block_id: int, source_connector,
         }
     except Exception as e:
         _log_debug(f"  EXCEPTION: {e}")
-        _log_debug(f"########## block_connect END (with error) ##########")
+        _log_debug("########## block_connect END (with error) ##########")
         return _error(ErrorCode.CONNECTION_FAILED, str(e),
                       sourceBlockId=source_block_id, targetBlockId=target_block_id,
                       suggestion="Use block_info(blockId) to check available connectors and their directions (in/out).")
@@ -2021,8 +2023,8 @@ def block_info(query: Optional[str] = None, block_id: Optional[int] = None,
             # Get description and guide data from reference if possible
             if block_name:
                 ref = _load_block_reference()
-                for lib_key, lib_data in ref.get("libraries", {}).items():
-                    for cat_name, cat_data in lib_data.get("categories", {}).items():
+                for _lib_key, lib_data in ref.get("libraries", {}).items():
+                    for _cat_name, cat_data in lib_data.get("categories", {}).items():
                         for ref_name, block_data in cat_data.get("blocks", {}).items():
                             if ref_name.lower() == block_name.lower():
                                 result["description"] = _get_block_description(block_data)
@@ -2521,7 +2523,7 @@ def simulation_stop(model_id: Optional[str] = None) -> dict:
 
         # Get currentTime
         app.Execute("global0 = currentTime;")
-        current_time = parse_float(app.Request("System", "global0+:0:0:0"))
+        _current_time = parse_float(app.Request("System", "global0+:0:0:0"))
 
         # Set endTime = currentTime + 5 to stop soon
         app.Execute("endTime = currentTime + 5;")
@@ -5246,8 +5248,6 @@ def simulation_get_block_stats(block_ids: list,
 # MULTI-RUN AND SCENARIO OPERATIONS
 # ============================================================================
 
-import math
-
 
 def _compute_stats(values: list) -> dict:
     """Computes summary statistics for a list of numeric values.
@@ -5353,7 +5353,7 @@ def _aggregate_results(all_results: list) -> dict:
     summary = {}
     for category, blocks in aggregated.items():
         summary[category] = []
-        for bid, data in blocks.items():
+        for _bid, data in blocks.items():
             block_summary = {"blockId": data["blockId"], "label": data["label"]}
             for key, values in data.items():
                 if isinstance(values, list):
@@ -7236,7 +7236,7 @@ def hierarchy_get_contents(block_id: int,
                 pass
 
         connections = []
-        for ni, endpoints in node_map.items():
+        for _ni, endpoints in node_map.items():
             # Filter to connections where both endpoints are internal
             internal_eps = [ep for ep in endpoints if ep[0] in internal_ids]
             if len(internal_eps) == 2:
@@ -10007,7 +10007,7 @@ def _extract_connections(app, blocks: list) -> list:
             pass
 
     # Build connections from node_map (pairs of connectors with same nodeIndex)
-    for ni, endpoints in node_map.items():
+    for _ni, endpoints in node_map.items():
         if len(endpoints) == 2:
             ep0, ep1 = endpoints[0], endpoints[1]
             # Determine source (out) and target (in)
@@ -11121,7 +11121,7 @@ def main():
             print(json.dumps(result, allow_nan=False), flush=True)
         except json.JSONDecodeError as e:
             print(json.dumps(_error(ErrorCode.INVALID_JSON, str(e))), flush=True)
-        except ValueError as e:
+        except ValueError:
             # Handle Infinity/NaN values that can't be serialized to JSON
             import math
 

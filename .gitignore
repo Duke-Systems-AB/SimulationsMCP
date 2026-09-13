@@ -37,3 +37,6 @@ live_verify_*.py
 
 # Installer build scratch (the promoted release .exe at installer/ root IS tracked)
 installer/output/
+
+# CI test reports
+junit-*.xml

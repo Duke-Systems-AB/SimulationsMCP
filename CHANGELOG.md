@@ -5,8 +5,41 @@ All notable changes to the Simulations MCP Server. Versions match the installer
 
 ## Unreleased
 
-Documentation accuracy pass — no code changes, so the version and the 104-tool count
-are unchanged.
+Tooling and documentation. The tool count and behaviour are unchanged at 104 / v1.22.1;
+the only source edits are the lint fixes listed below, all behaviour-preserving.
+
+### Added — project infrastructure
+- **`requirements.txt`** — the Python dependencies were never declared. `pywin32` was
+  documented in the README; **`comtypes` was not**, and its import in
+  `dialog_watcher.py` is guarded, so installing without it left the server running and
+  still dismissing dialogs but unable to *read* dialog text — silently turning a
+  useful error into a bare `COM_TIMEOUT`. Also `requirements-dev.txt`.
+- **Linting**: `eslint.config.mjs` (ESLint 9 flat config + typescript-eslint) and
+  `ruff.toml`. Both are at zero errors. Run with `npm run lint:all`.
+- **`pytest.ini`** — bare `pytest` now runs the offline suite only; the live suite is
+  opted into explicitly. New `npm run test:py` and `npm run test:all` (all 390 offline
+  tests in one command, which is what CI needs).
+- **`azure-pipelines.yml`** — CI on every push and PR to `main`: build, lint both
+  languages, run both offline suites, publish JUnit results.
+- **`SECURITY.md`** — how to report a vulnerability privately, and what is in scope
+  versus a documented design decision.
+- **`.gitattributes`** — normalizes line endings. The index was already uniformly LF,
+  so nothing was corrupted, but mixed endings made every commit warn and silently broke
+  text comparisons during review work.
+
+### Fixed — found by the new linters on their first run
+- Removed dead telemetry code: `updateEnvInfo()` was imported by `index.ts` but never
+  called, and the `envInfo` map it wrote was never read by anything.
+- Unused bindings and loop variables, an unused local in `simulation_run`'s stop path, a
+  lambda assignment, 20 f-strings with no placeholders, and `raise ... from err` in
+  `compose.py` so a molecule-load failure keeps its cause.
+
+### Changed
+- README: Python is pinned at **3.9+** (tested on 3.13; the backend uses no syntax newer
+  than 3.7) and points at `requirements.txt`.
+
+### Earlier in this entry — documentation accuracy pass
+No code changes; the version and the 104-tool count are unchanged.
 
 - **User Manual**: the tool reference documented only 92 of the 104 tools. Added
   `block_introspect`, `table_get`, `table_set`, `detect_attributes` and a new
