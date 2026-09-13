@@ -1,0 +1,10 @@
+{
+  "id": "tagged-line",
+  "kind": "flow",
+  "intent": "Märk items och processa dem i en maskin",
+  "instances": [
+    { "ref": "tag", "pattern": "tag-items", "params": {} },
+    { "ref": "mc",  "pattern": "simple-machine", "params": { "process_time": 2 } }
+  ],
+  "wiring": [ { "from": "tag.out", "to": "mc.in" } ]
+}

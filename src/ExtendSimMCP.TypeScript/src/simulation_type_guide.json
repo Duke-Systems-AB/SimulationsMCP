@@ -1,0 +1,130 @@
+{
+  "version": "1.6.0",
+  "description": "Guide for choosing the right ExtendSim simulation type based on the system being modeled",
+  "simulationTypes": {
+    "continuous": {
+      "description": "Models systems where values change continuously over time (differential equations, feedback loops)",
+      "license": "CP",
+      "useWhen": [
+        "Variables change smoothly over time (temperature, population, chemical concentration)",
+        "System is described by differential equations or rate-of-change relationships",
+        "Feedback loops drive system behavior",
+        "No individual entities/items need to be tracked"
+      ],
+      "examples": [
+        "Population dynamics (predator-prey)",
+        "Chemical reaction kinetics",
+        "Thermal systems (heating/cooling)",
+        "Supply/demand economic models",
+        "PID controller simulation"
+      ],
+      "keyBlocks": [
+        {"name": "Holding Tank", "library": "Value.lbr", "purpose": "Integrates flow rates over time (accumulator)"},
+        {"name": "Equation", "library": "Value.lbr", "purpose": "Defines mathematical relationships"},
+        {"name": "Random Number", "library": "Value.lbr", "purpose": "Generates stochastic inputs"},
+        {"name": "Lookup Table", "library": "Value.lbr", "purpose": "Maps input values to output values"}
+      ]
+    },
+    "discrete": {
+      "description": "Models systems where individual items (customers, parts, orders) move through a process with queues and activities",
+      "license": "DE",
+      "useWhen": [
+        "Individual entities (customers, parts, packets, orders) flow through the system",
+        "Entities wait in queues for processing",
+        "Activities/processes take variable amounts of time",
+        "Resources are shared between entities",
+        "System involves routing, branching, or merging of entity paths"
+      ],
+      "examples": [
+        "Manufacturing assembly lines",
+        "Hospital patient flow",
+        "Call center operations",
+        "Airport check-in and security",
+        "Supply chain logistics",
+        "Network packet routing"
+      ],
+      "keyBlocks": [
+        {"name": "Create", "library": "Item.lbr", "purpose": "Generates items entering the system"},
+        {"name": "Queue", "library": "Item.lbr", "purpose": "Holds items waiting for processing (FIFO/LIFO/priority)"},
+        {"name": "Activity", "library": "Item.lbr", "purpose": "Processes items for a duration (fixed/random)"},
+        {"name": "Exit", "library": "Item.lbr", "purpose": "Removes items from the system and collects statistics"},
+        {"name": "Gate", "library": "Item.lbr", "purpose": "Controls item flow (open/close)"},
+        {"name": "Select Item Out", "library": "Item.lbr", "purpose": "Routes items to different paths"},
+        {"name": "Select Item In", "library": "Item.lbr", "purpose": "Merges items from multiple paths"},
+        {"name": "Batch", "library": "Item.lbr", "purpose": "Combines multiple items into one"},
+        {"name": "Unbatch", "library": "Item.lbr", "purpose": "Splits batched items apart"},
+        {"name": "Resource Pool", "library": "Item.lbr", "purpose": "Manages shared resources"}
+      ]
+    },
+    "flow": {
+      "description": "Models systems with continuous flow of material through discrete steps (tanks, valves, conveyors with flow rates)",
+      "license": "Pro",
+      "useWhen": [
+        "Material flows as a continuous stream (not individual items) but through discrete process steps",
+        "Flow rates matter (liters/min, tons/hour, units/second)",
+        "Tanks/buffers fill and drain at varying rates",
+        "Flow can be constrained by capacity limits or valves",
+        "Hybrid system: combines item-based and flow-based behavior"
+      ],
+      "examples": [
+        "Oil refinery operations",
+        "Beverage bottling plant",
+        "Pharmaceutical production",
+        "Mining and ore processing",
+        "Water treatment plant",
+        "High-volume manufacturing (treated as flow)"
+      ],
+      "keyBlocks": [
+        {"name": "Tank", "library": "Rate.lbr", "purpose": "Stores flow material (capacity, fill level, max rates)"},
+        {"name": "Valve", "library": "Rate.lbr", "purpose": "Controls flow rate between blocks"},
+        {"name": "Merge", "library": "Rate.lbr", "purpose": "Combines multiple flow streams into one"},
+        {"name": "Diverge", "library": "Rate.lbr", "purpose": "Splits one flow stream into multiple"},
+        {"name": "Interchange", "library": "Rate.lbr", "purpose": "Converts between items and flow"},
+        {"name": "Convey Flow", "library": "Rate.lbr", "purpose": "Transports flow with delay"},
+        {"name": "Change Units", "library": "Rate.lbr", "purpose": "Converts flow units"},
+        {"name": "Bias", "library": "Rate.lbr", "purpose": "Adjusts flow allocation priority"}
+      ]
+    },
+    "rbd": {
+      "description": "Reliability Block Diagrams - models system reliability with failure/repair cycles",
+      "license": "Pro",
+      "useWhen": [
+        "System reliability and availability analysis",
+        "Components have failure rates and repair times",
+        "Need to calculate system MTBF, MTTR, or availability",
+        "Series/parallel redundancy analysis"
+      ],
+      "examples": [
+        "Power grid reliability",
+        "Manufacturing equipment uptime",
+        "IT system availability",
+        "Safety system analysis"
+      ],
+      "keyBlocks": [
+        {"name": "Shutdown", "library": "Item.lbr", "purpose": "Models failure/repair cycles with TBF and TTR distributions"},
+        {"name": "Shift", "library": "Item.lbr", "purpose": "Models scheduled on/off cycles (shifts, maintenance windows)"}
+      ]
+    }
+  },
+  "decisionGuide": {
+    "description": "Answer these questions to determine the right simulation type",
+    "questions": [
+      {
+        "question": "Does the system involve individual entities (customers, parts, orders) that move through steps?",
+        "yes": "Go to question 2",
+        "no": "Use CONTINUOUS simulation (Value.lbr blocks)"
+      },
+      {
+        "question": "Are the entities processed individually (one at a time) or as continuous flow (bulk/stream)?",
+        "individual": "Use DISCRETE simulation (Item.lbr blocks)",
+        "flow": "Go to question 3"
+      },
+      {
+        "question": "Does the system need flow rates (liters/min, tons/hour) and tank levels?",
+        "yes": "Use FLOW simulation (Rate.lbr blocks) - requires Pro license",
+        "no": "Use DISCRETE simulation with high throughput settings"
+      }
+    ],
+    "hybrid_note": "Many real systems combine types. ExtendSim Pro can mix Item, Rate, and Value blocks in one model. For example, a bottling plant might use Rate blocks for liquid flow and Item blocks for individual bottles."
+  }
+}

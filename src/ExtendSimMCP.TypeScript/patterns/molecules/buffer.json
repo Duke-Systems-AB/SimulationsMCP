@@ -1,0 +1,16 @@
+{
+  "id": "buffer",
+  "version": "1.0",
+  "kind": "molecule",
+  "intent": "Trivial molekyl: en kö som buffrar items",
+  "params": {},
+  "attributes": { "reads": [], "writes": [] },
+  "nodes": [
+    { "ref": "q", "lib": "Item.lbr", "type": "Queue", "seed": true }
+  ],
+  "edges": [],
+  "interface": {
+    "inlets":  [ { "port": "in",  "binds": "q.ItemIn",  "role": "item" } ],
+    "outlets": [ { "port": "out", "binds": "q.ItemOut", "role": "item" } ]
+  }
+}
