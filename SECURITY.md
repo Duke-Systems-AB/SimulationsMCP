@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Email **Jonas@Duke.se** with "SimulationsMCP security" in the subject. Please do not
+Email **info@duke.se** with "SimulationsMCP security" in the subject. Please do not
 open a public GitHub issue for a suspected vulnerability.
 
 Include what you need to make the problem reproducible: the version (see
