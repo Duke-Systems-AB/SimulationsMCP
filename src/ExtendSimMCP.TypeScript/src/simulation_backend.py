@@ -9513,7 +9513,12 @@ def ga_list(model_id: Optional[str] = None) -> dict:
 
         try:
             app.Execute("globalInt0 = GALastUsedIndex();")
-            last_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")) or -1)
+            # NOT `... or -1`: parse_float returns 0.0 for a legitimate index 0, and
+            # `0.0 or -1` is -1, which skipped the loop entirely. A model whose only
+            # global array sat at index 0 reported having none. parse_float already
+            # maps an empty/unreadable response to 0.0, and index 0 is then filtered
+            # by the empty-name guard below, so the fallback bought nothing.
+            last_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
         except Exception:
             # GALastUsedIndex fails on models without global arrays (triggers dialog)
             return {
