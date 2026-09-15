@@ -2796,11 +2796,23 @@ DELAY_OPTIONS = {
     "table": 5          # From a lookup table
 }
 
-# Workstation delay option constants (different popup order than Activity)
-# WARNING: These indices are UNVERIFIED — GetDialogItemLabel returns empty for
-# Workstation's Delay_Options_pop (dialogId=99). Unlike Activity (dialogId=66),
-# the Workstation popup cannot be verified programmatically via COM.
-# If delays don't behave as expected, verify indices manually in ExtendSim GUI.
+# Workstation delay option constants.
+# WARNING: STILL UNVERIFIED, and the evidence now points at these being WRONG.
+# Investigated 2026-09-15 (gap sweep G1) against ExtendSim 2024 R1:
+#   - GetDialogItemLabel returns empty for EVERY popup on Activity, Create,
+#     Workstation and Shutdown alike. The older claim that Activity was verified
+#     through it, and that Workstation was the exception, is wrong on both halves.
+#   - DialogItemVisible also cannot help: it reads 0 for every item while the
+#     block dialog is closed, which is the only state a headless run has.
+#   - The Workstation and Activity help text carry the SAME sentence: "the delay
+#     will be a constant, from the D connector, an attribute value, specified by
+#     a distribution, or from a lookup table" - five options, same order. If that
+#     is the popup order, the map below is missing "from the D connector" and so
+#     shifts attribute/distribution/table down by one: asking for "distribution"
+#     would select "an attribute value". Same failure class as BUG-004.
+# Not changed on circumstantial evidence. Closing this needs someone to open a
+# Workstation dialog in the GUI and read the popup. Until then the affected
+# delay types return a warning to the caller (see workstation_set_config).
 WORKSTATION_DELAY_OPTIONS = {
     "fixed": 1,       # A constant
     "attribute": 2,   # An item's attribute value
@@ -2815,7 +2827,11 @@ WORKSTATION_DELAY_OPTIONS = {
 # triangular=34. The OLD values (constant=32..) were offset by ~27 and selected the
 # WRONG distribution — e.g. 32=Power Function (the reported "constant → 1 item") and
 # 36=Uniform Real (which merely *looked* like a working exponential). The same standard
-# ordering is assumed for the Activity/Shutdown delay popups (re-verify if in doubt).
+# ordering is CONFIRMED for Activity (gap sweep G1, 2026-09-15): a fresh Activity
+# reads Delay_Distributions_pop = 34, and the block's own change log records
+# "Changed default distribution to triangular when block is created" - so Activity
+# numbers distributions exactly as Create does. Shutdown is still unconfirmed; a
+# fresh Shutdown reads back an uninitialised value, so it revealed nothing.
 DISTRIBUTIONS = {
     "constant": 5,
     "uniform": 36,        # Uniform, Real
@@ -5569,6 +5585,18 @@ def workstation_set_config(block_id: int,
 
         # Set delay option with verification (Workstation has different popup indices than Activity)
         delay_opt = WORKSTATION_DELAY_OPTIONS.get(delay_type.lower(), 1)
+        # G1: these indices have never been confirmed against the real popup, and the
+        # help text suggests they are shifted by one. "fixed" is index 1 either way, so
+        # only the later options are in doubt. Tell the caller rather than leaving the
+        # doubt in a source comment they will never read.
+        if delay_type.lower() in ("attribute", "distribution", "table"):
+            warnings.append(
+                f"Workstation delay option '{delay_type}' maps to popup index {delay_opt}, "
+                "which is UNVERIFIED. ExtendSim exposes no way to read this popup's labels "
+                "over COM, and the block's help text suggests the index may be off by one "
+                "(selecting the neighbouring option instead). Confirm the delay behaves as "
+                "intended, or set Delay_Options_pop directly with block_set_value."
+            )
         pop_result = _set_popup_verified(app, block_id, "Delay_Options_pop", delay_opt)
         if not pop_result["success"]:
             warnings.append(pop_result["warning"])
