@@ -3,10 +3,46 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
-## Unreleased
+## 1.22.2 — 2026-09-15
 
-Tooling and documentation. The tool count and behaviour are unchanged at 104 / v1.22.1;
-the only source edits are the lint fixes listed below, all behaviour-preserving.
+A gap-sweep release: one real bug fix, the project scaffolding the repo never had,
+and 36 new tests. Tool count unchanged at 104.
+
+### Fixed — customer-impacting
+- **`ga_list` reported no global arrays at all** when the model's only global array sat
+  at index 0. It read `GALastUsedIndex` as `int(parse_float(...) or -1)`, and `0.0 or -1`
+  is `-1`, so the enumeration loop never ran. Found by writing the first test the tool
+  had ever had.
+- **`workstation_set_config` now warns** when a delay type maps to one of the
+  never-verified popup indices. ExtendSim exposes no way to read that popup's labels over
+  COM, and the block's own help text suggests the mapping may be off by one — which would
+  silently select a neighbouring option. The doubt now reaches the caller instead of
+  sitting in a source comment. See `WORKSTATION_DELAY_OPTIONS`.
+
+### Added — testing
+- 36 offline tests covering tools that had none: `time_convert`, `template_list`,
+  `context_clear`, all four `ga_*`, and the nine untested `db_*` plus their shared
+  `_resolve_db_indices` gateway. Python suite 239 → 275.
+- The `endRecord` asymmetry is now pinned from both sides — **exclusive** for
+  `db_get_records`, **inclusive** for `db_delete_records`. Both are intended and
+  documented; the tests stop someone "correcting" one into a data-loss bug.
+
+### Changed — verified assumptions
+- The distribution numbering is **confirmed** to apply to Activity, not just Create: a
+  fresh Create reads `10` (exponential) and a fresh Activity reads `34` while the block's
+  own change log records a switch to triangular on creation. The "assumed for Activity"
+  caveat is gone.
+- Corrected a source comment that claimed these popup indices had been verified through
+  `GetDialogItemLabel`. That call returns empty for every popup on every block tested, so
+  the code can never self-verify them.
+
+### Changed — the installer is 4.0 MB instead of 12.9 MB
+The `.iss` bundles all of `node_modules`, so every installer ever built also shipped the
+dev toolchain — typescript, vitest, ts-node, `@types` — to customers. Adding eslint as a
+devDependency this release made it visible (12.9 → 14.9 MB) rather than causing it.
+`build-installer.bat` now runs `npm prune --omit=dev` before packaging and restores the
+dev dependencies afterwards. Smoke-tested: the server still starts and loads every
+runtime dependency from the pruned tree.
 
 ### Added — project infrastructure
 - **`requirements.txt`** — the Python dependencies were never declared. `pywin32` was
@@ -17,8 +53,8 @@ the only source edits are the lint fixes listed below, all behaviour-preserving.
 - **Linting**: `eslint.config.mjs` (ESLint 9 flat config + typescript-eslint) and
   `ruff.toml`. Both are at zero errors. Run with `npm run lint:all`.
 - **`pytest.ini`** — bare `pytest` now runs the offline suite only; the live suite is
-  opted into explicitly. New `npm run test:py` and `npm run test:all` (all 390 offline
-  tests in one command, which is what CI needs).
+  opted into explicitly. New `npm run test:py` and `npm run test:all` (every offline
+  test in one command — 426 of them now — which is what CI needs).
 - **`azure-pipelines.yml`** — CI on every push and PR to `main`: build, lint both
   languages, run both offline suites, publish JUnit results.
 - **`SECURITY.md`** — how to report a vulnerability privately, and what is in scope
@@ -38,8 +74,8 @@ the only source edits are the lint fixes listed below, all behaviour-preserving.
 - README: Python is pinned at **3.9+** (tested on 3.13; the backend uses no syntax newer
   than 3.7) and points at `requirements.txt`.
 
-### Earlier in this entry — documentation accuracy pass
-No code changes; the version and the 104-tool count are unchanged.
+### Documentation accuracy pass
+No code changes; the 104-tool count is unchanged.
 
 - **User Manual**: the tool reference documented only 92 of the 104 tools. Added
   `block_introspect`, `table_get`, `table_set`, `detect_attributes` and a new

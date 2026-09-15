@@ -1,6 +1,6 @@
 # Simulations MCP Server — User Manual
 
-**Version:** 1.22.1
+**Version:** 1.22.2
 **Author:** Duke Systems AB
 **Date:** 2026-06-29
 
@@ -24,7 +24,7 @@
 
 ## 1. Introduction
 
-The Simulations MCP Server is a Model Context Protocol (MCP) server that enables AI assistants to build, configure, run, and analyze ExtendSim simulation models programmatically. It bridges AI clients (Claude Code, Claude Desktop, Gemini CLI, Cursor, ChatGPT) to ExtendSim's full modeling environment through 92 specialized tools.
+The Simulations MCP Server is a Model Context Protocol (MCP) server that enables AI assistants to build, configure, run, and analyze ExtendSim simulation models programmatically. It bridges AI clients (Claude Code, Claude Desktop, Gemini CLI, Cursor, ChatGPT) to ExtendSim's full modeling environment through 104 specialized tools.
 
 ### What is MCP?
 
@@ -48,15 +48,21 @@ The Model Context Protocol is an open standard that allows AI assistants to inte
 |-----------|-------------|
 | **Operating System** | Windows 10/11 (64-bit) |
 | **Node.js** | Version 18 or higher |
-| **Python** | Version 3.x with `pywin32` package |
+| **Python** | Version 3.9+ (tested on 3.13), with the packages in `requirements.txt` |
 | **ExtendSim** | Installed with COM component registered |
 | **AI Client** | Any MCP-compatible client (see Section 4) |
 
 ### Install Python Dependencies
 
 ```bash
-pip install pywin32
+pip install -r src/ExtendSimMCP.TypeScript/requirements.txt
 ```
+
+That installs `pywin32` (the COM bridge — nothing works without it) and `comtypes`.
+`comtypes` is optional in the sense that the server still starts and still dismisses
+blocking ExtendSim dialogs without it, but it loses the ability to *read* the dialog
+text — which is the difference between a bare `COM_TIMEOUT` and an error that tells you
+what ExtendSim complained about.
 
 ### Verify ExtendSim COM Registration
 
@@ -68,7 +74,7 @@ ExtendSim registers its COM component during installation. If needed, run Extend
 
 ### Option A: Installer (Recommended)
 
-1. Run `SimulationsMCP-Setup-1.22.1.exe` as administrator (the prebuilt installer matches the current source)
+1. Run `SimulationsMCP-Setup-1.22.2.exe` as administrator (the prebuilt installer matches the current source)
 2. Choose installation directory (default: `C:\Program Files\SimulationsMCP`)
 3. Select whether to install as a Windows Service (only needed for ChatGPT — see Section 4.5)
 4. Complete the installation
