@@ -3,6 +3,14 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
+## Unreleased
+
+- **G2 wave 4** — offline tests for the eleven layout and simulation-control tools that
+  had none: `block_move`, `block_get_position`, `block_find`, `block_align`,
+  `block_duplicate`, `simulation_pause`, `simulation_resume`, `simulation_step`,
+  `simulation_status`, `simulation_setup_get`, `simulation_get_state`. Python suite
+  275 → 292. No behaviour change.
+
 ## 1.22.2 — 2026-09-15
 
 A gap-sweep release: one real bug fix, the project scaffolding the repo never had,
