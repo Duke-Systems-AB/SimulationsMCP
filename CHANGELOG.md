@@ -3,7 +3,10 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
-## Unreleased
+## 1.22.3 — 2026-09-23
+
+A friction-driven release: the first fixes chosen from telemetry rather than by hand.
+Tool count unchanged at 104. **One client-visible change** — a new error code, below.
 
 ### Changed — client-visible
 - **New error code `EXTENDSIM_ERROR_DIALOG`.** A command blocked by an ExtendSim error
@@ -27,6 +30,7 @@ All notable changes to the Simulations MCP Server. Versions match the installer
   fails closed with `INVALID_PARAMETER` and the array's real dimensions, without the call
   ever reaching ExtendSim.
 
+### Added — testing
 - **G2 wave 4** — offline tests for the eleven layout and simulation-control tools that
   had none: `block_move`, `block_get_position`, `block_find`, `block_align`,
   `block_duplicate`, `simulation_pause`, `simulation_resume`, `simulation_step`,

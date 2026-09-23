@@ -1,6 +1,6 @@
 # Simulations MCP Server — User Manual
 
-**Version:** 1.22.2
+**Version:** 1.22.3
 **Author:** Duke Systems AB
 **Date:** 2026-06-29
 
@@ -74,7 +74,7 @@ ExtendSim registers its COM component during installation. If needed, run Extend
 
 ### Option A: Installer (Recommended)
 
-1. Run `SimulationsMCP-Setup-1.22.2.exe` as administrator (the prebuilt installer matches the current source)
+1. Run `SimulationsMCP-Setup-1.22.3.exe` as administrator (the prebuilt installer matches the current source)
 2. Choose installation directory (default: `C:\Program Files\SimulationsMCP`)
 3. Select whether to install as a Windows Service (only needed for ChatGPT — see Section 4.5)
 4. Complete the installation

@@ -1,6 +1,6 @@
 # Simulations MCP Server — Architecture and Design Document
 
-**Version:** 1.22.2
+**Version:** 1.22.3
 **Author:** Duke Systems AB
 **Date:** 2026-09-13
 **Classification:** Technical — for IT security specialists, software architects, and power users

@@ -1,9 +1,9 @@
 Simulations MCP Server - Installation Guide
 ============================================
 Duke Systems AB
-Version 1.22.2 — 104 tools
+Version 1.22.3 — 104 tools
 Build the installer with installer\build-installer.bat (requires Inno Setup 6 +
-Node + Python) -> output\SimulationsMCP-Setup-1.22.2.exe
+Node + Python) -> output\SimulationsMCP-Setup-1.22.3.exe
 
 PREREQUISITES
 -------------
@@ -12,10 +12,14 @@ Before installing, ensure you have:
 1. Node.js 18 or higher
    Download: https://nodejs.org
 
-2. Python 3.x with pywin32
+2. Python 3.9 or later (tested on 3.13)
    Download: https://python.org
    (Make sure to check "Add Python to PATH" during installation)
-   Then install pywin32: pip install pywin32
+   Then install the Python packages the server needs:
+     pip install pywin32 comtypes
+   pywin32 is the COM bridge and is required. comtypes lets the server READ
+   the text of blocking ExtendSim dialogs - without it errors still arrive,
+   but without saying what ExtendSim complained about.
 
 3. ExtendSim installed and registered
    The ExtendSim COM component must be available.
