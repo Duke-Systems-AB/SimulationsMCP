@@ -41,3 +41,6 @@ installer/output/
 
 # CI test reports
 junit-*.xml
+
+# Generated guide pages (built from modeling_guides.json, never committed)
+web/dist/

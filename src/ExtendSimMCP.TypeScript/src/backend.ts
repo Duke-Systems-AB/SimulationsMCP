@@ -82,7 +82,7 @@ const MAX_RETRIES = 2;
 
 /** Grace window in ms given to an in-flight command after a blocking dialog has
  * been successfully auto-dismissed, for the real response to still arrive before
- * we fall back to a synthetic COM_TIMEOUT error (W2-2). A benign popup (e.g. an
+ * we fall back to a synthetic EXTENDSIM_ERROR_DIALOG error (W2-2). A benign popup (e.g. an
  * informational message) shouldn't fail an otherwise-successful command. */
 export const DIALOG_DISMISS_GRACE_MS = 5_000;
 
@@ -404,7 +404,8 @@ export function clearRequestTimers(req: PendingRequest): void {
 }
 
 /**
- * Resolves a pending request with a synthetic COM_TIMEOUT/dialog error and
+ * Resolves a pending request with a synthetic error - EXTENDSIM_ERROR_DIALOG when a
+ * dialog was found, COM_TIMEOUT only when none was - and
  * cleans it out of the request queue. Used for failed (or absent) dismisses
  * immediately, and as the fallback once a successful dismiss's grace window
  * lapses without a real response (W2-2).
@@ -422,20 +423,32 @@ export function resolveWithDialogError(req: PendingRequest, dialogInfo: DialogIn
   const timeout = getTimeout(req.command);
   let message: string;
   let suggestion: string;
+  // A dialog means ExtendSim itself reported an error - usually about the model
+  // (a missing resource pool, an index out of range in a block). That is not a
+  // timeout, and must not be labelled one: COM_TIMEOUT reads as "transient, try
+  // again", and on 2026-09-14 a client did exactly that, re-running
+  // simulation_run six times against the identical "[62]Queue" error dialog.
+  // COM_TIMEOUT is kept for its real meaning: no answer, and no dialog to explain why.
+  let errorCode: string;
   if (dialogInfo.found && dialogInfo.dismissed) {
-    message = `Command '${req.command}' blocked by ExtendSim dialog (detected by ${source}). Dialog has been dismissed.`;
-    suggestion = "Read the dialog text in the 'dialog.text' field to understand the error. Adjust your parameters and retry.";
+    errorCode = "EXTENDSIM_ERROR_DIALOG";
+    message = `ExtendSim reported an error while running '${req.command}' (dialog detected by ${source}, now dismissed). The error text is in 'dialog.text'.`;
+    suggestion = "This is an error reported by ExtendSim, not a timeout: retrying the same call will hit the same error. " +
+      "Read 'dialog.text' - it usually names the block (e.g. \"[62]Queue\") and what is wrong with it - and fix that first. " +
+      "If a simulation is running, the dialog may have been raised by the run itself rather than by this command.";
   } else if (dialogInfo.found && !dialogInfo.dismissed) {
-    message = `Command '${req.command}' blocked by ExtendSim dialog (detected by ${source}). Dialog could NOT be dismissed automatically.`;
-    suggestion = "HUMAN INTERVENTION REQUIRED: The user must manually dismiss the dialog in ExtendSim before retrying.";
+    errorCode = "EXTENDSIM_ERROR_DIALOG";
+    message = `ExtendSim reported an error while running '${req.command}' (dialog detected by ${source}). The dialog could NOT be dismissed automatically.`;
+    suggestion = "HUMAN INTERVENTION REQUIRED: The user must manually dismiss the dialog in ExtendSim before any further call can succeed.";
   } else {
+    errorCode = "COM_TIMEOUT";
     message = `Command '${req.command}' timed out after ${timeout / 1000}s. No blocking dialog was detected.`;
     suggestion = "ExtendSim may be busy or unresponsive. Check extendsim_status or retry the command.";
   }
 
   req.resolve({
     status: "error",
-    errorCode: "COM_TIMEOUT",
+    errorCode,
     message,
     dialog: dialogInfo,
     suggestion,

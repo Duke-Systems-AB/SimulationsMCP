@@ -360,8 +360,8 @@ The server provides 104 tools organized into categories. Each tool accepts struc
 |------|-------------|
 | `ga_list` | List all global arrays |
 | `ga_create` | Create a new global array |
-| `ga_read` | Read values from a global array |
-| `ga_write` | Write values to a global array |
+| `ga_read` | Read values from a global array. A range that runs past the end is clamped to the array's real size and flagged `clamped`; a start cell outside the array is refused |
+| `ga_write` | Write values to a global array. A cell outside the array is refused rather than written |
 
 ### 6.10 Hierarchy
 
@@ -740,7 +740,8 @@ recovery hint — treat it as a bonus, not a guarantee.
 
 | Error Code | Meaning |
 |------------|---------|
-| `COM_TIMEOUT` | Command timed out (see the per-command timeout table below). Also used for the synthetic error raised when a blocking dialog was dismissed and no real response arrived within the 5-second grace window |
+| `EXTENDSIM_ERROR_DIALOG` | ExtendSim raised an error dialog while the command ran — almost always an error in the model, such as a missing resource pool or an index out of range in a block. The dialog text is in `dialog.text` and usually names the block (e.g. `[62]Queue`). **Retrying the same call will hit the same error; fix the cause.** If `dialog.dismissed` is false the dialog is still open and a person must close it. If a simulation is running, the dialog may come from the run rather than from this command |
+| `COM_TIMEOUT` | Command timed out with **no** dialog to explain why (see the per-command timeout table below). ExtendSim may be busy or unresponsive; a retry can succeed |
 | `INVALID_JSON` | Invalid JSON response from the Python backend |
 | `TOOL_ERROR` | Unhandled error in tool execution |
 

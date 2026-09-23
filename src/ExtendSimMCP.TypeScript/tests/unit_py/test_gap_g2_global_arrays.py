@@ -117,12 +117,12 @@ def test_ga_create_refuses_when_no_model_is_open(monkeypatch):
 
 def test_ga_read_dispatches_on_array_type(monkeypatch):
     be = _load_backend()
-    # answers: GAGetIndex, GAGetType, then the value
+    # answers: GAGetIndex, GAGetType, GAGetRows, GAGetCols, then the value
     cases = [("3", "hello", "GAGetString", "hello"),
              ("2", "42", "GAGetInteger", 42),
              ("1", "2.5", "GAGetReal", 2.5)]
     for type_code, raw, fn, expected in cases:
-        fake = _use(monkeypatch, be, _FakeApp(answers=["0", type_code, raw]))
+        fake = _use(monkeypatch, be, _FakeApp(answers=["0", type_code, "10", "10", raw]))
         r = be.ga_read("arr", row=1, col=2)
         assert r["success"] is True
         assert r["value"] == expected, (fn, r)
@@ -135,7 +135,7 @@ def test_ga_write_dispatches_on_array_type(monkeypatch):
              ("2", 7, "GASetInteger"),
              ("1", 1.5, "GASetReal")]
     for type_code, value, fn in cases:
-        fake = _use(monkeypatch, be, _FakeApp(answers=["0", type_code]))
+        fake = _use(monkeypatch, be, _FakeApp(answers=["0", type_code, "10", "10"]))
         r = be.ga_write("arr", 0, 0, value)
         assert r["success"] is True
         assert _calls(fake, fn), (fn, fake.executed)
@@ -143,7 +143,7 @@ def test_ga_write_dispatches_on_array_type(monkeypatch):
 
 def test_ga_write_escapes_string_values(monkeypatch):
     be = _load_backend()
-    fake = _use(monkeypatch, be, _FakeApp(answers=["0", "3"]))
+    fake = _use(monkeypatch, be, _FakeApp(answers=["0", "3", "10", "10"]))
     be.ga_write("arr", 0, 0, 'x" ; Evil("')
     call = _calls(fake, "GASetString")[0]
     assert '" ; Evil("' not in call, call
@@ -194,3 +194,82 @@ def test_ga_list_degrades_gracefully_when_the_model_has_no_global_arrays(monkeyp
     assert r["success"] is True
     assert r["arrays"] == [] and r["count"] == 0
     assert "warning" in r
+
+
+# ---------------------------------------------------------------------------
+# Bounds: reading or writing past the end of a global array raises a MODAL
+# dialog in ExtendSim ("Row or column reference out of range in Global Array
+# call") that blocks COM. Observed live 2026-09-14: a range read of
+# _AttributeList past its last row. The server must never issue that call.
+# ---------------------------------------------------------------------------
+
+def _value_calls(fake):
+    return [c for c in fake.executed
+            if any(f in c for f in ("GAGetReal", "GAGetInteger", "GAGetString",
+                                    "GASetReal", "GASetInteger", "GASetString"))]
+
+
+def test_ga_read_range_is_clamped_to_the_array_size(monkeypatch):
+    be = _load_backend()
+    # idx 0, real, 3 rows, 1 col; then values for the rows that exist
+    fake = _use(monkeypatch, be, _FakeApp(answers=["0", "1", "3", "1", "1.0", "2.0", "3.0"]))
+    r = be.ga_read("arr", row=0, col=0, end_row=10, end_col=0)
+    assert r["success"] is True
+    assert r["toRow"] == 2, r
+    assert [row[0] for row in r["data"]] == [1.0, 2.0, 3.0]
+    assert r.get("clamped") is True and "warning" in r
+    reads = _value_calls(fake)
+    assert len(reads) == 3, reads
+    assert not any(", 3, " in c for c in reads), "row 3 does not exist and must not be read"
+
+
+def test_ga_read_range_is_clamped_in_columns_too(monkeypatch):
+    be = _load_backend()
+    fake = _use(monkeypatch, be, _FakeApp(answers=["0", "1", "1", "2", "1", "2"]))
+    r = be.ga_read("arr", row=0, col=0, end_row=0, end_col=9)
+    assert r["success"] is True and r["toCol"] == 1
+    assert len(_value_calls(fake)) == 2
+
+
+def test_ga_read_single_cell_out_of_range_fails_closed(monkeypatch):
+    be = _load_backend()
+    fake = _use(monkeypatch, be, _FakeApp(answers=["0", "1", "3", "1"]))
+    r = be.ga_read("arr", row=5, col=0)
+    assert r["success"] is False
+    assert r["errorCode"] == be.ErrorCode.INVALID_PARAMETER
+    assert r["rows"] == 3 and r["cols"] == 1
+    assert _value_calls(fake) == [], "an out-of-range read must never reach ExtendSim"
+
+
+def test_ga_read_range_starting_past_the_end_fails_closed(monkeypatch):
+    be = _load_backend()
+    fake = _use(monkeypatch, be, _FakeApp(answers=["0", "1", "3", "1"]))
+    r = be.ga_read("arr", row=7, col=0, end_row=9, end_col=0)
+    assert r["success"] is False
+    assert _value_calls(fake) == []
+
+
+def test_ga_read_negative_indices_fail_closed(monkeypatch):
+    be = _load_backend()
+    fake = _use(monkeypatch, be, _FakeApp(answers=["0", "1", "3", "3"]))
+    r = be.ga_read("arr", row=-1, col=0)
+    assert r["success"] is False
+    assert _value_calls(fake) == []
+
+
+def test_ga_write_out_of_range_fails_closed(monkeypatch):
+    be = _load_backend()
+    for row, col in ((3, 0), (0, 1), (-1, 0)):
+        fake = _use(monkeypatch, be, _FakeApp(answers=["0", "1", "3", "1"]))
+        r = be.ga_write("arr", row, col, 1.5)
+        assert r["success"] is False, (row, col, r)
+        assert r["errorCode"] == be.ErrorCode.INVALID_PARAMETER
+        assert _value_calls(fake) == [], (row, col, fake.executed)
+
+
+def test_ga_read_on_an_empty_array_fails_closed(monkeypatch):
+    be = _load_backend()
+    fake = _use(monkeypatch, be, _FakeApp(answers=["0", "1", "0", "1"]))
+    r = be.ga_read("arr", row=0, col=0)
+    assert r["success"] is False
+    assert _value_calls(fake) == []

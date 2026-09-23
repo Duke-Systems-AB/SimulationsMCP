@@ -5,6 +5,28 @@ All notable changes to the Simulations MCP Server. Versions match the installer
 
 ## Unreleased
 
+### Changed — client-visible
+- **New error code `EXTENDSIM_ERROR_DIALOG`.** A command blocked by an ExtendSim error
+  dialog used to come back as `COM_TIMEOUT`, even when the dialog was caught within two
+  seconds. On 1.22.1 every single `COM_TIMEOUT` in the telemetry (24 of 24) had a dialog
+  behind it — none was a real timeout. The label mattered: "timeout" reads as "transient,
+  try again", and a client re-ran `simulation_run` six times against the identical
+  `[62]Queue ... out of Range` error. The new code says what happened, and its suggestion
+  says to fix the cause rather than retry. `COM_TIMEOUT` now means only what it says: no
+  answer, and no dialog to explain why. **Clients that matched `COM_TIMEOUT` to detect
+  dialogs need to match `EXTENDSIM_ERROR_DIALOG` instead.** This narrows `COM_TIMEOUT` to
+  its intended meaning rather than redefining it.
+
+### Fixed
+- **`ga_read` and `ga_write` no longer raise ExtendSim dialogs themselves.** Neither
+  checked the array's size, so reading a range past the last row — or any cell outside the
+  array — made ExtendSim raise a modal "Row or column reference out of range" dialog that
+  blocked COM. Observed on 2026-09-14, reading `_AttributeList`. Both now read the array's
+  rows and columns first: a range read is clamped to what exists (as `db_get_records`
+  already did) and flagged `clamped` with a warning; an out-of-range start cell or write
+  fails closed with `INVALID_PARAMETER` and the array's real dimensions, without the call
+  ever reaching ExtendSim.
+
 - **G2 wave 4** — offline tests for the eleven layout and simulation-control tools that
   had none: `block_move`, `block_get_position`, `block_find`, `block_align`,
   `block_duplicate`, `simulation_pause`, `simulation_resume`, `simulation_step`,

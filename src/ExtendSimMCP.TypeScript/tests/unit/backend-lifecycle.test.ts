@@ -164,7 +164,7 @@ describe("dialog-dismiss grace window (W2-2)", () => {
     expect(queue).not.toContain(req);
   });
 
-  it("(d) grace lapse without a real response produces the synthetic COM_TIMEOUT error exactly once", () => {
+  it("(d) grace lapse without a real response produces the synthetic dialog error exactly once", () => {
     const { req, resolveSpy } = makeRequest();
     const queue = __getRequestQueueForTests();
     queue.push(req);
@@ -177,7 +177,8 @@ describe("dialog-dismiss grace window (W2-2)", () => {
 
     expect(resolveSpy).toHaveBeenCalledTimes(1);
     const result = resolveSpy.mock.calls[0][0];
-    expect(result.errorCode).toBe("COM_TIMEOUT");
+    // A dialog was found: ExtendSim reported an error. That is not a timeout.
+    expect(result.errorCode).toBe("EXTENDSIM_ERROR_DIALOG");
     expect(result.dialog).toEqual(dialogInfo);
     expect(queue).not.toContain(req);
 
@@ -198,6 +199,36 @@ describe("dialog-dismiss grace window (W2-2)", () => {
     expect(resolveSpy).toHaveBeenCalledTimes(1);
     expect(req.graceTimerId).toBeUndefined();
     const result = resolveSpy.mock.calls[0][0];
+    expect(result.errorCode).toBe("EXTENDSIM_ERROR_DIALOG");
+    expect(result.suggestion).toMatch(/HUMAN INTERVENTION REQUIRED/);
+  });
+});
+
+describe("dialog errors are not timeouts", () => {
+  // Telemetry, 2026-09-14: a client re-ran simulation_run six times against the
+  // identical "[62]Queue ... out of Range" dialog. The code it was given said
+  // COM_TIMEOUT, which reads as "transient, try again". These pin the split.
+
+  it("a dismissed dialog steers the client to fix the cause, not to retry", () => {
+    const { req, resolveSpy } = makeRequest();
+    __getRequestQueueForTests().push(req);
+
+    resolveWithDialogError(req, { found: true, dismissed: true, text: "Can not find Resource Pool named 3" }, "early check");
+
+    const result = resolveSpy.mock.calls[0][0];
+    expect(result.errorCode).toBe("EXTENDSIM_ERROR_DIALOG");
+    expect(result.suggestion).toMatch(/fix/i);
+    expect(result.suggestion).not.toMatch(/and retry\.?$/i);
+  });
+
+  it("no dialog at all is still a genuine COM_TIMEOUT", () => {
+    const { req, resolveSpy } = makeRequest();
+    __getRequestQueueForTests().push(req);
+
+    resolveWithDialogError(req, { found: false }, "timeout");
+
+    const result = resolveSpy.mock.calls[0][0];
     expect(result.errorCode).toBe("COM_TIMEOUT");
+    expect(result.message).toMatch(/timed out/);
   });
 });

@@ -9594,6 +9594,28 @@ def ga_create(name: str, ga_type: str = "real", cols: int = 1, rows: int = 0,
         return _com_error(e, "ga_create")
 
 
+def _ga_dims(app, ga_idx: int) -> tuple:
+    """(rows, cols) of a global array, read before any cell is touched."""
+    app.Execute(f'globalInt0 = GAGetRows({ga_idx});')
+    rows = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
+    app.Execute(f'globalInt0 = GAGetCols({ga_idx});')
+    cols = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
+    return rows, cols
+
+
+def _ga_out_of_range(name: str, row: int, col: int, rows: int, cols: int) -> dict:
+    # Fail closed. Reading or writing past the end of a global array makes ExtendSim
+    # raise a MODAL dialog ("Row or column reference out of range in Global Array
+    # call") that blocks COM until someone dismisses it - seen live on 2026-09-14,
+    # when a range read of _AttributeList ran past its last row. The only safe
+    # out-of-range call is the one that is never made.
+    return _error(ErrorCode.INVALID_PARAMETER,
+                  f"Cell ({row}, {col}) is outside global array '{name}', which has "
+                  f"{rows} row(s) and {cols} column(s). Reading or writing past the end "
+                  f"makes ExtendSim raise a blocking dialog, so the call was not made.",
+                  name=name, row=row, col=col, rows=rows, cols=cols)
+
+
 def ga_read(name: str, row: int = 0, col: int = 0,
             end_row: Optional[int] = None, end_col: Optional[int] = None,
             model_id: Optional[str] = None) -> dict:
@@ -9610,6 +9632,10 @@ def ga_read(name: str, row: int = 0, col: int = 0,
 
         app.Execute(f'globalInt0 = GAGetType({ga_idx});')
         ga_type = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
+
+        rows, cols = _ga_dims(app, ga_idx)
+        if not (0 <= row < rows and 0 <= col < cols):
+            return _ga_out_of_range(name, row, col, rows, cols)
 
         # Single cell
         if end_row is None and end_col is None:
@@ -9628,6 +9654,12 @@ def ga_read(name: str, row: int = 0, col: int = 0,
         # Range read
         r_end = end_row if end_row is not None else row
         c_end = end_col if end_col is not None else col
+        # Clamp to the array, as db_get_records does. The start cell is already
+        # known to be in range; only the far end can overshoot.
+        req_end = (r_end, c_end)
+        r_end = min(r_end, rows - 1)
+        c_end = min(c_end, cols - 1)
+        clamped = (r_end, c_end) != req_end
         data = []
         for r in range(row, r_end + 1):
             row_data = []
@@ -9644,8 +9676,14 @@ def ga_read(name: str, row: int = 0, col: int = 0,
                 row_data.append(val)
             data.append(row_data)
 
-        return {"success": True, "name": name, "fromRow": row, "fromCol": col,
-                "toRow": r_end, "toCol": c_end, "data": data}
+        result = {"success": True, "name": name, "fromRow": row, "fromCol": col,
+                  "toRow": r_end, "toCol": c_end, "data": data}
+        if clamped:
+            result["clamped"] = True
+            result["warning"] = (f"Requested range ended at ({req_end[0]}, {req_end[1]}) but "
+                                 f"'{name}' has {rows} row(s) and {cols} column(s); returned "
+                                 f"up to ({r_end}, {c_end}).")
+        return result
     except Exception as e:
         return _com_error(e, "ga_read")
 
@@ -9665,6 +9703,10 @@ def ga_write(name: str, row: int, col: int, value,
 
         app.Execute(f'globalInt0 = GAGetType({ga_idx});')
         ga_type = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
+
+        rows, cols = _ga_dims(app, ga_idx)
+        if not (0 <= row < rows and 0 <= col < cols):
+            return _ga_out_of_range(name, row, col, rows, cols)
 
         if ga_type == 3:
             safe_val = _escape_modl_string(str(value))
