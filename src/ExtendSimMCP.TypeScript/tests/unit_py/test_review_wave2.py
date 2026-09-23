@@ -49,6 +49,8 @@ class _FakeTypedApp:
 
     def Execute(self, cmd):
         self.executed.append(cmd)
+        if cmd.startswith("globalStr9 = StrPart("):
+            return  # _read_str0 copying globalStr0 out; not a new query
         self._last = cmd
 
     def Request(self, _system, _query):
@@ -91,6 +93,8 @@ class _FakeDbRelationsApp:
 
     def Execute(self, cmd):
         self.executed.append(cmd)
+        if cmd.startswith("globalStr9 = StrPart("):
+            return  # _read_str0 copying globalStr0 out; not a new query
         self._last = cmd
 
     def Request(self, _system, _query):
@@ -103,7 +107,7 @@ class _FakeDbRelationsApp:
 
 def test_db_relations_list_reports_honest_failure(monkeypatch):
     be = _load_backend()
-    fake = _FakeDbRelationsApp(db_idx=0, num_rels=3)
+    fake = _FakeDbRelationsApp(db_idx=1, num_rels=3)   # ExtendSim indices start at 1
     monkeypatch.setattr(be, "get_extendsim_app", lambda create_if_missing=False: fake)
 
     result = be.db_relations_list("MyDb")
@@ -146,6 +150,8 @@ class _FakeSelectInApp:
 
     def Execute(self, cmd):
         self.executed.append(cmd)
+        if cmd.startswith("globalStr9 = StrPart("):
+            return  # _read_str0 copying globalStr0 out; not a new query
         self._last = cmd
 
     def Request(self, _system, _query):

@@ -1,6 +1,6 @@
 {
   "name": "simulations-mcp-server",
-  "version": "1.22.3",
+  "version": "1.22.4",
   "description": "Simulations MCP Server - TypeScript with Python COM Backend",
   "author": "Duke Systems AB",
   "license": "MIT",

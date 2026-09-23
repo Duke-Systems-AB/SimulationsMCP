@@ -1,8 +1,8 @@
 # Simulations MCP Server — Architecture and Design Document
 
-**Version:** 1.22.3
+**Version:** 1.22.4
 **Author:** Duke Systems AB
-**Date:** 2026-09-13
+**Date:** 2026-09-23
 **Classification:** Technical — for IT security specialists, software architects, and power users
 
 ---
@@ -143,7 +143,7 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - Server version is read dynamically from `package.json`, not hardcoded
 - One error contract at one boundary: the Python backend's standard failure shape is `{success: false, errorCode, error}`, and `toolResponse()`/`recordToolCall()` treat `success === false` exactly like `status === "error"`. Without that normalization, backend failures reach the client flagged as successes and telemetry counts only timeouts as errors
 
-### 3.2 Backend Bridge (backend.ts, ~1530 lines)
+### 3.2 Backend Bridge (backend.ts, ~1540 lines)
 
 **Responsibilities:**
 - Python subprocess lifecycle management
@@ -163,7 +163,7 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - A dismissed dialog does not immediately fail the command: after a successful auto-dismiss the bridge holds a 5-second grace window (`DIALOG_DISMISS_GRACE_MS`) for the real response to arrive, so a benign informational popup cannot fail an otherwise-successful command
 - A retried command (after a backend restart) is re-armed with a fresh timeout rather than inheriting the dying request's remaining countdown
 
-### 3.3 Python COM Backend (simulation_backend.py, ~11150 lines)
+### 3.3 Python COM Backend (simulation_backend.py, ~11440 lines)
 
 **Responsibilities:**
 - COM communication with ExtendSim via `win32com.client.GetActiveObject`
@@ -178,7 +178,13 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - `GetActiveObject("ExtendSim.Application")` connects to the running ExtendSim instance (no `CreateObject` — requires user to start ExtendSim manually)
 - All variable access routes through `_set_var`/`_set_var_string` helpers enforcing the two-API pattern (VariableNumeric vs DialogVariable)
 - Fire-and-forget simulation uses a background thread with `CoInitialize()` + separate `GetActiveObject()` for COM apartment safety
-- `_escape_modl_string()` sanitizes all user input before ModL command construction to prevent injection
+- `_escape_modl_string()` makes all user text safe inside ModL string literals (rules below, §5.3)
+- Every string read from ExtendSim goes through `_read_str0()`, which copies the value out in
+  `StrPart` pieces of at most 100 characters: a COM `Request` of a 128+ character string crashes
+  ExtendSim 2024.1 and 2026.1 (access violation in VCRUNTIME140.dll)
+- Every ModL function the backend calls has been checked against ExtendSim's function list and
+  its own shipped ModL; a call to a function that does not exist raises a compile-error modal
+  that blocks COM, which no offline test with a fake COM object can detect
 
 ### 3.4 Dialog Watcher (dialog_watcher.py, ~420 lines)
 
@@ -325,7 +331,12 @@ saved JSON (`psgPath`, `candidatesPaths`).
 
 **Python layer:**
 - File paths are normalized (forward slashes for ExtendSim compatibility)
-- ModL command strings are sanitized via `_escape_modl_string()` which escapes backslashes, double quotes, and parentheses before injection into ModL command templates
+- User text placed in ModL string literals goes through `_escape_modl_string()`. ModL has **no escape
+  sequences** - measured live: a backslash is an ordinary character and a double quote always ends
+  the literal. So a quote (and a line break or tab) closes the literal, is added as `StrPutAscii(n)`,
+  and a new literal opens: `say "hi"` becomes `"say " + StrPutAscii(34) + "hi" + ...`. Literals are
+  also split before ModL's 255-character literal limit. Before 1.22.4 the escaper assumed C rules
+  (`\"`); in ModL that ends the string, so the quoted-text protection did not hold
 - Numeric inputs are type-coerced with explicit handling of NaN, Infinity, and locale-specific decimal separators
 - Block IDs are validated against the active model
 - Database indices are validated as numeric (not string names)
@@ -335,7 +346,8 @@ saved JSON (`psgPath`, `candidatesPaths`).
 The `execute_command` tool allows raw ModL command execution. This is the highest-risk tool:
 
 - **ModL is sandboxed** — ModL runs inside ExtendSim's process space with no filesystem access, no network access, and no OS command execution capability
-- **Input sanitization** — `_escape_modl_string()` prevents breakout from string contexts
+- **Input sanitization** — `_escape_modl_string()` keeps user text inside string literals; unit tests
+  lex each command with ModL's measured rules and fail if any user text lands outside a literal
 - **Dangerous commands blocked** — `ExecuteMenuCommand(1)` through `ExecuteMenuCommand(4)` (which can kill ExtendSim) are explicitly blocked
 - **AbortSilent()** outside simulation is blocked (kills ExtendSim)
 - **ClearBlock(0)** is blocked (removes Executive block, corrupts model)
@@ -675,7 +687,7 @@ When installed as a Windows Service:
 | Threat | Risk | Mitigation |
 |--------|------|------------|
 | **Prompt injection via AI client** | Medium | Zod schema validation rejects unexpected parameters. ModL string sanitization prevents command injection into ExtendSim. |
-| **ModL command injection** | Low | `_escape_modl_string()` escapes quotes, backslashes, and parentheses. ModL itself has no filesystem/network/OS access. |
+| **ModL command injection** | Low | `_escape_modl_string()` splices quotes in as `StrPutAscii(34)`, so user text cannot end a string literal (ModL has no escape character; the pre-1.22.4 `\"` escaping did not hold). ModL itself has no filesystem/network/OS access. |
 | **Denial of service (ExtendSim crash)** | Medium | Dangerous `ExecuteMenuCommand` IDs (1–4) are blocked. `AbortSilent()` outside simulation is blocked. `ClearBlock(0)` is blocked. Timeouts prevent hangs. |
 | **Local privilege escalation** | Very Low | All processes run as the same user. No setuid, no service accounts with elevated privileges. |
 | **Data exfiltration** | Very Low | No outbound network calls. Telemetry is local-only. No cloud APIs. |

@@ -7,7 +7,8 @@ import struct
 import pytest
 from lbr_stat import read_stat_variables, parse_stat_variables
 
-VALUE_LBR = r"C:\Users\Jonas\Documents\ExtendSim_2026_Pro\Libraries\Value.lbr"
+VALUE_LBR = os.path.join(os.path.expanduser("~"), "Documents", "ExtendSim_2026_Pro",
+                         "Libraries", "Value.lbr")
 _needs_lbr = pytest.mark.skipif(not os.path.exists(VALUE_LBR), reason="Value.lbr not installed here")
 
 @_needs_lbr

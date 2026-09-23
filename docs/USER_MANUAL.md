@@ -1,8 +1,8 @@
 # Simulations MCP Server — User Manual
 
-**Version:** 1.22.3
+**Version:** 1.22.4
 **Author:** Duke Systems AB
-**Date:** 2026-06-29
+**Date:** 2026-09-23
 
 ---
 
@@ -74,7 +74,7 @@ ExtendSim registers its COM component during installation. If needed, run Extend
 
 ### Option A: Installer (Recommended)
 
-1. Run `SimulationsMCP-Setup-1.22.3.exe` as administrator (the prebuilt installer matches the current source)
+1. Run `SimulationsMCP-Setup-1.22.4.exe` as administrator (the prebuilt installer matches the current source)
 2. Choose installation directory (default: `C:\Program Files\SimulationsMCP`)
 3. Select whether to install as a Windows Service (only needed for ChatGPT — see Section 4.5)
 4. Complete the installation
@@ -258,6 +258,13 @@ The server provides 104 tools organized into categories. Each tool accepts struc
 | `model_extract` | Deep extraction of model structure, connections, and configurations |
 | `model_overview` | High-level summary optimized for large models (24k+ blocks) |
 
+**Counting.** `model_overview` reports `totalBlocks` (ordinary blocks, the same number
+`block_list` returns), `hierarchicalBlocks` and `textBlocks` separately. ExtendSim's
+own `NumBlocks()` counts every object slot - anchor points and empty slots included -
+and is not a block count. A section that cannot be read is listed in `sectionErrors`
+rather than shown as empty. `model_extract` lists connections it cannot pair (for
+example a line into a hierarchical block) under `unresolvedConnectionNodes`.
+
 ### 6.2 Block Operations
 
 | Tool | Description |
@@ -354,6 +361,14 @@ The server provides 104 tools organized into categories. Each tool accepts struc
 | `db_relations_list` | List database table relationships |
 | `db_relation_create` | Create a relationship between tables |
 
+**Record numbers are 0-based** in every database tool: the first record is `0`, in
+parameters (`record`, `startRecord`, `endRecord`, `position`) and in results
+(`db_find_record`'s `record`). The server translates to ExtendSim's own numbering, which
+starts at 1. The database, table and field *indices* that `db_list`, `db_table_info` and
+`model_extract` report are ExtendSim's real ones and so start at 1. No tool takes them
+as input; they are there for raw ModL through `execute_command`, where the real index is
+the one that works.
+
 ### 6.9 Global Arrays
 
 | Tool | Description |
@@ -409,6 +424,10 @@ The server provides 104 tools organized into categories. Each tool accepts struc
 | `context_set` | Store model context (purpose, assumptions, block roles) |
 | `context_get` | Retrieve stored model context |
 | `context_clear` | Clear stored model context |
+
+Each context value can be at most **255 characters** - ExtendSim's string limit. A
+longer value is refused with `INVALID_PARAMETER` and nothing is written. The same
+limit applies to any text stored in an ExtendSim database string field.
 
 ### 6.16 Status
 

@@ -24,6 +24,8 @@ _SRC = os.path.join(os.path.dirname(__file__), "..", "..", "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
+from modl_lexer import split_modl  # noqa: E402  (ModL literal rules, measured live)
+
 
 def _load_backend():
     import importlib
@@ -87,15 +89,16 @@ def test_resolve_db_indices_escapes_quotes_in_names():
     tbl_calls = [c for c in app.executed if "DBTableGetIndex" in c]
     fld_calls = [c for c in app.executed if "DBFieldGetIndex" in c]
 
-    assert db_calls and 'DBDatabaseGetIndex("My\\"DB");' in db_calls[0]
-    assert tbl_calls and 'DBTableGetIndex(5, "My\\"Table");' in tbl_calls[0]
-    assert fld_calls and 'DBFieldGetIndex(5, 5, "My\\"Field");' in fld_calls[0]
+    # ModL has no escape for a quote; it is spliced in as StrPutAscii(34).
+    assert db_calls and 'DBDatabaseGetIndex("My" + StrPutAscii(34) + "DB");' in db_calls[0]
+    assert tbl_calls and 'DBTableGetIndex(5, "My" + StrPutAscii(34) + "Table");' in tbl_calls[0]
+    assert fld_calls and 'DBFieldGetIndex(5, 5, "My" + StrPutAscii(34) + "Field");' in fld_calls[0]
 
-    # No raw, unescaped quote breaks the ModL string literal open by "My".
+    # Outside the literals only the splice itself may appear - never a bare name.
     for cmd in app.executed:
-        # every quote inside the literal must be preceded by a backslash
-        # (i.e. no `"My"` sub-sequence — that would terminate the literal early)
-        assert '"My"' not in cmd
+        code, _ = split_modl(cmd)
+        assert "My" not in code and "DB" not in code.replace("DBDatabase", "").replace(
+            "DBTable", "").replace("DBField", ""), code
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +113,8 @@ class _FakeConfigApp:
         self._last = None
 
     def Execute(self, cmd):
+        if cmd.startswith("globalStr9 = StrPart("):
+            return  # _read_str0 copying globalStr0 out; not a new query
         self._last = cmd
 
     def Request(self, _system, _query):

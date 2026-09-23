@@ -118,6 +118,12 @@ class FakeExtendSimApp:
             self.global0 = self._array_num_cons(int(m.group(1)), m.group(2))
             return
 
+        m = re.search(r"globalStr9 = StrPart\(globalStr0, (\d+), (\d+)\)", cmd)
+        if m:  # _read_str0 copies globalStr0 out in pieces (StrPart is 0-based)
+            start, n = int(m.group(1)), int(m.group(2))
+            self.globalStr9 = self.globalStr0[start:start + n]
+            return
+
         m = re.search(r"GetConName\((\d+),\s*(\d+)\)", cmd, re.IGNORECASE)
         if m:
             self.globalStr0 = self._name_for(int(m.group(1)), int(m.group(2)))
@@ -126,6 +132,8 @@ class FakeExtendSimApp:
         # Unknown command: leave globals unchanged.
 
     def Request(self, _system, key):
+        if key.startswith("globalStr9"):
+            return self.globalStr9
         if key.startswith("globalStr0"):
             return self.globalStr0
         return str(self.global0)

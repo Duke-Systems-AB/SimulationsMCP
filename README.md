@@ -70,9 +70,9 @@ npm run build
 
 ### Install from Installer
 
-Download `SimulationsMCP-Setup-1.22.3.exe` from the `installer/` directory and run it.
+Download `SimulationsMCP-Setup-1.22.4.exe` from the `installer/` directory and run it.
 
-The prebuilt installer matches the current source: **v1.22.3, 104 tools** (including
+The prebuilt installer matches the current source: **v1.22.4, 104 tools** (including
 `block_introspect`, `table_get`/`table_set`, `detect_attributes`, and the full
 pattern-mining pipeline). See `CHANGELOG.md` for release history.
 
@@ -130,12 +130,12 @@ cd src/ExtendSimMCP.TypeScript
 # Build
 npm run build
 
-# Run every offline test: 153 TypeScript + 299 Python. No ExtendSim required.
+# Run every offline test: 153 TypeScript + 426 Python. No ExtendSim required.
 npm run test:all
 
 # ...or one language at a time
 npm test          # vitest, 153 tests
-npm run test:py   # pytest, 299 tests + 3 skipped
+npm run test:py   # pytest, 426 tests + 3 skipped
 
 # Lint both languages (eslint + ruff)
 npm run lint:all

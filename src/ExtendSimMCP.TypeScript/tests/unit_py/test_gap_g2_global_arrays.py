@@ -16,6 +16,8 @@ _SRC = os.path.join(os.path.dirname(__file__), "..", "..", "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
+from modl_lexer import split_modl  # noqa: E402  (ModL literal rules, measured live)
+
 
 def _load_backend():
     import importlib
@@ -92,7 +94,7 @@ def test_ga_create_escapes_the_array_name(monkeypatch):
     fake = _use(monkeypatch, be, _FakeApp(answers=["1"]))
     be.ga_create('bad" ; Evil("')
     call = _calls(fake, "GACreate")[0]
-    assert '" ; Evil("' not in call, call
+    assert "Evil" not in split_modl(call)[0], call   # code outside the ModL string literals must not contain the injected call
 
 
 def test_ga_create_fails_when_extendsim_returns_a_negative_index(monkeypatch):
@@ -146,7 +148,7 @@ def test_ga_write_escapes_string_values(monkeypatch):
     fake = _use(monkeypatch, be, _FakeApp(answers=["0", "3", "10", "10"]))
     be.ga_write("arr", 0, 0, 'x" ; Evil("')
     call = _calls(fake, "GASetString")[0]
-    assert '" ; Evil("' not in call, call
+    assert "Evil" not in split_modl(call)[0], call   # code outside the ModL string literals must not contain the injected call
 
 
 def test_ga_read_and_write_fail_when_the_array_does_not_exist(monkeypatch):

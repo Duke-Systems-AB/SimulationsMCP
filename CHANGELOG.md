@@ -3,6 +3,230 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
+## 1.22.4 — 2026-09-23
+
+A correctness and safety release. Everything in it was found by testing the tools
+against a real ExtendSim - 2024 and 2026, on empty models and on a full model (Bank.mox)
+- rather than against fakes. Tool count unchanged at 104.
+
+**Upgrade first if you use any of these:** long text (128+ characters) could crash
+ExtendSim; text containing a double quote could freeze ExtendSim behind a dialog, or run
+as ModL; `model_extract`, `db_create`, the AI context tools and the global-array tools
+did not work live at all.
+
+### Changed — client-visible
+- **Database listings use ExtendSim's own 1-based indices.** `db_list`, `db_table_info`
+  and `model_extract` no longer show a phantom `table_0` / `field_0`, and no longer drop
+  the last table or field. Record numbers in tool parameters and results stay 0-based.
+- **`db_add_records` without `position` appends.** It used to insert before the last
+  record.
+- **`model_overview`: `totalBlocks` now counts blocks.** It used to report every object
+  slot (703 for a model with 50 blocks). New fields `hierarchicalBlocks`, `textBlocks`,
+  and `sectionErrors` for any section that could not be read.
+- **`model_extract`:** `hierarchies` is now filled (it was always empty); a connection
+  fanned out to several inputs gives one connection per input; unpairable nodes appear
+  in `unresolvedConnectionNodes`; `modelPath` is the full path.
+- **Connector direction** (in `connection_list`, `model_extract`, block details) follows
+  ExtendSim's rule: a name ending in "Out" is an output, anything else an input. Names
+  such as `NumInBatchOut` change from input to output; names with neither ("D", "TR")
+  change from `unknown` to `in`.
+- **Field and array type names:** database fields report `string`, `real`, `integer`,
+  `boolean`, `currency`, `date_time` and so on instead of `unknown(16384)`; global arrays
+  can report `string15` and `string31`.
+- **Errors where there used to be a false success:** `db_create` when a table or field
+  is not created, `context_clear` when the database survives, `model_snapshot` when
+  blocks or connections cannot be read, `context_set` for a value over 255 characters.
+  Scenario Manager failures now return `MULTI_RUN_FAILED`, not `OPTIMIZER_FAILED`.
+
+### Fixed — pattern mining missed every hierarchical block
+Measured live on Bank.mox (ExtendSim 2024). `extract_psg`, the input to pattern mining,
+started from `ObjectIDNext(id, 0)`, which visits ordinary blocks only, so it never saw a
+top-level H-block and never descended into one: it returned **one scope of 6 blocks**
+for a model with 10 H-blocks and 50 blocks. It now returns all **11 scopes** with all 50
+blocks and 10 H-blocks in the right tree. Inside an H-block it also stopped treating
+text blocks and anchor points as blocks - `LocalToGlobal2` returns them too (one H-block
+held 12 blocks, 7 text blocks and 72 anchor points), and their names would have been
+mined as block types such as "Tellers available" or "ItemOut". The shipped pattern
+library was checked and contains no such entries.
+
+### Fixed — counting blocks, finding H-blocks and text blocks
+Measured live on a real model (Bank.mox, ExtendSim 2024): `NumBlocks()` counts every
+object slot - 703 of them, for 50 ordinary blocks, 10 hierarchical blocks and 54 text
+blocks (the rest are anchor points and empty slots). And `ObjectIDNext(id, 0)`, which
+the server used everywhere, visits ordinary blocks only - never H-blocks or text.
+- **`model_overview`** reported `NumBlocks()` as `totalBlocks` (703 for Bank.mox). It now
+  gives `totalBlocks` (50, matching `block_list` and `model_snapshot`),
+  `hierarchicalBlocks` and `textBlocks`, each counted by one ModL loop inside
+  ExtendSim - still fast on a large model.
+- **`text_block_add`** always reported failure: it looked for the new text block with
+  `ObjectIDNext`, which never visits text blocks. (The fail-closed check added earlier in
+  this release made that visible; before it, the call returned success with
+  `blockId: -1`.) It now uses the block number `PlaceTextBlock` returns and checks that
+  it is a text block.
+- **`model_extract`** never found a hierarchy: it walked ordinary blocks looking for
+  H-blocks. It now walks H-blocks (Bank.mox: 10, as `hierarchy_list` reports).
+- **`hierarchy_list`** started its walk at block 0 instead of before it, so an H-block
+  numbered 0 would have been skipped.
+- **`block_add` and `block_duplicate`** can now find a newly placed or copied H-block.
+
+### Fixed — connector direction follows ExtendSim's own rule
+The server guessed a connector's direction by looking for "in" anywhere in its name,
+before "out" - in ten places, four variants. `WaitingOut`, `LinkOut` or Bank.mox's
+`NumInBatchOut` read as inputs, so connections through them were built backwards or
+lost. It now uses the rule from Imagine That's own `isOutputCon`: strip any `[...]`
+array suffix; a name ending in "Out" is an output, anything else an input. One function
+decides, and a test fails if a private copy comes back.
+
+### Fixed — calls to ModL functions that do not exist
+Checked every ModL call the server makes against ExtendSim's own function list, its
+shipped ModL code and the ExtendSim 2026 binary, then verified live on ExtendSim 2026.
+Each of these raised a compile-error modal that blocks COM:
+- **`model_extract`** called `GetModelPathName()`, which has never existed - so every
+  `model_extract`, in every version, stopped on a modal. It now uses
+  `GetModelPath(name)`.
+- **`ga_list`, `ga_read`, `ga_write` and `model_extract`** called `GAGetCols`, which does
+  not exist, and passed an array *index* to `GAGetRows`/`GAGetType`, which take a
+  *name*. They now use `GAGetRowsByIndex`, `GAGetColumnsByIndex`, `GAGetTypeByIndex`.
+  Arrays of type `GAString15`/`GAString31` (codes 4 and 5) are read and written as
+  strings; they were treated as reals.
+- **`optimizer_get_results`** read its two text results with `GetDialogVariableString`,
+  which does not exist. It now uses `GetDialogVariable`.
+A test now fails if any of these names comes back.
+
+### Fixed — model summaries that hid failures or lost data
+- **`model_overview`** never showed the AI context: it read `purpose`, `notes`, `tags`
+  and `assumptions` from the wrong level of `context_get`'s answer, so a model with
+  context looked like one without. A section that fails to read is now listed in
+  `sectionErrors` instead of appearing empty.
+- **`model_snapshot`** turned a COM failure in `block_list` or `connection_list` into a
+  successful snapshot of an *empty* model. It now fails closed.
+- **`model_extract`** dropped every connection from an output wired to more than one
+  input, and every second line into an array input (such as a Queue's `ItemIn`). It now
+  reads connectors the same way `connection_list` does, gives one connection per
+  target, and lists anything it cannot pair under `unresolvedConnectionNodes`.
+
+### Fixed — text with a quote in it could freeze ExtendSim, or run as code
+Every string the server puts into a ModL command goes through one escaper, and it assumed
+C rules. ModL has none of them - measured live with `StrLen`: a backslash is always an
+ordinary character, and a double quote always ends the string.
+- **A double quote** was written as `\"`, which ModL reads as a backslash and the end of
+  the string. Any text containing a quote - JSON, a note, a label, a search string - raised
+  a compile-error modal that blocks COM until someone clicks it away. Worse, text shaped
+  like `x" ; Evil("` ran as ModL: the injection fix in 1.22.1 (W1-6) never actually held.
+  Quotes are now spliced in as `StrPutAscii(34)`, the way ExtendSim's own blocks do it.
+  The injection tests now check what matters - that nothing lands outside a string
+  literal - against a small lexer built from the measured rules.
+- **Line breaks and tabs** were written as `\n`/`\r`/`\t` and stored as those two
+  characters. They are now real line breaks and tabs (`StrPutAscii(10/13/9)`).
+- **Backslashes** were doubled, so `C:\tmp` arrived as `C:\\tmp`. They now pass through.
+- **Text over 255 characters** raised "String literals cannot be larger than 255
+  characters", another COM-blocking modal. Long text is now split into joined literals.
+  Note that a ModL string *value* still cannot exceed 255 characters.
+
+### Fixed — reading a string of 128+ characters crashed ExtendSim
+- Found live: reading a string of **128 or more characters** back over COM crashed
+  ExtendSim 2024.1 (access violation in `VCRUNTIME140.dll`); 127 was fine, and longer
+  values sometimes came back empty instead. A ModL string holds up to 255, so any long
+  block label, database text, dialog text or context value could take ExtendSim down.
+- All 98 string reads now go through one function that copies the value out in pieces
+  of at most 100 characters with `StrPart`. A short string still costs a single COM
+  read. Verified live at 127, 128, 200, 254 and 255 characters, and a test pins that no
+  code reads the string global directly any more.
+- `context_set` refuses values over 255 characters (ExtendSim's string limit) **before
+  writing anything**. It used to report success for a 397-character note that was never
+  stored.
+
+### Fixed — db_create and AI context storage never created anything
+- `DBTableCreate`, `DBFieldCreate`, `DBTableDelete` and `DBDatabaseDelete` take **names**;
+  the server passed **indices**, which fails silently. `db_create` created the database
+  but no table - and still answered success. The AI context tables (`context_set`) could
+  never be created, and `context_clear` could not delete. All now use the `...ByIndex`
+  forms, and `db_create` and `context_clear` fail closed.
+- **Field types** were mapped as 0=real, 1=integer, 2=string, 3=boolean. The real
+  `DB_FIELDTYPE_*` values, read live, are 4096 integer, 4097 boolean, 8192 real, 16384
+  string (plus currency, date/time and more). `db_table_info` and `model_extract`
+  reported every field as `unknown(...)`, and `db_create` asked for types that do not
+  exist. Both directions now use the real constants.
+- Verified live end to end: create, add, append, insert at a position, set, get, find,
+  delete, and context set/get/history/clear all round-trip correctly.
+
+### Fixed — the database tools counted from 0; ExtendSim counts from 1
+ExtendSim's database API numbers databases, tables, fields and records from **1**; 0 is
+never a valid index (`DBRecordsInsert` even uses 0 to mean "append"). The server counted
+from 0. What that did, all of it visible in real sessions:
+- **`db_list`** showed a phantom `table_0` first and **dropped the last table**. A model
+  with exactly one database listed **no databases at all**.
+- **`db_table_info`** showed a phantom `field_0` and dropped the last field;
+  **`db_get_records`** without `fields` did the same and returned a blank first row.
+- **`db_get_value` / `db_set_value` / `db_get_records` / `db_delete_records`** were
+  one record off: asking for record `n` touched the record the documented 0-based
+  numbering calls `n-1`, and record `0` - the first record - did not exist at all.
+- **`db_add_records`** without `position` inserted the new records *before* the old
+  last one instead of appending.
+- **`db_find_record`** could report a miss as a hit on record 0.
+- **AI context storage (`context_set` / `context_get`)** wrote a new key over the
+  previous last key, and on an empty table wrote to record 0, which does not exist.
+- **Lookups** (`db_create`, `db_relations_list`, the context tools) treated an index of 0
+  as "found".
+- **`db_list`** listed a table slot that does not exist: `DBTablesGetNum` can count an
+  empty slot (it said 7 for ExtendSim's own `_RightClickConnect`, which has 6 tables).
+  Slots with no name and no records are now skipped, as unnamed database slots already
+  were.
+
+**Record numbers stay 0-based in the tool API**, as the tool schemas have always said;
+the server now adds 1 on the way to ExtendSim and subtracts 1 on the way back. The
+database/table/field indices in `db_list`, `db_table_info` and `model_extract` are now
+ExtendSim's real ones and start at 1. `docs/USER_MANUAL.md` §6.8 documents both.
+
+### Fixed — a wrong warning shipped in 1.22.2 and 1.22.3
+- **`workstation_set_config` no longer warns that its delay indices may be off by one.**
+  They are not. Reading the `DELAY_IS_*` constants out of the Workstation block's own
+  source in `Item.lbr` gives CONSTANT=1, ATTRIBUTE=2, DISTRIBUTION=3, TABLE=4 — exactly
+  the map the tool uses — and CONNECTOR=1000, a sentinel rather than a popup row,
+  because connecting the D connector overrides the delay automatically. The warning
+  came from reading the block's help text, which lists the *ways* a delay can
+  be set, as if it listed the popup's *rows*. The warning was itself misinformation:
+  it could have led a client to "correct" a right index into a wrong one.
+- The Activity map is confirmed the same way (its source has CONNECTOR=2 as a real
+  popup row). Both maps are now pinned by tests to the source constants.
+
+### Fixed — a COM failure no longer looks like an empty model
+- **`model_list`, `block_list` and `connection_list`** answered a COM failure with an
+  empty list, an error code and **no `success: false`**. The TypeScript layer flags an
+  error only on `success === false`, so "ExtendSim could not be read" reached the client
+  as a successful "the model is empty" — the same contract hole W1-1 closed everywhere
+  else in 1.22.1. A client trusting an empty `block_list` could start building a new
+  model on top of one that was really there. All three now fail closed.
+  `extendsim_status` keeps its behaviour on purpose: "not running" is its answer, not a
+  failure of the tool.
+
+### Added — testing
+- **Unit tests can no longer reach a real ExtendSim.** A new `conftest.py` replaces
+  `win32com.client.GetActiveObject` and `Dispatch` with functions that fail loudly for
+  every offline test. Five places in the backend call COM directly, and `Dispatch`
+  *launches* ExtendSim if none is running, so a test that forgot to patch could connect
+  to — or start — the developer's live ExtendSim. One did, briefly, while this wave was
+  being written (read-only, no harm). The full suite was re-run under the guard and no
+  existing test had been relying on real COM.
+- **G2 wave 5** — `model_list`, `model_info`, `model_close`, plus the list tools above.
+  Python suite 302 → 310.
+
+### Fixed — two more tools that reported success for something that did not happen
+- **`text_block_add`** returned success with `blockId: -1` when nothing was placed. It
+  now fails closed (`COMMAND_FAILED`) - and finds the block from `PlaceTextBlock`'s own
+  return value; see "counting blocks" above for why the first version of this fix
+  failed every time.
+- **`block_info`** in live mode swallows the error from each read and substitutes an
+  empty string, so a block ID that does not exist came back as success with every field
+  blank. It now returns `BLOCK_NOT_FOUND` — but only when label, type *and* name are all
+  empty, so an object with any identity (a text block may have a label and no block
+  name) is never rejected.
+- **Scenario Manager failures were reported as `OPTIMIZER_FAILED`** — three places across
+  `scenario_manager_status` and `scenario_manager_get_results`, evidently copied from the
+  optimizer. A client told the optimizer failed goes looking in the wrong block. They now
+  return `MULTI_RUN_FAILED`, which the manual already defines as "a multi-run or scenario
+  sweep failed". Clients matching `OPTIMIZER_FAILED` from these two tools need the new code.
+
 ## 1.22.3 — 2026-09-23
 
 A friction-driven release: the first fixes chosen from telemetry rather than by hand.

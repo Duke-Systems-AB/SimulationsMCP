@@ -1803,7 +1803,7 @@ server.tool(
     databaseName: z.string().describe("Database name"),
     tableName: z.string().describe("Table name"),
     count: z.number().optional().describe("Number of records to add (default 1)"),
-    position: z.number().optional().describe("Insert position (default: end)"),
+    position: z.number().optional().describe("0-based record index to insert before (default: append at the end)"),
     modelId: z.string().optional().describe("Model ID")
   },
   async ({ databaseName, tableName, count, position, modelId }) => {
@@ -2224,7 +2224,7 @@ server.tool(
     fieldName: z.string().describe("Field name to search in"),
     findValue: z.union([z.number(), z.string()]).describe("Value to search for"),
     exactMatch: z.boolean().optional().default(true).describe("Exact match (default true)"),
-    startRecord: z.number().optional().default(0).describe("Record index to start searching from (default 0)")
+    startRecord: z.number().optional().default(0).describe("0-based record index to start searching from (default 0)")
   },
   async ({ modelId, databaseName, tableName, fieldName, findValue, exactMatch, startRecord }) => {
     return safeToolCall("db_find_record", () => backend.dbFindRecord({ modelId, databaseName, tableName, fieldName, findValue, exactMatch, startRecord }), { modelId, databaseName, tableName, fieldName, findValue, exactMatch, startRecord });

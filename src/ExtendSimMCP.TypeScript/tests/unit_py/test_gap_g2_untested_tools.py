@@ -16,6 +16,8 @@ _SRC = os.path.join(os.path.dirname(__file__), "..", "..", "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
+from modl_lexer import split_modl  # noqa: E402  (ModL literal rules, measured live)
+
 
 def _load_backend():
     import importlib
@@ -73,8 +75,8 @@ def test_time_convert_date_to_sim_escapes_the_date_string(monkeypatch):
     assert r["success"] is True
     assert r["simTime"] == 17.5
     call = next(c for c in fake.executed if "EDDateToSimTime" in c)
-    # The raw closing quote must not survive into the command string.
-    assert '" ; DoSomethingElse("' not in call, call
+    # The quote must not end the literal: the injected call stays inside a string.
+    assert "DoSomethingElse" not in split_modl(call)[0], call
 
 
 def test_time_convert_sim_to_date_returns_the_string_unparsed(monkeypatch):

@@ -16,6 +16,8 @@ _SRC = os.path.join(os.path.dirname(__file__), "..", "..", "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
+from modl_lexer import split_modl  # noqa: E402  (ModL literal rules, measured live)
+
 
 def _load_backend():
     import importlib
@@ -111,7 +113,8 @@ def test_block_find_escapes_the_search_string(monkeypatch):
     be = _load_backend()
     fake = _use(monkeypatch, be, _FakeApp(answers=["1", "Activity", "x"]))
     be.block_find('a" ; Evil("')
-    assert '" ; Evil("' not in _calls(fake, "FindBlock")[0]
+    call = _calls(fake, "FindBlock")[0]
+    assert "Evil" not in split_modl(call)[0], call   # code outside the ModL string literals must not contain the injected call
 
 
 def test_block_find_reports_not_found_with_the_search_type(monkeypatch):

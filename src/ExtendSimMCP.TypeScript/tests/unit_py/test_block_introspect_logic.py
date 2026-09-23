@@ -13,6 +13,8 @@ class FakeApp:
         self.dialog = dialog
         self._last = None
     def Execute(self, cmd):
+        if cmd.startswith("globalStr9 = StrPart("):
+            return  # _read_str0 copying globalStr0 out; not a new query
         self._last = cmd  # remember which query is pending
     def Request(self, _system, _q):
         cmd = self._last

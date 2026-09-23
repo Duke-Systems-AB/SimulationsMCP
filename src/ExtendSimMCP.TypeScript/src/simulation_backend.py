@@ -79,23 +79,94 @@ def parse_float_nullable(value: str) -> Optional[float]:
     return result
 
 
-def _escape_modl_string(s: str) -> str:
-    """Escapes a string for safe use inside a single-line ModL string literal.
+# Characters a ModL string literal cannot hold. Each one is spliced in from outside the
+# literal as StrPutAscii(code), the way ExtendSim's own blocks build tabs and line breaks.
+_MODL_SPLICED_CHARS = {'"': 34, "\n": 10, "\r": 13, "\t": 9}
 
-    Escapes backslashes and double quotes, and converts real control characters
-    (newline, carriage return, tab) into their two-character ModL escape sequences
-    so the literal never spans lines — a raw newline inside a ModL string raises an
-    "unterminated string" modal (BUG-009a). Order matters: backslashes are doubled
-    first, so the escape backslashes added for \\n/\\r/\\t below are not re-doubled.
+# "String literals cannot be larger than 255 characters" - a compile error modal that
+# blocks COM, hit live on 2026-09-23 with a 300-character string. Longer text is split
+# into several literals joined with +, a little under the limit.
+_MODL_LITERAL_MAX = 250
+
+# A ModL string VALUE is also capped at 255 characters, however it is built: live, a
+# 300-character concatenation gave StrLen 255 and stored nothing. Joining literals only
+# avoids the compile modal; it cannot carry longer text. Writers must check this.
+_MODL_STRING_MAX = 255
+
+# Reading a string back over COM is tighter still: Request("System", "globalStr0...")
+# on a 128-character value CRASHED ExtendSim 2024.1 on 2026-09-23 (APPCRASH c0000005 in
+# VCRUNTIME140.dll); 127 was fine, and longer values sometimes came back "" instead.
+# _read_str0 therefore never fetches more than _COM_STR_PIECE characters at once.
+_COM_STR_READ_MAX = 127
+
+# Piece size for _read_str0 - comfortably under the crash threshold.
+_COM_STR_PIECE = 100
+
+
+def _read_str0(app) -> str:
+    """Read ModL's globalStr0 over COM without ever fetching 128+ characters at once.
+
+    Every string the server reads from ExtendSim is assigned to globalStr0 and then read
+    here. A direct Request of a 128-character value crashed ExtendSim 2024.1 (see
+    _COM_STR_READ_MAX), and a ModL string holds up to 255. So the value is always copied
+    out in pieces with StrPart (0-based, clamps at the end - both measured live on
+    2026-09-23) through globalStr9, which nothing else uses. A piece shorter than
+    _COM_STR_PIECE is the last one, so an ordinary short string still costs exactly one
+    Request, as a direct read did.
+    """
+    parts = []
+    start = 0
+    while True:
+        app.Execute(f"globalStr9 = StrPart(globalStr0, {start}, {_COM_STR_PIECE});")
+        piece = app.Request("System", "globalStr9+:0:0:0") or ""
+        parts.append(piece)
+        if len(piece) < _COM_STR_PIECE or start + _COM_STR_PIECE >= _MODL_STRING_MAX:
+            return "".join(parts)
+        start += _COM_STR_PIECE
+
+
+def _escape_modl_string(s: str) -> str:
+    """Makes text safe to place between the double quotes of a ModL string literal.
+
+    ModL's literal rules, measured live on 2026-09-23 with StrLen on strings built in
+    Python (not typed into a shell, which rewrote backslashes and misled a first try):
+      * a backslash is ALWAYS an ordinary character - "a\\nb" has length 4 and a
+        doubled backslash stays two characters. ExtendSim's own code writes "\\" + name
+        for a one-backslash path separator;
+      * a double quote ALWAYS ends the literal - there is no escape for it.
+
+    The old version assumed C rules. It wrote \\" for a quote - in ModL a backslash and
+    the END of the string - so any text with a quote in it (JSON, a note, a label)
+    raised a compile error modal that blocked COM, and text shaped like `x" ; Evil("`
+    ran as code: the W1-6 injection fix had never held. It wrote \\n, \\r, \\t, stored
+    as two literal characters, so line breaks arrived as the text "\\n". And it doubled
+    backslashes, so C:\\tmp arrived as C:\\\\tmp.
+
+    Now a quote or control character closes the literal, is added as StrPutAscii(n),
+    and a new literal opens:  say "hi"  ->  say " + StrPutAscii(34) + "hi" + ...
+    A literal is also closed and reopened ( " + " ) before it reaches ModL's 255-
+    character limit, which is a compile error modal of its own.
+    The caller's surrounding quotes complete the expression, which is valid wherever
+    a string expression is - every call site passes it as a function argument or an
+    assignment. No raw line break ever reaches the command (BUG-009a).
     """
     if s is None:
         return ""
-    return (str(s)
-            .replace("\\", "\\\\")
-            .replace('"', '\\"')
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t"))
+    pieces = []          # the literal chunks' contents, and splices, in order
+    chunk = []
+    for ch in str(s):
+        if ch in _MODL_SPLICED_CHARS:
+            pieces.append("".join(chunk))
+            pieces.append(f'" + StrPutAscii({_MODL_SPLICED_CHARS[ch]}) + "')
+            chunk = []
+            continue
+        if len(chunk) >= _MODL_LITERAL_MAX:
+            pieces.append("".join(chunk))
+            pieces.append('" + "')
+            chunk = []
+        chunk.append(ch)
+    pieces.append("".join(chunk))
+    return "".join(pieces)
 
 
 # ============================================================================
@@ -149,7 +220,7 @@ def _get_var(app, block_id: int, var_name: str, row: int = 0, col: int = 0):
     """
     if isinstance(var_name, str) and var_name.endswith(_DIALOG_VAR_SUFFIXES):
         app.Execute(f'globalStr0 = GetDialogVariable({block_id}, "{var_name}", {row}, {col});')
-        return app.Request("System", "globalStr0+:0:0:0")
+        return _read_str0(app)
     else:
         app.Execute(f'global0 = GetVariableNumeric({block_id}, "{var_name}", {row}, {col});')
         return app.Request("System", "global0+:0:0:0")
@@ -185,7 +256,7 @@ def _get_dialog_string(app, block_id: int, var_name: str, row: int = 0, col: int
     read as '-nan(ind)' through GetVariableNumeric; GetDialogVariable returns the
     text (or the popup's index as text)."""
     app.Execute(f'globalStr0 = GetDialogVariable({block_id}, "{var_name}", {row}, {col});')
-    return app.Request("System", "globalStr0+:0:0:0")
+    return _read_str0(app)
 
 
 # ============================================================================
@@ -297,21 +368,79 @@ SIMULATION_PHASE_NAMES = {
     9: "cleanUp",
 }
 
-# DB field type map for DBFieldGetProperties which=1
+# Field type codes, as DBFieldGetProperties(..., which=1) returns them. These are the
+# values of ExtendSim's built-in DB_FIELDTYPE_* constants, read live from ExtendSim 2024
+# on 2026-09-23. The previous map (0=real, 1=integer, 2=string, 3=boolean) matched none
+# of them, so every field was reported as unknown(...) - and db_create passed those codes
+# to DBFieldCreate.
 DB_FIELD_TYPE_MAP = {
-    0: "real",
-    1: "integer",
-    2: "string",
-    3: "boolean"
+    4096: "integer",       # DB_FIELDTYPE_INTEGER_VALUE
+    4097: "boolean",       # DB_FIELDTYPE_INTEGER_BOOLEAN
+    8192: "real",          # DB_FIELDTYPE_REAL_GENERAL
+    8193: "scientific",    # DB_FIELDTYPE_REAL_SCIENTIFIC
+    8194: "percent",       # DB_FIELDTYPE_REAL_PERCENT
+    8195: "currency",      # DB_FIELDTYPE_REAL_CURRENCY
+    8196: "date_time",     # DB_FIELDTYPE_REAL_DATE_TIME
+    8197: "db_address",    # DB_FIELDTYPE_REAL_DB_ADDRESS
+    16384: "string",       # DB_FIELDTYPE_STRING_VALUE
+    16385: "table_list",   # DB_FIELDTYPE_TABLELIST
 }
 
-# Reverse map for db_create
+# Everything except the two string formats is stored as a number and must be read with
+# DBDataGetAsNumber.
+DB_STRING_FIELD_TYPES = {16384, 16385}
+
+# db_create's type names -> the ModL constant passed to DBFieldCreateByIndex. The
+# constant name, not its value, so the call stays right if a version renumbers them.
 DB_FIELD_TYPE_REVERSE = {
-    "real": 0,
-    "integer": 1,
-    "string": 2,
-    "boolean": 3
+    "real": "DB_FIELDTYPE_REAL_GENERAL",
+    "integer": "DB_FIELDTYPE_INTEGER_VALUE",
+    "string": "DB_FIELDTYPE_STRING_VALUE",
+    "boolean": "DB_FIELDTYPE_INTEGER_BOOLEAN",
 }
+
+# ObjectIDNext(id, which) - ExtendSim's own constants (Extensions/Includes):
+# cOBJ_NEXT_CODED_BLOCKS 0, cOBJ_NEXT_H_BLOCKS 1, cOBJ_NEXT_ALL_BLOCKS 2. Measured live on
+# Bank.mox (2026-09-23): 0 visits the 50 ordinary blocks, 1 the 10 hierarchical blocks,
+# 2 all 60 - and NONE of them visits text blocks, anchor points or empty slots.
+OBJ_NEXT_CODED, OBJ_NEXT_HBLOCKS, OBJ_NEXT_ALL = 0, 1, 2
+
+# GetBlockTypeNumeric codes (BT_* constants in ExtendSim's Includes). NumBlocks() counts
+# every slot of every kind: Bank.mox has 703 slots for 50 ordinary blocks.
+BT_EMPTYSLOT, BT_ANCHORPOINT, BT_TEXT, BT_EXECUTABLE, BT_HIERARCHICAL = 0, 1, 2, 3, 4
+
+
+def _count_model_objects(app) -> dict:
+    """Blocks, H-blocks and text blocks, each counted by one ModL loop inside ExtendSim.
+
+    One Execute per count however large the model (Bank.mox: 6 ms), instead of two COM
+    round trips per block. Globals serve as loop variables, so nothing is declared.
+    Verified live on ExtendSim 2024, 2026-09-23.
+    """
+    def run(code):
+        app.Execute(code)
+        return int(parse_float(app.Request("System", "globalInt1+:0:0:0")))
+
+    def walk(which):
+        return run(f"globalInt1 = 0; globalInt2 = ObjectIDNext(-1, {which}); "
+                   f"while (globalInt2 != -1) {{ globalInt1 = globalInt1 + 1; "
+                   f"globalInt2 = ObjectIDNext(globalInt2, {which}); }}")
+
+    text = run("globalInt1 = 0; globalInt2 = 0; globalInt3 = NumBlocks(); "
+               "while (globalInt2 < globalInt3) { "
+               f"if (GetBlockTypeNumeric(globalInt2) == {BT_TEXT}) globalInt1 = globalInt1 + 1; "
+               "globalInt2 = globalInt2 + 1; }")
+    return {"blocks": walk(OBJ_NEXT_CODED), "hierarchicalBlocks": walk(OBJ_NEXT_HBLOCKS),
+            "textBlocks": text}
+
+
+# Global array types - the values of ExtendSim's GAReal, GAInteger, GAString,
+# GAString15 and GAString31 constants, read live (ExtendSim 2026, 2026-09-23).
+GA_TYPE_NAMES = {1: "real", 2: "integer", 3: "string", 4: "string15", 5: "string31"}
+GA_STRING_TYPES = {3, 4, 5}
+
+# Decimals shown for a new field; ExtendSim's own blocks use 5 for general reals.
+DB_FIELD_DECIMALS = {"real": 5}
 
 # Global ExtendSim application reference
 _es_app: Optional[Any] = None
@@ -459,7 +588,7 @@ def extendsim_status() -> dict:
         # Try to get model name
         try:
             app.Execute("globalStr0 = GetModelName();")
-            model_name = app.Request("System", "globalStr0+:0:0:0")
+            model_name = _read_str0(app)
             result["modelOpen"] = bool(model_name)
             result["modelName"] = model_name or ""
         except Exception:
@@ -535,7 +664,7 @@ def detect_license(model_id: Optional[str] = None) -> dict:
 
         # IsLibEnabled needs a model open. Open a temporary one only if none is.
         app.Execute("globalStr0 = GetModelName();")
-        opened_temp = not (app.Request("System", "globalStr0+:0:0:0") or "").strip()
+        opened_temp = not (_read_str0(app) or "").strip()
         if opened_temp:
             app.Execute("ExecuteMenuCommand(2);")   # File > New (blank model)
 
@@ -598,7 +727,7 @@ def model_open(file_path: str, read_only: bool = False) -> dict:
 
         # Check if model is already open
         app.Execute("globalStr0 = GetModelName();")
-        current_model_name = app.Request("System", "globalStr0+:0:0:0")
+        current_model_name = _read_str0(app)
 
         if current_model_name and current_model_name.lower() == expected_model_name.lower():
             result = {
@@ -624,7 +753,7 @@ def model_open(file_path: str, read_only: bool = False) -> dict:
 
         # Get model name
         app.Execute("globalStr0 = GetModelName();")
-        model_name = app.Request("System", "globalStr0+:0:0:0")
+        model_name = _read_str0(app)
 
         result = {
             "success": True,
@@ -659,7 +788,7 @@ def model_save(model_id: Optional[str] = None, file_path: Optional[str] = None) 
 
         # Get actual model name
         app.Execute("globalStr0 = GetModelName();")
-        model_name = app.Request("System", "globalStr0+:0:0:0")
+        model_name = _read_str0(app)
 
         return {"success": True, "filePath": file_path or model_name or "unknown"}
     except Exception as e:
@@ -672,13 +801,13 @@ def model_list() -> dict:
     try:
         app = get_extendsim_app()
         app.Execute("globalStr0 = GetModelName();")
-        model_name = app.Request("System", "globalStr0+:0:0:0")
+        model_name = _read_str0(app)
 
         if model_name:
             return {"models": [{"modelId": "model_1", "name": model_name}]}
         return {"models": []}
     except Exception as e:
-        return {"models": [], "errorCode": ErrorCode.COM_ERROR, "error": str(e)}
+        return {"success": False, "models": [], "errorCode": ErrorCode.COM_ERROR, "error": str(e)}
 
 
 def model_info(model_id: Optional[str] = None, include_statistics: bool = False) -> dict:
@@ -693,7 +822,7 @@ def model_info(model_id: Optional[str] = None, include_statistics: bool = False)
 
         # Get model name
         app.Execute("globalStr0 = GetModelName();")
-        model_name = app.Request("System", "globalStr0+:0:0:0")
+        model_name = _read_str0(app)
 
         # Get simulation times
         app.Execute("global0 = endTime;")
@@ -770,7 +899,7 @@ def model_new(save_path: Optional[str] = None) -> dict:
 
         # Get model name
         app.Execute("globalStr0 = GetModelName();")
-        model_name = app.Request("System", "globalStr0+:0:0:0")
+        model_name = _read_str0(app)
 
         # Save if path provided
         if save_path:
@@ -778,7 +907,7 @@ def model_new(save_path: Optional[str] = None) -> dict:
             app.Execute(f'SaveModelAs("{_escape_modl_string(save_path_normalized)}")')
             # Re-get model name after save
             app.Execute("globalStr0 = GetModelName();")
-            model_name = app.Request("System", "globalStr0+:0:0:0")
+            model_name = _read_str0(app)
 
         return {
             "success": True,
@@ -838,7 +967,7 @@ def block_add(library_name: str, block_name: str, x: int = 100, y: int = 100,
         before_ids = set()
         current_id = -1
         while True:
-            app.Execute(f"global0 = objectIDNext({current_id}, 0);")
+            app.Execute(f"global0 = objectIDNext({current_id}, {OBJ_NEXT_ALL});")  # H-blocks too
             next_id = int(parse_float(app.Request("System", "global0+:0:0:0")))
             if next_id == -1:
                 break
@@ -863,7 +992,7 @@ def block_add(library_name: str, block_name: str, x: int = 100, y: int = 100,
         block_id = -1
         current_id = -1
         while True:
-            app.Execute(f"global0 = objectIDNext({current_id}, 0);")
+            app.Execute(f"global0 = objectIDNext({current_id}, {OBJ_NEXT_ALL});")  # H-blocks too
             next_id = int(parse_float(app.Request("System", "global0+:0:0:0")))
             if next_id == -1:
                 break
@@ -1089,11 +1218,8 @@ def _find_connector_by_direction_dynamic(app, block_id: int, direction: str) -> 
     # Second pass: any connector with In/Out in name
     for con in connectors:
         name_lower = con["name"].lower()
-        if direction_lower == "out" and "out" in name_lower and "in" not in name_lower:
-            _log_debug(f"  Found output: {con}")
-            return con
-        if direction_lower == "in" and "in" in name_lower and "out" not in name_lower:
-            _log_debug(f"  Found input: {con}")
+        if _get_connector_direction(con["name"]) == direction_lower:
+            _log_debug(f"  Found {direction_lower}put: {con}")
             return con
 
     _log_debug(f"  No connector found for direction '{direction}'")
@@ -1241,12 +1367,8 @@ def _resolve_connector(app, block_id: int, connector, auto_expand_array: bool = 
     if base_con < 0:
         _log_debug(f"  Connector '{connector}' not found, trying dynamic lookup...")
         # Determine direction from connector name
-        connector_lower = connector.lower()
-        if "out" in connector_lower:
-            direction = "out"
-        elif "in" in connector_lower:
-            direction = "in"
-        else:
+        direction = _get_connector_direction(connector)
+        if direction == "unknown":
             direction = None
 
         if direction:
@@ -1289,9 +1411,9 @@ def _diagnose_connection_failure(app, src_id: int, tgt_id: int, to_con) -> Optio
     """
     try:
         app.Execute(f"globalStr0 = BlockName({src_id});")
-        src_name = app.Request("System", "globalStr0+:0:0:0")
+        src_name = _read_str0(app)
         app.Execute(f"globalStr0 = BlockName({tgt_id});")
-        tgt_name = app.Request("System", "globalStr0+:0:0:0")
+        tgt_name = _read_str0(app)
 
         if src_name == "Queue" and tgt_name == "Workstation":
             return ("Workstation blocks have a built-in internal queue. "
@@ -1415,16 +1537,24 @@ def block_disconnect(source_block_id: int, source_connector,
 
 
 def _get_connector_direction(con_name: str) -> str:
-    """Determines connector direction based on name.
+    """Connector direction from its name, by ExtendSim's own rule.
 
-    Returns 'in', 'out', or 'unknown'.
+    ModL has no built-in direction query. Imagine That's isOutputCon (MouseClick.h and
+    Item Block Utilities.h in Extensions/Includes) decides it like this: strip any
+    "[...]" array suffix; the connector is an OUTPUT if the name ends in "Out", and an
+    input otherwise. The server used to look for "in" ANYWHERE in the name before
+    looking for "out", so "WaitingOut" or "LinkOut" read as inputs - and connections
+    touching them were built backwards or not at all.
+
+    Returns 'out', 'in', or 'unknown' for an empty name.
     """
-    name_lower = con_name.lower()
-    if "in" in name_lower and "out" not in name_lower:
-        return "in"
-    elif "out" in name_lower:
-        return "out"
-    return "unknown"
+    name = (con_name or "").strip()
+    bracket = name.find("[")
+    if bracket > 0:
+        name = name[:bracket]
+    if not name:
+        return "unknown"
+    return "out" if name.lower().endswith("out") else "in"
 
 
 def _find_connector_by_direction(app, block_id: int, direction: str, preferred_name: str = None) -> dict:
@@ -1464,7 +1594,7 @@ def _find_connector_by_direction(app, block_id: int, direction: str, preferred_n
     for con_idx in range(num_connectors):
         try:
             app.Execute(f'globalStr0 = getConName({block_id}, {con_idx});')
-            con_name = app.Request("System", "globalStr0+:0:0:0") or ""
+            con_name = _read_str0(app) or ""
             con_dir = _get_connector_direction(con_name)
 
             if con_dir == direction:
@@ -1657,7 +1787,7 @@ def block_remove(block_id: int, allow_undo: bool = False,
 
         # Verify block exists by getting its name
         app.Execute(f"globalStr0 = BlockName({block_id});")
-        block_name = app.Request("System", "globalStr0+:0:0:0") or ""
+        block_name = _read_str0(app) or ""
 
         if not block_name:
             return _error(ErrorCode.BLOCK_NOT_FOUND,
@@ -1711,7 +1841,7 @@ def block_list(model_id: Optional[str] = None, detail: str = "summary") -> dict:
             # Get label with getBlockLabel()
             try:
                 app.Execute(f"globalStr0 = getBlockLabel({next_id});")
-                label = app.Request("System", "globalStr0+:0:0:0")
+                label = _read_str0(app)
                 block_info_data["label"] = label if label else ""
             except Exception:
                 block_info_data["label"] = ""
@@ -1719,7 +1849,7 @@ def block_list(model_id: Optional[str] = None, detail: str = "summary") -> dict:
             # Get block type (category) with GetBlockType()
             try:
                 app.Execute(f"globalStr0 = GetBlockType({next_id});")
-                block_type = app.Request("System", "globalStr0+:0:0:0")
+                block_type = _read_str0(app)
                 block_info_data["blockType"] = block_type if block_type else ""
             except Exception:
                 block_info_data["blockType"] = ""
@@ -1727,7 +1857,7 @@ def block_list(model_id: Optional[str] = None, detail: str = "summary") -> dict:
             # Get specific block name with BlockName()
             try:
                 app.Execute(f"globalStr0 = BlockName({next_id});")
-                block_name = app.Request("System", "globalStr0+:0:0:0")
+                block_name = _read_str0(app)
                 block_info_data["blockName"] = block_name if block_name else ""
             except Exception:
                 block_info_data["blockName"] = ""
@@ -1735,7 +1865,7 @@ def block_list(model_id: Optional[str] = None, detail: str = "summary") -> dict:
             # Get library with GetLibraryPathName()
             try:
                 app.Execute(f"globalStr0 = GetLibraryPathName({next_id}, 2);")
-                library = app.Request("System", "globalStr0+:0:0:0")
+                library = _read_str0(app)
                 block_info_data["library"] = library if library else ""
             except Exception:
                 block_info_data["library"] = ""
@@ -1754,16 +1884,11 @@ def block_list(model_id: Optional[str] = None, detail: str = "summary") -> dict:
                         # Get connector name to determine in/out
                         try:
                             app.Execute(f'globalStr0 = GetConName({next_id}, {conn_idx});')
-                            con_name = app.Request("System", "globalStr0+:0:0:0") or ""
+                            con_name = _read_str0(app) or ""
                         except Exception:
                             con_name = ""
 
-                        # Determine direction based on name
-                        direction = "unknown"
-                        if "in" in con_name.lower():
-                            direction = "in"
-                        elif "out" in con_name.lower():
-                            direction = "out"
+                        direction = _get_connector_direction(con_name)
 
                         connector_entry = {
                             "connectorIndex": conn_idx,
@@ -1782,7 +1907,53 @@ def block_list(model_id: Optional[str] = None, detail: str = "summary") -> dict:
 
         return {"blocks": blocks, "count": len(blocks)}
     except Exception as e:
-        return {"blocks": [], "errorCode": ErrorCode.COM_ERROR, "error": str(e)}
+        return {"success": False, "blocks": [], "errorCode": ErrorCode.COM_ERROR, "error": str(e)}
+
+
+def _block_wired_endpoints(app, block_id: int) -> list:
+    """Every wired connector endpoint on one block, array-connector slots included.
+
+    Returns [(connectorIndex, direction, connectorName, nodeIndex)] for connectors with
+    a node (nodeIndex != 0). Shared by connection_list and model_extract: they used to
+    carry separate copies, and model_extract's never learned about array slots.
+    """
+    endpoints = []
+    app.Execute(f"global0 = GetNumCons({block_id});")
+    num_cons = int(parse_float(app.Request("System", "global0+:0:0:0")))
+
+    for conn_idx in range(num_cons):
+        # Get connector name (needed for array detection and direction)
+        try:
+            app.Execute(f'globalStr0 = GetConName({block_id}, {conn_idx});')
+            con_name = _read_str0(app) or ""
+        except Exception:
+            con_name = ""
+
+        # Array connectors expose additional connections on extra slots
+        # (slot N>0 lives at connector index 256-N). The base loop only
+        # visits range(num_cons), so without this a 2nd+ connection into
+        # an array input (e.g. Queue ItemIn) would be silently dropped.
+        slot_con_indices = [conn_idx]
+        if con_name:
+            try:
+                app.Execute(f'global0 = ConArrayGetNumCons({block_id}, "{_escape_modl_string(con_name)}");')
+                num_slots = int(parse_float(app.Request("System", "global0+:0:0:0")))
+            except Exception:
+                num_slots = -1
+            if num_slots > 1:
+                slot_con_indices += [_get_array_connector_index(s, conn_idx)
+                                     for s in range(1, num_slots)]
+
+        # Direction (same for every slot of this connector)
+        direction = _get_connector_direction(con_name)
+
+        for slot_con_idx in slot_con_indices:
+            app.Execute(f"global0 = NodeGetIDIndex({block_id}, {slot_con_idx});")
+            node_index = int(parse_float(app.Request("System", "global0+:0:0:0")))
+            if node_index == 0:
+                continue  # unconnected
+            endpoints.append((slot_con_idx, direction, con_name, node_index))
+    return endpoints
 
 
 def connection_list(model_id: Optional[str] = None) -> dict:
@@ -1805,50 +1976,8 @@ def connection_list(model_id: Optional[str] = None) -> dict:
                 break
 
             try:
-                app.Execute(f"global0 = GetNumCons({next_id});")
-                num_cons = int(parse_float(app.Request("System", "global0+:0:0:0")))
-
-                for conn_idx in range(num_cons):
-                    # Get connector name (needed for array detection and direction)
-                    try:
-                        app.Execute(f'globalStr0 = GetConName({next_id}, {conn_idx});')
-                        con_name = app.Request("System", "globalStr0+:0:0:0") or ""
-                    except Exception:
-                        con_name = ""
-
-                    # Array connectors expose additional connections on extra slots
-                    # (slot N>0 lives at connector index 256-N). The base loop only
-                    # visits range(num_cons), so without this a 2nd+ connection into
-                    # an array input (e.g. Queue ItemIn) would be silently dropped.
-                    slot_con_indices = [conn_idx]
-                    if con_name:
-                        try:
-                            app.Execute(f'global0 = ConArrayGetNumCons({next_id}, "{con_name}");')
-                            num_slots = int(parse_float(app.Request("System", "global0+:0:0:0")))
-                        except Exception:
-                            num_slots = -1
-                        if num_slots > 1:
-                            slot_con_indices += [_get_array_connector_index(s, conn_idx)
-                                                 for s in range(1, num_slots)]
-
-                    # Determine direction (same for every slot of this connector)
-                    direction = "unknown"
-                    if "in" in con_name.lower():
-                        direction = "in"
-                    elif "out" in con_name.lower():
-                        direction = "out"
-
-                    for slot_con_idx in slot_con_indices:
-                        app.Execute(f"global0 = NodeGetIDIndex({next_id}, {slot_con_idx});")
-                        node_index = int(parse_float(app.Request("System", "global0+:0:0:0")))
-
-                        # Skip unconnected (nodeIndex = 0)
-                        if node_index == 0:
-                            continue
-
-                        if node_index not in node_map:
-                            node_map[node_index] = []
-                        node_map[node_index].append((next_id, slot_con_idx, direction, con_name))
+                for con_idx, direction, con_name, node_index in _block_wired_endpoints(app, next_id):
+                    node_map.setdefault(node_index, []).append((next_id, con_idx, direction, con_name))
             except Exception:
                 pass
 
@@ -1890,7 +2019,7 @@ def connection_list(model_id: Optional[str] = None) -> dict:
             result["danglingNodes"] = dangling
         return result
     except Exception as e:
-        return {"connections": [], "errorCode": ErrorCode.COM_ERROR, "error": str(e)}
+        return {"success": False, "connections": [], "errorCode": ErrorCode.COM_ERROR, "error": str(e)}
 
 
 def block_info(query: Optional[str] = None, block_id: Optional[int] = None,
@@ -1958,21 +2087,21 @@ def block_info(query: Optional[str] = None, block_id: Optional[int] = None,
             # Label
             try:
                 app.Execute(f"globalStr0 = getBlockLabel({block_id});")
-                result["label"] = app.Request("System", "globalStr0+:0:0:0") or ""
+                result["label"] = _read_str0(app) or ""
             except Exception:
                 result["label"] = ""
 
             # Block type (category)
             try:
                 app.Execute(f"globalStr0 = GetBlockType({block_id});")
-                result["blockType"] = app.Request("System", "globalStr0+:0:0:0") or ""
+                result["blockType"] = _read_str0(app) or ""
             except Exception:
                 result["blockType"] = ""
 
             # Specific block name
             try:
                 app.Execute(f"globalStr0 = BlockName({block_id});")
-                block_name = app.Request("System", "globalStr0+:0:0:0") or ""
+                block_name = _read_str0(app) or ""
                 result["blockName"] = block_name
             except Exception:
                 block_name = ""
@@ -1981,9 +2110,20 @@ def block_info(query: Optional[str] = None, block_id: Optional[int] = None,
             # Library
             try:
                 app.Execute(f"globalStr0 = GetLibraryPathName({block_id}, 2);")
-                result["library"] = app.Request("System", "globalStr0+:0:0:0") or ""
+                result["library"] = _read_str0(app) or ""
             except Exception:
                 result["library"] = ""
+
+            # Every read above swallows its exception and falls back to "". If all
+            # three came back empty there is no evidence the block exists at all, and
+            # reporting success would pass a missing block off as a nameless real one.
+            # Deliberately all three, not BlockName alone: an object with any identity
+            # (a text block may have a label but no block name) is never rejected.
+            if not (result["label"] or result["blockType"] or result["blockName"]):
+                return _error(ErrorCode.BLOCK_NOT_FOUND,
+                              f"Block {block_id} not found in the model",
+                              blockId=block_id,
+                              suggestion="Use block_list to see the block IDs in the model.")
 
             # Connectors
             connectors = []
@@ -1998,15 +2138,11 @@ def block_info(query: Optional[str] = None, block_id: Optional[int] = None,
 
                     try:
                         app.Execute(f'globalStr0 = GetConName({block_id}, {conn_idx});')
-                        con_name = app.Request("System", "globalStr0+:0:0:0") or ""
+                        con_name = _read_str0(app) or ""
                     except Exception:
                         con_name = ""
 
-                    direction = "unknown"
-                    if "in" in con_name.lower():
-                        direction = "in"
-                    elif "out" in con_name.lower():
-                        direction = "out"
+                    direction = _get_connector_direction(con_name)
 
                     connector_entry = {
                         "connectorIndex": conn_idx,
@@ -2083,7 +2219,7 @@ def block_discover(library_name: str, block_name: str, model_id: Optional[str] =
         # Verify block
         log(f"Executing: globalStr0 = BlockName({temp_block_id})")
         app.Execute(f"globalStr0 = BlockName({temp_block_id});")
-        verify_name = app.Request("System", "globalStr0+:0:0:0")
+        verify_name = _read_str0(app)
         log(f"BlockName result: '{verify_name}'")
 
         # Read all connectors
@@ -2091,7 +2227,7 @@ def block_discover(library_name: str, block_name: str, model_id: Optional[str] =
         try:
             log(f"Executing: globalStr0 = GetNumCons({temp_block_id})")
             app.Execute(f"globalStr0 = GetNumCons({temp_block_id});")
-            num_cons_raw = app.Request("System", "globalStr0+:0:0:0")
+            num_cons_raw = _read_str0(app)
             log(f"GetNumCons raw result: '{num_cons_raw}'")
             num_cons = int(parse_float(num_cons_raw))
             log(f"GetNumCons parsed: {num_cons}")
@@ -2108,7 +2244,7 @@ def block_discover(library_name: str, block_name: str, model_id: Optional[str] =
                     app.Execute(cmd)
                     log(f"Execute done for conn {conn_idx}")
 
-                    con_name_raw = app.Request("System", "globalStr0+:0:0:0")
+                    con_name_raw = _read_str0(app)
                     log(f"Request raw result: '{con_name_raw}' (type={type(con_name_raw).__name__})")
                     con_name = con_name_raw or ""
                     log(f"con_name = '{con_name}'")
@@ -2117,12 +2253,7 @@ def block_discover(library_name: str, block_name: str, model_id: Optional[str] =
                     log(f"EXCEPTION getting connector name: {type(e).__name__}: {e}")
 
                 # Direction
-                direction = "unknown"
-                if con_name:
-                    if "in" in con_name.lower():
-                        direction = "in"
-                    elif "out" in con_name.lower():
-                        direction = "out"
+                direction = _get_connector_direction(con_name)
                 log(f"direction = '{direction}'")
 
                 # Array connector?
@@ -2226,7 +2357,7 @@ def _enumerate_dialog_items(app, block_id, max_dialog_id: int = 200) -> list:
     for dialog_id in range(max_dialog_id):
         try:
             app.Execute(f"globalStr0 = DIGetName({block_id}, {dialog_id});")
-            var_name = app.Request("System", "globalStr0+:0:0:0") or ""
+            var_name = _read_str0(app) or ""
             if not var_name or var_name == "Unused":
                 unused_count += 1
                 if unused_count > 20:
@@ -2246,7 +2377,7 @@ def _enumerate_dialog_items(app, block_id, max_dialog_id: int = 200) -> list:
             if item_type in (5, 8, 21):
                 try:
                     app.Execute(f'globalStr0 = GetDialogVariable({block_id}, "{var_name}", 0, 0);')
-                    value = app.Request("System", "globalStr0+:0:0:0")
+                    value = _read_str0(app)
                 except Exception:
                     pass
             var_info = {
@@ -2371,11 +2502,11 @@ def block_introspect(block_id=None, library_name=None, block_name=None,
             # resolve block type name + library path
             if not resolved_block_name:
                 app.Execute(f"globalStr0 = BlockName({target_block_id});")
-                resolved_block_name = app.Request("System", "globalStr0+:0:0:0") or ""
+                resolved_block_name = _read_str0(app) or ""
             app.Execute(f'globalStr0 = GetLibraryPathName({target_block_id}, 1);')
-            library_dir = app.Request("System", "globalStr0+:0:0:0") or ""
+            library_dir = _read_str0(app) or ""
             app.Execute(f'globalStr0 = GetLibraryPathName({target_block_id}, 2);')
-            library_name = app.Request("System", "globalStr0+:0:0:0") or ""
+            library_name = _read_str0(app) or ""
             library_path = os.path.join(library_dir, library_name) if library_dir else library_name
 
             # offline STAT half (graceful degrade)
@@ -2394,7 +2525,7 @@ def block_introspect(block_id=None, library_name=None, block_name=None,
                         try:
                             app.Execute(
                                 f'globalStr0 = getStaticVariable({target_block_id}, "{v.name}", 0, 0);')
-                            entry["value"] = app.Request("System", "globalStr0+:0:0:0")
+                            entry["value"] = _read_str0(app)
                         except Exception:
                             entry["value"] = None
                     else:
@@ -2650,7 +2781,7 @@ def block_set_value(block_id: int, dialog_number, value,
         if read_back == "-1" or read_back == "-1,0":
             # Check if block actually exists
             app.Execute(f"globalStr0 = BlockName({block_id});")
-            block_name = app.Request("System", "globalStr0+:0:0:0") or ""
+            block_name = _read_str0(app) or ""
             if not block_name:
                 return _error(ErrorCode.BLOCK_NOT_FOUND,
                               f"Block {block_id} does not exist.",
@@ -2761,12 +2892,12 @@ def _persist_popup_change(app) -> dict:
     try:
         # Get current model name and path
         app.Execute("globalStr0 = GetModelName();")
-        model_name = app.Request("System", "globalStr0+:0:0:0")
+        model_name = _read_str0(app)
         if not model_name:
             return {"success": False, "error": "No model open"}
 
-        app.Execute(f'globalStr0 = GetModelPath("{model_name}");')
-        model_path = app.Request("System", "globalStr0+:0:0:0")
+        app.Execute(f'globalStr0 = GetModelPath("{_escape_modl_string(model_name)}");')
+        model_path = _read_str0(app)
         full_path = (model_path + model_name).replace("\\", "/")
 
         # Save current state
@@ -2784,7 +2915,12 @@ def _persist_popup_change(app) -> dict:
         return {"success": False, "error": str(e)}
 
 
-# Activity delay option constants (0-based popup indices, verified via GetDialogItemLabel)
+# Activity delay option constants - VERIFIED against the block's own source.
+# Item.lbr's Activity ModL defines DELAY_IS_CONSTANT=1, DELAY_IS_CONNECTOR=2,
+# DELAY_IS_ATTRIBUTE=3, DELAY_IS_DISTRIBUTION=4, DELAY_IS_TABLE=5. Unlike Workstation,
+# Activity does have the connector as a popup row. (This comment used to say
+# "verified via GetDialogItemLabel"; that call returns empty for every popup, so it
+# never verified anything.)
 # 0="" (none), 1="a constant", 2="from the D connector",
 # 3="an item's attribute value", 4="specified by a distribution", 5="from a lookup table"
 DELAY_OPTIONS = {
@@ -2796,23 +2932,13 @@ DELAY_OPTIONS = {
     "table": 5          # From a lookup table
 }
 
-# Workstation delay option constants.
-# WARNING: STILL UNVERIFIED, and the evidence now points at these being WRONG.
-# Investigated 2026-09-15 (gap sweep G1) against ExtendSim 2024 R1:
-#   - GetDialogItemLabel returns empty for EVERY popup on Activity, Create,
-#     Workstation and Shutdown alike. The older claim that Activity was verified
-#     through it, and that Workstation was the exception, is wrong on both halves.
-#   - DialogItemVisible also cannot help: it reads 0 for every item while the
-#     block dialog is closed, which is the only state a headless run has.
-#   - The Workstation and Activity help text carry the SAME sentence: "the delay
-#     will be a constant, from the D connector, an attribute value, specified by
-#     a distribution, or from a lookup table" - five options, same order. If that
-#     is the popup order, the map below is missing "from the D connector" and so
-#     shifts attribute/distribution/table down by one: asking for "distribution"
-#     would select "an attribute value". Same failure class as BUG-004.
-# Not changed on circumstantial evidence. Closing this needs someone to open a
-# Workstation dialog in the GUI and read the popup. Until then the affected
-# delay types return a warning to the caller (see workstation_set_config).
+# Workstation delay option constants - VERIFIED against the block's own source.
+# Item.lbr's Workstation ModL defines: DELAY_IS_CONSTANT=1, DELAY_IS_ATTRIBUTE=2,
+# DELAY_IS_DISTRIBUTION=3, DELAY_IS_TABLE=4, DELAY_IS_CONNECTOR=1000. The connector
+# value is a sentinel, not a popup row: connecting the D connector overrides the
+# delay automatically. (Checked 2026-09-23 after a warning in 1.22.2-1.22.3 wrongly said this
+# map might be off by one - that came from reading the block's help text, which
+# lists the ways a delay can be set rather than the popup's rows.)
 WORKSTATION_DELAY_OPTIONS = {
     "fixed": 1,       # A constant
     "attribute": 2,   # An item's attribute value
@@ -3287,7 +3413,7 @@ def _validate_block_exists(app, block_id: int, operation: str = "operation") -> 
     """
     try:
         app.Execute(f"globalStr0 = BlockName({block_id});")
-        name = app.Request("System", "globalStr0+:0:0:0")
+        name = _read_str0(app)
         if not name:
             return {
                 "success": False,
@@ -3315,7 +3441,7 @@ def _validate_model_open(app) -> dict:
     """
     try:
         app.Execute("globalStr0 = GetModelName();")
-        name = app.Request("System", "globalStr0+:0:0:0")
+        name = _read_str0(app)
         if not name:
             return {
                 "success": False,
@@ -3345,7 +3471,7 @@ def _validate_block_type(app, block_id: int, expected_type: str) -> dict:
     """
     try:
         app.Execute(f"globalStr0 = BlockName({block_id});")
-        actual_name = app.Request("System", "globalStr0+:0:0:0")
+        actual_name = _read_str0(app)
         if not actual_name:
             return {
                 "success": False,
@@ -3507,11 +3633,12 @@ def model_overview(model_id: Optional[str] = None) -> dict:
 
         # 1. Model name
         app.Execute("globalStr0 = GetModelName();")
-        model_name = app.Request("System", "globalStr0+:0:0:0") or ""
+        model_name = _read_str0(app) or ""
 
-        # 2. Block count (fast — single ModL call)
-        app.Execute("global0 = NumBlocks();")
-        num_blocks = int(parse_float(app.Request("System", "global0+:0:0:0")) or 0)
+        # 2. Object counts. This used to report NumBlocks() as totalBlocks, but that
+        # counts every slot - anchor points and empty slots included: Bank.mox showed
+        # 703 "blocks" for 50 real ones. totalBlocks now matches block_list.
+        counts = _count_model_objects(app)
 
         # 3. Hierarchy structure with duplicate detection
         hier_result = hierarchy_list(model_id)
@@ -3588,27 +3715,43 @@ def model_overview(model_id: Optional[str] = None) -> dict:
                 "timeUnits": setup_result.get("timeUnits"),
             }
 
-        # 6. AI context (if any)
+        # 6. AI context (if any). context_get nests the values under "context"; this
+        # used to read them from the top level, so a model WITH context always showed
+        # purpose/assumptions/tags/notes as None.
         ctx_result = context_get(model_id)
         ai_context = None
         if ctx_result.get("success") and ctx_result.get("exists"):
+            stored = ctx_result.get("context", {})
             ai_context = {
-                "purpose": ctx_result.get("purpose"),
-                "assumptions": ctx_result.get("assumptions"),
-                "tags": ctx_result.get("tags"),
-                "notes": ctx_result.get("notes"),
+                "purpose": stored.get("purpose"),
+                "assumptions": stored.get("assumptions"),
+                "tags": stored.get("tags"),
+                "notes": stored.get("notes"),
             }
 
-        return {
+        # A section that could not be read is reported, not passed off as empty.
+        section_errors = {
+            name: r.get("error", "failed")
+            for name, r in (("hierarchies", hier_result), ("databases", db_result),
+                            ("simulationSetup", setup_result), ("aiContext", ctx_result))
+            if r.get("success") is False
+        }
+
+        result = {
             "success": True,
             "name": model_name,
-            "totalBlocks": num_blocks,
+            "totalBlocks": counts["blocks"],
+            "hierarchicalBlocks": counts["hierarchicalBlocks"],
+            "textBlocks": counts["textBlocks"],
             "hierarchySummary": hierarchy_summary,
             "totalHierarchies": len(hierarchies),
             "databases": databases,
             "simulationSetup": sim_setup,
             "aiContext": ai_context,
         }
+        if section_errors:
+            result["sectionErrors"] = section_errors
+        return result
     except Exception as e:
         return _com_error(e, "model_overview")
 
@@ -3621,8 +3764,15 @@ def model_snapshot(model_id: Optional[str] = None) -> dict:
         if not model_check.get("success"):
             return model_check
 
+        # Fail closed: both readers answer a COM failure with success False and an
+        # empty list. Passing that through as a successful snapshot would show the
+        # client an EMPTY model - the same hole wave 5 closed in the readers themselves.
         blocks_result = block_list(model_id=model_id)
+        if blocks_result.get("success") is False:
+            return blocks_result
         connections_result = connection_list(model_id=model_id)
+        if connections_result.get("success") is False:
+            return connections_result
 
         blocks = blocks_result.get("blocks", [])
         connections = connections_result.get("connections", [])
@@ -3667,7 +3817,7 @@ def _enumerate_blocks_by_name(app, target_names=None):
         current_id = next_id
 
         app.Execute(f"globalStr0 = BlockName({next_id});")
-        name = app.Request("System", "globalStr0+:0:0:0") or ""
+        name = _read_str0(app) or ""
 
         if target_names is None or name in target_names:
             results.append((next_id, name))
@@ -3718,7 +3868,7 @@ def simulation_get_results(model_id: Optional[str] = None, block_ids: Optional[l
             blocks = []
             for bid in block_ids_set:
                 app.Execute(f"globalStr0 = BlockName({bid});")
-                name = app.Request("System", "globalStr0+:0:0:0") or ""
+                name = _read_str0(app) or ""
                 if name in STATS_BLOCK_NAMES:
                     blocks.append((bid, name))
         else:
@@ -3729,7 +3879,7 @@ def simulation_get_results(model_id: Optional[str] = None, block_ids: Optional[l
             # Get label only for matched blocks (not all 24k)
             try:
                 app.Execute(f"globalStr0 = GetBlockLabel({block_id});")
-                label = app.Request("System", "globalStr0+:0:0:0") or ""
+                label = _read_str0(app) or ""
             except Exception:
                 label = ""
 
@@ -4032,7 +4182,7 @@ def execute_command(command: str, get_result: bool = False,
         # Optionally get result
         if get_result:
             if result_type == "string":
-                result["result"] = app.Request("System", "globalStr0+:0:0:0")
+                result["result"] = _read_str0(app)
             else:
                 raw = app.Request("System", "global0+:0:0:0")
                 result["resultRaw"] = raw
@@ -4247,6 +4397,19 @@ def select_item_in_set_mode(block_id: int,
 # DATABASE OPERATIONS
 # ============================================================================
 
+# ExtendSim's database API is 1-based throughout: database, table, field and record
+# indices all start at 1, and 0 is never a valid index - DBRecordsInsert even uses 0
+# to mean "append". Established 2026-09-23 from the ModL manual, from ExtendSim's own
+# blocks (for(i=1; i<=numRecs) in 77 vendor loops), and from this server's own output,
+# which enumerated from 0 and so showed a phantom first table/field/row and dropped the
+# last one. The tools keep exposing 0-based RECORD numbers, as the user manual always
+# documented; _es_rec is the single place that translation happens. Any index that comes
+# back from ExtendSim is compared with > 0 for "found" and <= 0 for "not found".
+def _es_rec(record: int) -> int:
+    """0-based record number (tool API) -> ExtendSim's 1-based record index."""
+    return record + 1
+
+
 def _resolve_db_indices(app, db_name: str, table_name: Optional[str] = None,
                         field_name: Optional[str] = None) -> dict:
     """Resolves database/table/field names to numeric indices.
@@ -4258,7 +4421,7 @@ def _resolve_db_indices(app, db_name: str, table_name: Optional[str] = None,
     app.Execute(f'globalInt0 = DBDatabaseGetIndex("{_escape_modl_string(db_name)}");')
     raw = app.Request("System", "globalInt0+:0:0:0")
     db_idx = int(parse_float(raw))
-    if db_idx < 0:
+    if db_idx <= 0:
         return _error(ErrorCode.DATABASE_NOT_FOUND,
                       f"Database '{db_name}' not found", databaseName=db_name)
 
@@ -4268,7 +4431,7 @@ def _resolve_db_indices(app, db_name: str, table_name: Optional[str] = None,
         app.Execute(f'globalInt0 = DBTableGetIndex({db_idx}, "{_escape_modl_string(table_name)}");')
         raw = app.Request("System", "globalInt0+:0:0:0")
         tbl_idx = int(parse_float(raw))
-        if tbl_idx < 0:
+        if tbl_idx <= 0:
             return _error(ErrorCode.TABLE_NOT_FOUND,
                           f"Table '{table_name}' not found in database '{db_name}'",
                           databaseName=db_name, tableName=table_name)
@@ -4279,7 +4442,7 @@ def _resolve_db_indices(app, db_name: str, table_name: Optional[str] = None,
         app.Execute(f'globalInt0 = DBFieldGetIndex({db_idx}, {tbl_idx}, "{_escape_modl_string(field_name)}");')
         raw = app.Request("System", "globalInt0+:0:0:0")
         fld_idx = int(parse_float(raw))
-        if fld_idx < 0:
+        if fld_idx <= 0:
             return _error(ErrorCode.FIELD_NOT_FOUND,
                           f"Field '{field_name}' not found in table '{table_name}'",
                           databaseName=db_name, tableName=table_name, fieldName=field_name)
@@ -4306,9 +4469,9 @@ def db_list(model_id: Optional[str] = None) -> dict:
         num_dbs = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
         databases = []
-        for db_idx in range(num_dbs):
+        for db_idx in range(1, num_dbs + 1):
             app.Execute(f'globalStr0 = DBDatabaseGetName({db_idx});')
-            db_name = app.Request("System", "globalStr0+:0:0:0")
+            db_name = _read_str0(app)
             if not db_name:
                 continue
 
@@ -4317,15 +4480,22 @@ def db_list(model_id: Optional[str] = None) -> dict:
             num_tables = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
             tables = []
-            for tbl_idx in range(num_tables):
+            for tbl_idx in range(1, num_tables + 1):
                 app.Execute(f'globalStr0 = DBTableGetName({db_idx}, {tbl_idx});')
-                tbl_name = app.Request("System", "globalStr0+:0:0:0")
+                tbl_name = _read_str0(app)
 
                 app.Execute(f'globalInt0 = DBFieldsGetNum({db_idx}, {tbl_idx});')
                 num_fields = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
                 app.Execute(f'globalInt0 = DBRecordsGetNum({db_idx}, {tbl_idx});')
                 num_records = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
+
+                # DBTablesGetNum is not always a count of live tables: on 2026-09-23 it
+                # said 7 for _RightClickConnect, whose slot 7 has no name and answers -1
+                # for records and fields. A slot like that does not exist - skip it,
+                # as the database loop above skips unnamed database slots.
+                if not tbl_name and num_records < 0:
+                    continue
 
                 tables.append({
                     "name": tbl_name or f"table_{tbl_idx}",
@@ -4373,9 +4543,9 @@ def db_table_info(database_name: str, table_name: str,
 
         # Get field names and types
         fields = []
-        for fld_idx in range(num_fields):
+        for fld_idx in range(1, num_fields + 1):
             app.Execute(f'globalStr0 = DBFieldGetName({db_idx}, {tbl_idx}, {fld_idx});')
-            fld_name = app.Request("System", "globalStr0+:0:0:0")
+            fld_name = _read_str0(app)
 
             app.Execute(f'globalInt0 = DBFieldGetProperties({db_idx}, {tbl_idx}, {fld_idx}, 1);')
             fld_type_num = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
@@ -4417,10 +4587,10 @@ def db_get_value(database_name: str, table_name: str, field_name: str,
         fld_idx = indices["fldIdx"]
 
         if as_string:
-            app.Execute(f'globalStr0 = DBDataGetAsString({db_idx}, {tbl_idx}, {fld_idx}, {record});')
-            value = app.Request("System", "globalStr0+:0:0:0")
+            app.Execute(f'globalStr0 = DBDataGetAsString({db_idx}, {tbl_idx}, {fld_idx}, {_es_rec(record)});')
+            value = _read_str0(app)
         else:
-            app.Execute(f'global0 = DBDataGetAsNumber({db_idx}, {tbl_idx}, {fld_idx}, {record});')
+            app.Execute(f'global0 = DBDataGetAsNumber({db_idx}, {tbl_idx}, {fld_idx}, {_es_rec(record)});')
             raw = app.Request("System", "global0+:0:0:0")
             value = parse_float(raw)
 
@@ -4451,7 +4621,8 @@ def db_set_value(database_name: str, table_name: str, field_name: str,
         fld_idx = indices["fldIdx"]
 
         # Use Poke for writing: DB:#dbIdx:tblIdx:rec:fld:rec:fld
-        poke_addr = f"DB:#{db_idx}:{tbl_idx}:{record}:{fld_idx}:{record}:{fld_idx}"
+        rec = _es_rec(record)
+        poke_addr = f"DB:#{db_idx}:{tbl_idx}:{rec}:{fld_idx}:{rec}:{fld_idx}"
         app.Poke("System", poke_addr, str(value))
 
         return {
@@ -4510,27 +4681,25 @@ def db_get_records(database_name: str, table_name: str,
             for fname in fields:
                 app.Execute(f'globalInt0 = DBFieldGetIndex({db_idx}, {tbl_idx}, "{fname}");')
                 fidx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-                if fidx >= 0:
+                if fidx > 0:
                     field_indices.append(fidx)
                     field_names.append(fname)
         else:
             # No field names specified - use indices as names
-            for fidx in range(num_fields):
-                field_indices.append(fidx)
-                field_names.append(f"field_{fidx}")
+            for i in range(num_fields):
+                field_indices.append(i + 1)          # ExtendSim fields are 1-based
+                field_names.append(f"field_{i}")
 
-        # Detect field types to choose correct read method
-        # DBFieldGetProperties(which=1) returns different type codes:
-        #   0=real, 1=integer, 2=string, 3=boolean (documented DB_FIELD_TYPE_MAP)
-        #   -1=linked/lookup field (string), 16384=string, 16385=linked string
-        # Treat anything that's not clearly numeric as string to be safe
-        NUMERIC_FIELD_TYPES = {0, 1, 3, 8192, 4096}  # real, integer, boolean, real(alt), integer(alt)
+        # Detect field types to choose the read method (codes: DB_FIELD_TYPE_MAP).
+        # Only the numeric formats are read as numbers; anything else - the string
+        # formats, and -1 for a linked field - is read as a string to be safe.
         field_types = {}  # fldIdx -> "string" | "numeric"
         for fidx in field_indices:
             try:
                 app.Execute(f'globalInt0 = DBFieldGetProperties({db_idx}, {tbl_idx}, {fidx}, 1);')
                 ftype = int(parse_float(app.Request("System", "globalInt0+:0:0:0")) or 0)
-                field_types[fidx] = "numeric" if ftype in NUMERIC_FIELD_TYPES else "string"
+                is_numeric = ftype in DB_FIELD_TYPE_MAP and ftype not in DB_STRING_FIELD_TYPES
+                field_types[fidx] = "numeric" if is_numeric else "string"
             except Exception:
                 field_types[fidx] = "numeric"  # Safe default
 
@@ -4540,10 +4709,10 @@ def db_get_records(database_name: str, table_name: str,
             row = {}
             for fidx, fname in zip(field_indices, field_names):
                 if field_types.get(fidx) == "string":
-                    app.Execute(f'globalStr0 = DBDataGetAsString({db_idx}, {tbl_idx}, {fidx}, {rec});')
-                    row[fname] = app.Request("System", "globalStr0+:0:0:0")
+                    app.Execute(f'globalStr0 = DBDataGetAsString({db_idx}, {tbl_idx}, {fidx}, {_es_rec(rec)});')
+                    row[fname] = _read_str0(app)
                 else:
-                    app.Execute(f'global0 = DBDataGetAsNumber({db_idx}, {tbl_idx}, {fidx}, {rec});')
+                    app.Execute(f'global0 = DBDataGetAsNumber({db_idx}, {tbl_idx}, {fidx}, {_es_rec(rec)});')
                     raw = app.Request("System", "global0+:0:0:0")
                     row[fname] = parse_float(raw)
             records.append(row)
@@ -4581,7 +4750,13 @@ def db_add_records(database_name: str, table_name: str,
         app.Execute(f'globalInt0 = DBRecordsGetNum({db_idx}, {tbl_idx});')
         before_count = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-        insert_pos = position if position is not None else before_count
+        # The manual: DBRecordsInsert(..., insertAtRecord, n) inserts AT that record, or
+        # appends when insertAtRecord is 0. Passing the current count used to insert the
+        # new records before the old last one instead of after it.
+        if position is None or position >= before_count:
+            insert_pos = 0
+        else:
+            insert_pos = _es_rec(max(position, 0))
         app.Execute(f'DBRecordsInsert({db_idx}, {tbl_idx}, {insert_pos}, {count});')
 
         # Get new record count
@@ -4625,7 +4800,7 @@ def db_delete_records(database_name: str, table_name: str,
         app.Execute(f'globalInt0 = DBRecordsGetNum({db_idx}, {tbl_idx});')
         before_count = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-        app.Execute(f'DBRecordsDelete({db_idx}, {tbl_idx}, {start_record}, {end_record});')
+        app.Execute(f'DBRecordsDelete({db_idx}, {tbl_idx}, {_es_rec(start_record)}, {_es_rec(end_record)});')
 
         # Get new record count
         app.Execute(f'globalInt0 = DBRecordsGetNum({db_idx}, {tbl_idx});')
@@ -5203,7 +5378,7 @@ def block_get_stats(block_id: int, model_id: Optional[str] = None) -> dict:
 
         # Get block type
         app.Execute(f"globalStr0 = BlockName({block_id});")
-        block_name = app.Request("System", "globalStr0+:0:0:0")
+        block_name = _read_str0(app)
         if not block_name:
             return _error(ErrorCode.BLOCK_NOT_FOUND,
                          f"Block {block_id} not found", blockId=block_id)
@@ -5217,7 +5392,7 @@ def block_get_stats(block_id: int, model_id: Optional[str] = None) -> dict:
 
         # Get block label
         app.Execute(f'globalStr0 = GetBlockLabel({block_id});')
-        label = app.Request("System", "globalStr0+:0:0:0") or str(block_id)
+        label = _read_str0(app) or str(block_id)
 
         stats = {}
         for friendly_name, dialog_var in stat_vars.items():
@@ -5585,18 +5760,6 @@ def workstation_set_config(block_id: int,
 
         # Set delay option with verification (Workstation has different popup indices than Activity)
         delay_opt = WORKSTATION_DELAY_OPTIONS.get(delay_type.lower(), 1)
-        # G1: these indices have never been confirmed against the real popup, and the
-        # help text suggests they are shifted by one. "fixed" is index 1 either way, so
-        # only the later options are in doubt. Tell the caller rather than leaving the
-        # doubt in a source comment they will never read.
-        if delay_type.lower() in ("attribute", "distribution", "table"):
-            warnings.append(
-                f"Workstation delay option '{delay_type}' maps to popup index {delay_opt}, "
-                "which is UNVERIFIED. ExtendSim exposes no way to read this popup's labels "
-                "over COM, and the block's help text suggests the index may be off by one "
-                "(selecting the neighbouring option instead). Confirm the delay behaves as "
-                "intended, or set Delay_Options_pop directly with block_set_value."
-            )
         pop_result = _set_popup_verified(app, block_id, "Delay_Options_pop", delay_opt)
         if not pop_result["success"]:
             warnings.append(pop_result["warning"])
@@ -5686,7 +5849,7 @@ def _write_equation_text_verified(app, block_id: int, equation: str, operation: 
     app.Execute(f'SetDialogVariable({block_id}, "EQ_EquationText", "{escaped}", 0, 0);')
 
     app.Execute(f'globalStr0 = GetDialogVariable({block_id}, "EQ_EquationText", 0, 0);')
-    readback = app.Request("System", "globalStr0+:0:0:0")
+    readback = _read_str0(app)
 
     if readback != normalized:
         return _error(ErrorCode.SET_VALUE_FAILED,
@@ -7135,18 +7298,19 @@ def hierarchy_list(model_id: Optional[str] = None) -> dict:
         app = get_extendsim_app()
         hierarchies = []
 
-        # Start iteration from block 0, which=1 for H-blocks only
-        app.Execute("global0 = ObjectIDNext(0, 1);")
+        # which=1 walks H-blocks. Start from -1 like ExtendSim's own loops: starting
+        # from 0 (and stopping at 0) would skip an H-block that is block 0.
+        app.Execute("global0 = ObjectIDNext(-1, 1);")
         current = int(parse_float(app.Request("System", "global0+:0:0:0")))
 
-        while current > 0:
+        while current >= 0:
             # Get block name
             app.Execute(f'globalStr0 = BlockName({current});')
-            block_name = app.Request("System", "globalStr0+:0:0:0") or ""
+            block_name = _read_str0(app) or ""
 
             # Get block label
             app.Execute(f'globalStr0 = GetBlockLabel({current});')
-            label = app.Request("System", "globalStr0+:0:0:0") or ""
+            label = _read_str0(app) or ""
 
             # Get parent H-block (-1 if top-level)
             app.Execute(f'global0 = GetEnclosingHblockNum2({current});')
@@ -7221,13 +7385,13 @@ def hierarchy_get_contents(block_id: int,
 
             # Get block info
             app.Execute(f'globalStr0 = BlockName({gid});')
-            name = app.Request("System", "globalStr0+:0:0:0") or ""
+            name = _read_str0(app) or ""
 
             app.Execute(f'globalStr0 = GetBlockLabel({gid});')
-            label = app.Request("System", "globalStr0+:0:0:0") or ""
+            label = _read_str0(app) or ""
 
             app.Execute(f'globalStr0 = GetLibraryPathName({gid}, 2);')
-            lib = app.Request("System", "globalStr0+:0:0:0") or ""
+            lib = _read_str0(app) or ""
 
             app.Execute(f'global0 = GetBlockTypeNumeric({gid});')
             gtype = int(parse_float(app.Request("System", "global0+:0:0:0")))
@@ -7254,7 +7418,7 @@ def hierarchy_get_contents(block_id: int,
                         continue
                     try:
                         app.Execute(f'globalStr0 = GetConName({gid}, {conn_idx});')
-                        con_name = app.Request("System", "globalStr0+:0:0:0") or ""
+                        con_name = _read_str0(app) or ""
                     except Exception:
                         con_name = ""
                     if node_index not in node_map:
@@ -7270,7 +7434,8 @@ def hierarchy_get_contents(block_id: int,
             if len(internal_eps) == 2:
                 ep0, ep1 = internal_eps[0], internal_eps[1]
                 # Put "out" first
-                if "in" in ep0[2].lower() and "out" in ep1[2].lower():
+                if (_get_connector_direction(ep0[2]) == "in"
+                        and _get_connector_direction(ep1[2]) == "out"):
                     ep0, ep1 = ep1, ep0
                 connections.append({
                     "sourceBlockId": ep0[0],
@@ -7463,8 +7628,8 @@ def optimizer_get_results(block_id: int,
         # Read string outputs (edittext type)
         for var_name in ["Convergence", "ElapsedTime"]:
             try:
-                app.Execute(f'globalStr0 = GetDialogVariableString({block_id}, "{var_name}", 0, 0);')
-                val_str = app.Request("System", "globalStr0+:0:0:0") or ""
+                # GetDialogVariable, not the non-existent GetDialogVariableString
+                val_str = _get_dialog_string(app, block_id, var_name) or ""
                 results[var_name] = val_str if val_str else None
             except Exception:
                 results[var_name] = None
@@ -7585,13 +7750,13 @@ def _collect_sm_results(app, sm_id: int, total_scenarios: int):
         try:
             # Col 1: Scenario Name
             app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "Scenarios_tbl", {row}, 1);')
-            scenario["name"] = app.Request("System", "globalStr0+:0:0:0") or ""
+            scenario["name"] = _read_str0(app) or ""
 
             # Remaining columns: factors and responses
             values = []
             for c in range(2, num_cols):
                 app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "Scenarios_tbl", {row}, {c});')
-                val = app.Request("System", "globalStr0+:0:0:0") or ""
+                val = _read_str0(app) or ""
                 # Try to parse as number (handle Swedish decimal separator)
                 if val:
                     try:
@@ -7760,7 +7925,7 @@ def _read_sm_config(app, auto_select_all: bool = True):
     try:
         for i in range(total):
             app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "Scenarios_tbl", {i}, {SCENARIO_SELECTCOL});')
-            val = app.Request("System", "globalStr0+:0:0:0") or ""
+            val = _read_str0(app) or ""
             if val != "" and val != "0":
                 selected_count += 1
                 selected_scenarios.append(i)
@@ -7879,7 +8044,7 @@ def scenario_manager_run(model_id: Optional[str] = None,
             try:
                 # Read current scenario progress — lighter than GetSimulationPhase
                 app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "CurrentScenarioNumber_txt", 0, 0);')
-                scenario_txt = app.Request("System", "globalStr0+:0:0:0") or ""
+                scenario_txt = _read_str0(app) or ""
                 consecutive_failures = 0  # Reset on success
 
                 if scenario_txt and scenario_txt != last_scenario:
@@ -7958,7 +8123,7 @@ def _get_sm_block_id(app) -> Optional[int]:
         # Verify cached ID is still a Scenario Manager block
         try:
             app.Execute(f"globalStr0 = BlockName({_cached_sm_block_id});")
-            name = app.Request("System", "globalStr0+:0:0:0") or ""
+            name = _read_str0(app) or ""
             if name == "Scenario Manager":
                 return _cached_sm_block_id
         except Exception:
@@ -7993,13 +8158,13 @@ def scenario_manager_status(model_id: Optional[str] = None) -> dict:
         run_txt = ""
         try:
             app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "CurrentScenarioNumber_txt", 0, 0);')
-            scenario_txt = app.Request("System", "globalStr0+:0:0:0") or ""
+            scenario_txt = _read_str0(app) or ""
         except Exception:
             pass
 
         try:
             app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "CurrentRunNumber_txt", 0, 0);')
-            run_txt = app.Request("System", "globalStr0+:0:0:0") or ""
+            run_txt = _read_str0(app) or ""
         except Exception:
             pass
 
@@ -8029,7 +8194,7 @@ def scenario_manager_status(model_id: Optional[str] = None) -> dict:
 
         return result
     except Exception as e:
-        return _error(ErrorCode.OPTIMIZER_FAILED, str(e),
+        return _error(ErrorCode.MULTI_RUN_FAILED, str(e),
                       operation="scenario_manager_status")
 
 
@@ -8050,7 +8215,7 @@ def scenario_manager_get_results(model_id: Optional[str] = None) -> dict:
 
         total = sm_config.get("totalScenarios") or 0
         if total == 0:
-            return _error(ErrorCode.OPTIMIZER_FAILED,
+            return _error(ErrorCode.MULTI_RUN_FAILED,
                          "No scenarios found in Scenario Manager.")
 
         results = _collect_sm_results(app, sm_config["smBlockId"], total)
@@ -8062,7 +8227,7 @@ def scenario_manager_get_results(model_id: Optional[str] = None) -> dict:
             "scenarios": results
         }
     except Exception as e:
-        return _error(ErrorCode.OPTIMIZER_FAILED, str(e),
+        return _error(ErrorCode.MULTI_RUN_FAILED, str(e),
                       operation="scenario_manager_get_results")
 
 
@@ -8605,7 +8770,7 @@ def block_configure(block_id, config, model_id=None):
 
         # Detect block type via BlockName() → globalStr0
         app.Execute(f'globalStr0 = BlockName({block_id});')
-        block_name = app.Request("System", "globalStr0+:0:0:0").strip()
+        block_name = _read_str0(app).strip()
 
         if not block_name:
             return _error(ErrorCode.BLOCK_NOT_FOUND,
@@ -8721,6 +8886,35 @@ AI_CONTEXT_TABLE = "context"
 AI_HISTORY_TABLE = "changeHistory"
 
 
+# DBTableCreate, DBFieldCreate, DBTableDelete and DBDatabaseDelete take NAMES; the
+# index forms are the ...ByIndex variants (ExtendSim's CodeCompletion/Application.ini).
+# Passing indices to the name forms fails without an error - db_create never created a
+# table, and the AI context tables were never created at all. Found live 2026-09-23.
+def _db_table_create(app, db_idx: int, table_name: str) -> int:
+    """Create a table by database index; returns its index or raises."""
+    app.Execute(f'globalInt0 = DBTableCreateByIndex({db_idx}, "{_escape_modl_string(table_name)}");')
+    tbl_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
+    if tbl_idx <= 0:
+        raise RuntimeError(f"Failed to create table '{table_name}' (ExtendSim returned {tbl_idx})")
+    return tbl_idx
+
+
+def _db_field_create(app, db_idx: int, tbl_idx: int, field_name: str, type_name: str) -> int:
+    """Create a field of a db_create type name; returns its index (<= 0 on failure)."""
+    const = DB_FIELD_TYPE_REVERSE[type_name]
+    decimals = DB_FIELD_DECIMALS.get(type_name, 0)
+    app.Execute(f'globalInt0 = DBFieldCreateByIndex({db_idx}, {tbl_idx}, '
+                f'"{_escape_modl_string(field_name)}", {const}, {decimals}, 0, 0, 0);')
+    return int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
+
+
+def _db_string_field_create(app, db_idx: int, tbl_idx: int, field_name: str) -> int:
+    fld_idx = _db_field_create(app, db_idx, tbl_idx, field_name, "string")
+    if fld_idx <= 0:
+        raise RuntimeError(f"Failed to create field '{field_name}' (ExtendSim returned {fld_idx})")
+    return fld_idx
+
+
 def _ensure_context_db(app):
     """Create AI_Context database and tables if they don't exist.
 
@@ -8730,41 +8924,30 @@ def _ensure_context_db(app):
     app.Execute(f'globalInt0 = DBDatabaseGetIndex("{AI_CONTEXT_DB_NAME}");')
     db_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-    if db_idx < 0:
+    if db_idx <= 0:
         # Create database
         app.Execute(f'globalInt0 = DBDatabaseCreate("{AI_CONTEXT_DB_NAME}");')
         db_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-        if db_idx < 0:
+        if db_idx <= 0:
             raise RuntimeError("Failed to create AI_Context database")
 
     # Check/create "context" table
     app.Execute(f'globalInt0 = DBTableGetIndex({db_idx}, "{AI_CONTEXT_TABLE}");')
     ctx_tbl_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-    if ctx_tbl_idx < 0:
-        app.Execute(f'globalInt0 = DBTableCreate({db_idx}, "{AI_CONTEXT_TABLE}");')
-        ctx_tbl_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-        if ctx_tbl_idx < 0:
-            raise RuntimeError("Failed to create context table")
-        # Create fields: key (string, format=4), value (string, format=4)
-        # DBFieldCreate(dbIdx, tblIdx, fieldName, format, decimals, unique, readOnly, invisible)
-        # format 4 = string
-        app.Execute(f'DBFieldCreate({db_idx}, {ctx_tbl_idx}, "key", 4, 0, 0, 0, 0);')
-        app.Execute(f'DBFieldCreate({db_idx}, {ctx_tbl_idx}, "value", 4, 0, 0, 0, 0);')
+    if ctx_tbl_idx <= 0:
+        ctx_tbl_idx = _db_table_create(app, db_idx, AI_CONTEXT_TABLE)
+        for name in ("key", "value"):
+            _db_string_field_create(app, db_idx, ctx_tbl_idx, name)
 
     # Check/create "changeHistory" table
     app.Execute(f'globalInt0 = DBTableGetIndex({db_idx}, "{AI_HISTORY_TABLE}");')
     hist_tbl_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-    if hist_tbl_idx < 0:
-        app.Execute(f'globalInt0 = DBTableCreate({db_idx}, "{AI_HISTORY_TABLE}");')
-        hist_tbl_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-        if hist_tbl_idx < 0:
-            raise RuntimeError("Failed to create changeHistory table")
-        # Fields: timestamp (string), summary (string), details (string)
-        app.Execute(f'DBFieldCreate({db_idx}, {hist_tbl_idx}, "timestamp", 4, 0, 0, 0, 0);')
-        app.Execute(f'DBFieldCreate({db_idx}, {hist_tbl_idx}, "summary", 4, 0, 0, 0, 0);')
-        app.Execute(f'DBFieldCreate({db_idx}, {hist_tbl_idx}, "details", 4, 0, 0, 0, 0);')
+    if hist_tbl_idx <= 0:
+        hist_tbl_idx = _db_table_create(app, db_idx, AI_HISTORY_TABLE)
+        for name in ("timestamp", "summary", "details"):
+            _db_string_field_create(app, db_idx, hist_tbl_idx, name)
 
     return db_idx, ctx_tbl_idx, hist_tbl_idx
 
@@ -8773,7 +8956,7 @@ def _context_get_field_idx(app, db_idx, tbl_idx, field_name):
     """Get field index by name. Returns int >= 0 or raises."""
     app.Execute(f'globalInt0 = DBFieldGetIndex({db_idx}, {tbl_idx}, "{field_name}");')
     fld_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-    if fld_idx < 0:
+    if fld_idx <= 0:
         raise RuntimeError(f"Field '{field_name}' not found")
     return fld_idx
 
@@ -8788,9 +8971,9 @@ def _context_upsert(app, db_idx, tbl_idx, key, value):
 
     escaped_val = _escape_modl_string(str(value))
 
-    for i in range(num_records):
+    for i in range(1, num_records + 1):
         app.Execute(f'globalStr0 = DBDataGetAsString({db_idx}, {tbl_idx}, {key_fld}, {i});')
-        existing_key = app.Request("System", "globalStr0+:0:0:0")
+        existing_key = _read_str0(app)
         if existing_key == key:
             # Update existing row
             app.Execute(f'DBDataSetAsString({db_idx}, {tbl_idx}, {val_fld}, {i}, "{escaped_val}");')
@@ -8798,7 +8981,7 @@ def _context_upsert(app, db_idx, tbl_idx, key, value):
 
     # Insert new record (insertAt=0 means append at end)
     app.Execute(f'DBRecordsInsert({db_idx}, {tbl_idx}, 0, 1);')
-    new_idx = num_records
+    new_idx = num_records + 1   # an append lands at N+1
     escaped_key = _escape_modl_string(str(key))
     app.Execute(f'DBDataSetAsString({db_idx}, {tbl_idx}, {key_fld}, {new_idx}, "{escaped_key}");')
     app.Execute(f'DBDataSetAsString({db_idx}, {tbl_idx}, {val_fld}, {new_idx}, "{escaped_val}");')
@@ -8809,7 +8992,7 @@ def _context_read_all(app):
     app.Execute(f'globalInt0 = DBDatabaseGetIndex("{AI_CONTEXT_DB_NAME}");')
     db_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-    if db_idx < 0:
+    if db_idx <= 0:
         return None
 
     result = {"context": {}, "changeHistory": []}
@@ -8818,18 +9001,18 @@ def _context_read_all(app):
     app.Execute(f'globalInt0 = DBTableGetIndex({db_idx}, "{AI_CONTEXT_TABLE}");')
     ctx_tbl_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-    if ctx_tbl_idx >= 0:
+    if ctx_tbl_idx > 0:
         key_fld = _context_get_field_idx(app, db_idx, ctx_tbl_idx, "key")
         val_fld = _context_get_field_idx(app, db_idx, ctx_tbl_idx, "value")
 
         app.Execute(f'globalInt0 = DBRecordsGetNum({db_idx}, {ctx_tbl_idx});')
         num_records = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-        for i in range(num_records):
+        for i in range(1, num_records + 1):
             app.Execute(f'globalStr0 = DBDataGetAsString({db_idx}, {ctx_tbl_idx}, {key_fld}, {i});')
-            key = app.Request("System", "globalStr0+:0:0:0")
+            key = _read_str0(app)
             app.Execute(f'globalStr0 = DBDataGetAsString({db_idx}, {ctx_tbl_idx}, {val_fld}, {i});')
-            value = app.Request("System", "globalStr0+:0:0:0")
+            value = _read_str0(app)
 
             # Try to parse JSON values back to structured data
             try:
@@ -8841,7 +9024,7 @@ def _context_read_all(app):
     app.Execute(f'globalInt0 = DBTableGetIndex({db_idx}, "{AI_HISTORY_TABLE}");')
     hist_tbl_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-    if hist_tbl_idx >= 0:
+    if hist_tbl_idx > 0:
         ts_fld = _context_get_field_idx(app, db_idx, hist_tbl_idx, "timestamp")
         sum_fld = _context_get_field_idx(app, db_idx, hist_tbl_idx, "summary")
         det_fld = _context_get_field_idx(app, db_idx, hist_tbl_idx, "details")
@@ -8849,13 +9032,13 @@ def _context_read_all(app):
         app.Execute(f'globalInt0 = DBRecordsGetNum({db_idx}, {hist_tbl_idx});')
         num_records = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-        for i in range(num_records):
+        for i in range(1, num_records + 1):
             app.Execute(f'globalStr0 = DBDataGetAsString({db_idx}, {hist_tbl_idx}, {ts_fld}, {i});')
-            ts = app.Request("System", "globalStr0+:0:0:0")
+            ts = _read_str0(app)
             app.Execute(f'globalStr0 = DBDataGetAsString({db_idx}, {hist_tbl_idx}, {sum_fld}, {i});')
-            summary = app.Request("System", "globalStr0+:0:0:0")
+            summary = _read_str0(app)
             app.Execute(f'globalStr0 = DBDataGetAsString({db_idx}, {hist_tbl_idx}, {det_fld}, {i});')
-            details = app.Request("System", "globalStr0+:0:0:0")
+            details = _read_str0(app)
             result["changeHistory"].append({
                 "timestamp": ts,
                 "summary": summary,
@@ -8897,41 +9080,47 @@ def context_set(purpose: Optional[str] = None,
         if not validation["success"]:
             return validation
 
-        db_idx, ctx_tbl_idx, hist_tbl_idx = _ensure_context_db(app)
-
-        updated_keys = []
-
-        # Upsert each provided field
+        # Everything to write, as the strings that will be stored.
+        entries = []
         if purpose is not None:
-            _context_upsert(app, db_idx, ctx_tbl_idx, "purpose", purpose)
-            updated_keys.append("purpose")
-
+            entries.append(("purpose", str(purpose)))
         if key_blocks is not None:
-            _context_upsert(app, db_idx, ctx_tbl_idx, "keyBlocks", json.dumps(key_blocks))
-            updated_keys.append("keyBlocks")
-
+            entries.append(("keyBlocks", json.dumps(key_blocks)))
         if assumptions is not None:
-            _context_upsert(app, db_idx, ctx_tbl_idx, "assumptions", json.dumps(assumptions))
-            updated_keys.append("assumptions")
-
+            entries.append(("assumptions", json.dumps(assumptions)))
         if notes is not None:
-            _context_upsert(app, db_idx, ctx_tbl_idx, "notes", notes)
-            updated_keys.append("notes")
-
+            entries.append(("notes", str(notes)))
         if tags is not None:
-            _context_upsert(app, db_idx, ctx_tbl_idx, "tags", json.dumps(tags))
-            updated_keys.append("tags")
-
+            entries.append(("tags", json.dumps(tags)))
         if custom is not None:
             for k, v in custom.items():
-                val = json.dumps(v) if isinstance(v, (dict, list)) else str(v)
-                _context_upsert(app, db_idx, ctx_tbl_idx, k, val)
-                updated_keys.append(k)
-
-        # Append change history entry if provided
+                entries.append((str(k), json.dumps(v) if isinstance(v, (dict, list)) else str(v)))
+        summary = details = ""
         if change_entry is not None:
             summary = change_entry.get("summary", "")
             details = change_entry.get("details", "")
+
+        # Fail closed BEFORE writing anything. A ModL string holds at most 255
+        # characters; live (2026-09-23) a 397-character note was lost while context_set
+        # reported success. (Reading up to 255 back is safe: _read_str0 reads in pieces.)
+        checked = entries + [("changeEntry.summary", summary), ("changeEntry.details", details)]
+        too_long = [(name, len(text)) for name, text in checked if len(text) > _MODL_STRING_MAX]
+        if too_long:
+            listed = ", ".join(f"'{n}' ({c} characters)" for n, c in too_long)
+            return _error(ErrorCode.INVALID_PARAMETER,
+                          f"Context values can be at most {_MODL_STRING_MAX} characters "
+                          f"(ExtendSim's string limit); too long: {listed}. Nothing was written.",
+                          maxLength=_MODL_STRING_MAX)
+
+        db_idx, ctx_tbl_idx, hist_tbl_idx = _ensure_context_db(app)
+
+        updated_keys = []
+        for name, text in entries:
+            _context_upsert(app, db_idx, ctx_tbl_idx, name, text)
+            updated_keys.append(name)
+
+        # Append change history entry if provided
+        if change_entry is not None:
             if summary:
                 from datetime import datetime, timezone
                 timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -8944,7 +9133,7 @@ def context_set(purpose: Optional[str] = None,
                 num_records = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
                 app.Execute(f'DBRecordsInsert({db_idx}, {hist_tbl_idx}, 0, 1);')
-                new_idx = num_records
+                new_idx = num_records + 1   # an append lands at N+1
 
                 app.Execute(f'DBDataSetAsString({db_idx}, {hist_tbl_idx}, {ts_fld}, {new_idx}, "{_escape_modl_string(timestamp)}");')
                 app.Execute(f'DBDataSetAsString({db_idx}, {hist_tbl_idx}, {sum_fld}, {new_idx}, "{_escape_modl_string(summary)}");')
@@ -8972,15 +9161,15 @@ def context_clear(confirm: bool = False, model_id: Optional[str] = None) -> dict
         app.Execute(f'globalInt0 = DBDatabaseGetIndex("{AI_CONTEXT_DB_NAME}");')
         db_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-        if db_idx < 0:
+        if db_idx <= 0:
             return {"success": True, "message": "No AI_Context database found - nothing to delete"}
 
         # Delete all tables first, then the database
         # Delete changeHistory table
         app.Execute(f'globalInt0 = DBTableGetIndex({db_idx}, "{AI_HISTORY_TABLE}");')
         hist_tbl_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-        if hist_tbl_idx >= 0:
-            app.Execute(f'DBTableDelete({db_idx}, {hist_tbl_idx});')
+        if hist_tbl_idx > 0:
+            app.Execute(f'DBTableDeleteByIndex({db_idx}, {hist_tbl_idx});')
 
         # Re-resolve db_idx after table deletion (indices may shift)
         app.Execute(f'globalInt0 = DBDatabaseGetIndex("{AI_CONTEXT_DB_NAME}");')
@@ -8989,14 +9178,20 @@ def context_clear(confirm: bool = False, model_id: Optional[str] = None) -> dict
         # Delete context table
         app.Execute(f'globalInt0 = DBTableGetIndex({db_idx}, "{AI_CONTEXT_TABLE}");')
         ctx_tbl_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-        if ctx_tbl_idx >= 0:
-            app.Execute(f'DBTableDelete({db_idx}, {ctx_tbl_idx});')
+        if ctx_tbl_idx > 0:
+            app.Execute(f'DBTableDeleteByIndex({db_idx}, {ctx_tbl_idx});')
 
         # Delete the database itself
         app.Execute(f'globalInt0 = DBDatabaseGetIndex("{AI_CONTEXT_DB_NAME}");')
         db_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-        if db_idx >= 0:
-            app.Execute(f'DBDatabaseDelete({db_idx});')
+        if db_idx > 0:
+            app.Execute(f'DBDatabaseDeleteByIndex({db_idx});')
+
+        # Fail closed: the old index-to-name-form calls "succeeded" without deleting.
+        app.Execute(f'globalInt0 = DBDatabaseGetIndex("{AI_CONTEXT_DB_NAME}");')
+        if int(parse_float(app.Request("System", "globalInt0+:0:0:0"))) > 0:
+            return _error(ErrorCode.DB_OPERATION_FAILED,
+                          "AI_Context database is still present after the delete")
 
         return {"success": True, "message": "AI_Context database deleted"}
     except Exception as e:
@@ -9092,7 +9287,7 @@ def block_duplicate(block_id: int, label: Optional[str] = None,
         before_ids = set()
         current_id = -1
         while True:
-            app.Execute(f"global0 = objectIDNext({current_id}, 0);")
+            app.Execute(f"global0 = objectIDNext({current_id}, {OBJ_NEXT_ALL});")  # H-blocks too
             next_id = int(parse_float(app.Request("System", "global0+:0:0:0")))
             if next_id == -1:
                 break
@@ -9105,7 +9300,7 @@ def block_duplicate(block_id: int, label: Optional[str] = None,
         new_block_id = -1
         current_id = -1
         while True:
-            app.Execute(f"global0 = objectIDNext({current_id}, 0);")
+            app.Execute(f"global0 = objectIDNext({current_id}, {OBJ_NEXT_ALL});")  # H-blocks too
             next_id = int(parse_float(app.Request("System", "global0+:0:0:0")))
             if next_id == -1:
                 break
@@ -9149,9 +9344,9 @@ def block_find(search_str: str, which: int = 1, model_id: Optional[str] = None) 
 
         # Get info about found block
         app.Execute(f"globalStr0 = BlockName({found_id});")
-        block_name = app.Request("System", "globalStr0+:0:0:0")
+        block_name = _read_str0(app)
         app.Execute(f'globalStr0 = GetBlockLabel({found_id});')
-        block_label = app.Request("System", "globalStr0+:0:0:0")
+        block_label = _read_str0(app)
 
         return {
             "success": True,
@@ -9185,15 +9380,16 @@ def db_create(database_name: str, tables: Optional[list] = None,
         db_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
         created_db = False
-        if db_idx < 0:
+        if db_idx <= 0:
             app.Execute(f'globalInt0 = DBDatabaseCreate("{safe_db}");')
             db_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-            if db_idx < 0:
+            if db_idx <= 0:
                 return _error(ErrorCode.DB_OPERATION_FAILED,
                               f"Failed to create database '{database_name}'")
             created_db = True
 
         tables_result = []
+        failures = []
         if tables:
             for tbl in tables:
                 tbl_name = tbl.get("name", "")
@@ -9204,11 +9400,12 @@ def db_create(database_name: str, tables: Optional[list] = None,
                 tbl_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
                 created_tbl = False
-                if tbl_idx < 0:
-                    app.Execute(f'globalInt0 = DBTableCreate({db_idx}, "{safe_tbl}");')
+                if tbl_idx <= 0:
+                    app.Execute(f'globalInt0 = DBTableCreateByIndex({db_idx}, "{safe_tbl}");')
                     tbl_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-                    if tbl_idx < 0:
+                    if tbl_idx <= 0:
                         tables_result.append({"name": tbl_name, "error": "Failed to create table"})
+                        failures.append(f"table '{tbl_name}'")
                         continue
                     created_tbl = True
 
@@ -9216,18 +9413,20 @@ def db_create(database_name: str, tables: Optional[list] = None,
                 for fld in tbl.get("fields", []):
                     fld_name = fld.get("name", "")
                     fld_type_str = fld.get("type", "real")
-                    fld_type = DB_FIELD_TYPE_REVERSE.get(fld_type_str, 0)
+                    if fld_type_str not in DB_FIELD_TYPE_REVERSE:
+                        fld_type_str = "real"
                     safe_fld = _escape_modl_string(fld_name)
 
                     # Check if field exists
                     app.Execute(f'globalInt0 = DBFieldGetIndex({db_idx}, {tbl_idx}, "{safe_fld}");')
                     fld_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-                    if fld_idx < 0:
-                        app.Execute(f'globalInt0 = DBFieldCreate({db_idx}, {tbl_idx}, "{safe_fld}", {fld_type});')
-                        fld_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
+                    if fld_idx <= 0:
+                        fld_idx = _db_field_create(app, db_idx, tbl_idx, fld_name, fld_type_str)
                         fields_result.append({"name": fld_name, "type": fld_type_str,
-                                              "created": fld_idx >= 0, "index": fld_idx})
+                                              "created": fld_idx > 0, "index": fld_idx})
+                        if fld_idx <= 0:
+                            failures.append(f"field '{tbl_name}.{fld_name}'")
                     else:
                         fields_result.append({"name": fld_name, "type": fld_type_str,
                                               "created": False, "index": fld_idx, "existed": True})
@@ -9236,6 +9435,14 @@ def db_create(database_name: str, tables: Optional[list] = None,
                     "name": tbl_name, "index": tbl_idx,
                     "created": created_tbl, "fields": fields_result
                 })
+
+        if failures:
+            # Fail closed: a half-built database used to come back as success.
+            return _error(ErrorCode.DB_OPERATION_FAILED,
+                          f"Database '{database_name}' is incomplete - could not create "
+                          + ", ".join(failures),
+                          databaseName=database_name, databaseIndex=db_idx,
+                          createdDatabase=created_db, tables=tables_result)
 
         return {
             "success": True,
@@ -9340,13 +9547,13 @@ def db_find_record(database_name: str, table_name: str, field_name: str,
 
         if isinstance(find_value, str):
             safe_val = _escape_modl_string(find_value)
-            app.Execute(f'globalInt0 = DBRecordFind({db_idx}, {tbl_idx}, {fld_idx}, {start_record}, {exact}, "{safe_val}");')
+            app.Execute(f'globalInt0 = DBRecordFind({db_idx}, {tbl_idx}, {fld_idx}, {_es_rec(start_record)}, {exact}, "{safe_val}");')
         else:
-            app.Execute(f'globalInt0 = DBRecordFind({db_idx}, {tbl_idx}, {fld_idx}, {start_record}, {exact}, {find_value});')
+            app.Execute(f'globalInt0 = DBRecordFind({db_idx}, {tbl_idx}, {fld_idx}, {_es_rec(start_record)}, {exact}, {find_value});')
 
         record_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-        if record_idx < 0:
+        if record_idx <= 0:
             return {
                 "success": True,
                 "found": False,
@@ -9357,7 +9564,7 @@ def db_find_record(database_name: str, table_name: str, field_name: str,
         return {
             "success": True,
             "found": True,
-            "record": record_idx,
+            "record": record_idx - 1,
             "databaseName": database_name,
             "tableName": table_name,
             "fieldName": field_name,
@@ -9532,18 +9739,18 @@ def ga_list(model_id: Optional[str] = None) -> dict:
         for idx in range(last_idx + 1):
             try:
                 app.Execute(f'globalStr0 = GAGetName({idx});')
-                name = app.Request("System", "globalStr0+:0:0:0")
+                name = _read_str0(app)
                 if not name or name.startswith("_"):
                     continue  # Skip empty and internal ExtendSim arrays
 
-                app.Execute(f'globalInt0 = GAGetRows({idx});')
+                app.Execute(f'globalInt0 = GAGetRowsByIndex({idx});')
                 rows = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-                app.Execute(f'globalInt0 = GAGetCols({idx});')
+                app.Execute(f'globalInt0 = GAGetColumnsByIndex({idx});')
                 cols = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-                app.Execute(f'globalInt0 = GAGetType({idx});')
+                app.Execute(f'globalInt0 = GAGetTypeByIndex({idx});')
                 ga_type = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-                type_name = {1: "real", 2: "integer", 3: "string"}.get(ga_type, f"unknown({ga_type})")
+                type_name = GA_TYPE_NAMES.get(ga_type, f"unknown({ga_type})")
 
                 arrays.append({
                     "index": idx,
@@ -9596,9 +9803,9 @@ def ga_create(name: str, ga_type: str = "real", cols: int = 1, rows: int = 0,
 
 def _ga_dims(app, ga_idx: int) -> tuple:
     """(rows, cols) of a global array, read before any cell is touched."""
-    app.Execute(f'globalInt0 = GAGetRows({ga_idx});')
+    app.Execute(f'globalInt0 = GAGetRowsByIndex({ga_idx});')
     rows = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-    app.Execute(f'globalInt0 = GAGetCols({ga_idx});')
+    app.Execute(f'globalInt0 = GAGetColumnsByIndex({ga_idx});')
     cols = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
     return rows, cols
 
@@ -9630,7 +9837,7 @@ def ga_read(name: str, row: int = 0, col: int = 0,
         if ga_idx < 0:
             return _error(ErrorCode.COMMAND_FAILED, f"Global array '{name}' not found")
 
-        app.Execute(f'globalInt0 = GAGetType({ga_idx});')
+        app.Execute(f'globalInt0 = GAGetTypeByIndex({ga_idx});')
         ga_type = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
         rows, cols = _ga_dims(app, ga_idx)
@@ -9639,9 +9846,9 @@ def ga_read(name: str, row: int = 0, col: int = 0,
 
         # Single cell
         if end_row is None and end_col is None:
-            if ga_type == 3:
+            if ga_type in GA_STRING_TYPES:
                 app.Execute(f'globalStr0 = GAGetString({ga_idx}, {row}, {col});')
-                value = app.Request("System", "globalStr0+:0:0:0")
+                value = _read_str0(app)
             elif ga_type == 2:
                 app.Execute(f'globalInt0 = GAGetInteger({ga_idx}, {row}, {col});')
                 value = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
@@ -9664,9 +9871,9 @@ def ga_read(name: str, row: int = 0, col: int = 0,
         for r in range(row, r_end + 1):
             row_data = []
             for c in range(col, c_end + 1):
-                if ga_type == 3:
+                if ga_type in GA_STRING_TYPES:
                     app.Execute(f'globalStr0 = GAGetString({ga_idx}, {r}, {c});')
-                    val = app.Request("System", "globalStr0+:0:0:0")
+                    val = _read_str0(app)
                 elif ga_type == 2:
                     app.Execute(f'globalInt0 = GAGetInteger({ga_idx}, {r}, {c});')
                     val = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
@@ -9701,14 +9908,14 @@ def ga_write(name: str, row: int, col: int, value,
         if ga_idx < 0:
             return _error(ErrorCode.COMMAND_FAILED, f"Global array '{name}' not found")
 
-        app.Execute(f'globalInt0 = GAGetType({ga_idx});')
+        app.Execute(f'globalInt0 = GAGetTypeByIndex({ga_idx});')
         ga_type = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
         rows, cols = _ga_dims(app, ga_idx)
         if not (0 <= row < rows and 0 <= col < cols):
             return _ga_out_of_range(name, row, col, rows, cols)
 
-        if ga_type == 3:
+        if ga_type in GA_STRING_TYPES:
             safe_val = _escape_modl_string(str(value))
             app.Execute(f'GASetString("{safe_val}", {ga_idx}, {row}, {col});')
         elif ga_type == 2:
@@ -9737,30 +9944,22 @@ def text_block_add(text: str, x: int = 100, y: int = 100,
 
         safe_text = _escape_modl_string(text)
 
-        # Collect IDs before
-        before_ids = set()
-        current_id = -1
-        while True:
-            app.Execute(f"global0 = objectIDNext({current_id}, 0);")
-            next_id = int(parse_float(app.Request("System", "global0+:0:0:0")))
-            if next_id == -1:
-                break
-            before_ids.add(next_id)
-            current_id = next_id
+        # PlaceTextBlock returns the new block's number - ExtendSim's own code does
+        # `TextBlockNum = PlaceTextBlock(...)`. This used to find the block by diffing
+        # objectIDNext(.., 0) before and after, but objectIDNext never visits text
+        # blocks, so the diff was always empty and the call always reported failure.
+        app.Execute(f'global0 = PlaceTextBlock("{safe_text}", {x}, {y}, {neighbor}, {side}, {width});')
+        new_id = int(parse_float(app.Request("System", "global0+:0:0:0")))
 
-        app.Execute(f'PlaceTextBlock("{safe_text}", {x}, {y}, {neighbor}, {side}, {width});')
-
-        # Find new block ID
-        new_id = -1
-        current_id = -1
-        while True:
-            app.Execute(f"global0 = objectIDNext({current_id}, 0);")
-            next_id = int(parse_float(app.Request("System", "global0+:0:0:0")))
-            if next_id == -1:
-                break
-            if next_id not in before_ids:
-                new_id = next_id
-            current_id = next_id
+        # Fail closed: confirm the number really is a text block.
+        block_type = -1
+        if new_id >= 0:
+            app.Execute(f"global0 = GetBlockTypeNumeric({new_id});")
+            block_type = int(parse_float(app.Request("System", "global0+:0:0:0")))
+        if block_type != BT_TEXT:
+            return _error(ErrorCode.COMMAND_FAILED,
+                          "PlaceTextBlock did not create a text block",
+                          x=x, y=y, returned=new_id)
 
         return {
             "success": True,
@@ -9784,7 +9983,7 @@ def db_relations_list(database_name: str, model_id: Optional[str] = None) -> dic
         safe_db = _escape_modl_string(database_name)
         app.Execute(f'globalInt0 = DBDatabaseGetIndex("{safe_db}");')
         db_idx = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
-        if db_idx < 0:
+        if db_idx <= 0:
             return _error(ErrorCode.DATABASE_NOT_FOUND, f"Database '{database_name}' not found")
 
         app.Execute(f'globalInt0 = DBRelationsGetNum({db_idx});')
@@ -9869,7 +10068,7 @@ def time_convert(operation: str, value: Optional[float] = None,
                 return _error(ErrorCode.MISSING_PARAMETER,
                               "sim_to_date requires simTime and timeUnits")
             app.Execute(f'globalStr0 = EDSimTimeToDate({sim_time}, {time_units});')
-            result = app.Request("System", "globalStr0+:0:0:0")
+            result = _read_str0(app)
             return {"success": True, "operation": operation, "date": result,
                     "simTime": sim_time, "timeUnits": time_units}
 
@@ -10027,15 +10226,15 @@ def _extract_blocks(app) -> list:
         current_id = bid
 
         app.Execute(f"globalStr0 = BlockName({bid});")
-        block_type = app.Request("System", "globalStr0+:0:0:0") or ""
+        block_type = _read_str0(app) or ""
         if not block_type:
             continue
 
         app.Execute(f'globalStr0 = GetBlockLabel({bid});')
-        label = app.Request("System", "globalStr0+:0:0:0") or ""
+        label = _read_str0(app) or ""
 
         app.Execute(f'globalStr0 = GetLibraryPathName({bid}, 2);')
-        library = app.Request("System", "globalStr0+:0:0:0") or ""
+        library = _read_str0(app) or ""
 
         blocks.append({
             "id": bid,
@@ -10046,65 +10245,62 @@ def _extract_blocks(app) -> list:
     return blocks
 
 
-def _extract_connections(app, blocks: list) -> list:
-    """Extract all connections between blocks.
+def _extract_connections(app, blocks: list) -> tuple:
+    """Extract all connections between blocks as source -> target pairs.
 
-    Uses the same nodeIndex-matching pattern as connection_list():
-    1. For each block, get all connectors and their nodeIndex via NodeGetIDIndex
-    2. Group connectors by nodeIndex (shared nodeIndex = connected)
-    3. Use connector name to determine direction (contains "out" = source)
+    Groups every wired endpoint (array slots included, via _block_wired_endpoints) by
+    nodeIndex; the endpoints sharing a node are connected. Returns
+    (connections, unresolved):
+
+    * a node with one "out" endpoint yields one connection per other endpoint, so a
+      value output wired to three inputs gives three connections. The old code kept
+      only nodes with exactly two endpoints and silently dropped every fan-out, and
+      never saw array-connector slots at all.
+    * a two-endpoint node whose direction the names do not reveal keeps the old
+      fallback (first endpoint is the source).
+    * anything else - a lone endpoint whose partner is not enumerable (e.g. a line
+      into a hierarchical block), or several endpoints with no single "out" - goes to
+      `unresolved` instead of being dropped or guessed.
     """
-    connections = []
+    connections, unresolved = [], []
     block_ids = {b["id"] for b in blocks}
 
-    # Collect all connectors with their nodeIndex
-    node_map = {}  # nodeIndex -> [(blockId, connectorIndex, connectorName)]
-
+    node_map = {}  # nodeIndex -> [(blockId, connectorIndex, connectorName, direction)]
     for b in blocks:
         bid = b["id"]
         try:
-            app.Execute(f"global0 = GetNumCons({bid});")
-            num_cons = int(parse_float(app.Request("System", "global0+:0:0:0")))
-
-            for c in range(num_cons):
-                app.Execute(f"global0 = NodeGetIDIndex({bid}, {c});")
-                node_index = int(parse_float(app.Request("System", "global0+:0:0:0")))
-                if node_index == 0:
-                    continue  # Unconnected
-
-                app.Execute(f'globalStr0 = GetConName({bid}, {c});')
-                con_name = app.Request("System", "globalStr0+:0:0:0") or ""
-
-                if node_index not in node_map:
-                    node_map[node_index] = []
-                node_map[node_index].append((bid, c, con_name))
+            for con_idx, direction, con_name, node_index in _block_wired_endpoints(app, bid):
+                node_map.setdefault(node_index, []).append((bid, con_idx, con_name, direction))
         except Exception:
             pass
 
-    # Build connections from node_map (pairs of connectors with same nodeIndex)
-    for _ni, endpoints in node_map.items():
-        if len(endpoints) == 2:
-            ep0, ep1 = endpoints[0], endpoints[1]
-            # Determine source (out) and target (in)
-            if "out" in ep0[2].lower() and "in" in ep1[2].lower():
-                src, tgt = ep0, ep1
-            elif "in" in ep0[2].lower() and "out" in ep1[2].lower():
-                src, tgt = ep1, ep0
-            else:
-                # Fallback: first endpoint is source
-                src, tgt = ep0, ep1
+    def _pair(src, tgt):
+        if src[0] in block_ids and tgt[0] in block_ids:
+            connections.append({
+                "sourceBlockId": src[0],
+                "sourceConnector": src[2],
+                "sourceConnectorIndex": src[1],
+                "targetBlockId": tgt[0],
+                "targetConnector": tgt[2],
+                "targetConnectorIndex": tgt[1],
+            })
 
-            if src[0] in block_ids and tgt[0] in block_ids:
-                connections.append({
-                    "sourceBlockId": src[0],
-                    "sourceConnector": src[2],
-                    "sourceConnectorIndex": src[1],
-                    "targetBlockId": tgt[0],
-                    "targetConnector": tgt[2],
-                    "targetConnectorIndex": tgt[1],
-                })
+    for ni, endpoints in node_map.items():
+        outs = [ep for ep in endpoints if ep[3] == "out"]
+        if len(endpoints) >= 2 and len(outs) == 1:
+            for tgt in endpoints:
+                if tgt is not outs[0]:
+                    _pair(outs[0], tgt)
+        elif len(endpoints) == 2:
+            _pair(endpoints[0], endpoints[1])   # direction unknown: old fallback
+        else:
+            unresolved.append({
+                "nodeIndex": ni,
+                "endpoints": [{"blockId": ep[0], "connectorIndex": ep[1],
+                               "connector": ep[2], "direction": ep[3]} for ep in endpoints],
+            })
 
-    return connections
+    return connections, unresolved
 
 
 def _extract_parameters(app, blocks: list) -> dict:
@@ -10184,9 +10380,9 @@ def _extract_databases(app) -> dict:
     app.Execute("globalInt0 = DBDatabasesGetNum();")
     num_dbs = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-    for d in range(num_dbs):
+    for d in range(1, num_dbs + 1):
         app.Execute(f'globalStr0 = DBDatabaseGetName({d});')
-        db_name = app.Request("System", "globalStr0+:0:0:0") or ""
+        db_name = _read_str0(app) or ""
         if not db_name:
             continue
 
@@ -10194,9 +10390,9 @@ def _extract_databases(app) -> dict:
         app.Execute(f'globalInt0 = DBTablesGetNum({d});')
         num_tables = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-        for t in range(num_tables):
+        for t in range(1, num_tables + 1):
             app.Execute(f'globalStr0 = DBTableGetName({d}, {t});')
-            tbl_name = app.Request("System", "globalStr0+:0:0:0") or ""
+            tbl_name = _read_str0(app) or ""
             if not tbl_name:
                 continue
 
@@ -10205,9 +10401,9 @@ def _extract_databases(app) -> dict:
             num_fields = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
             fields = []
-            for f_idx in range(num_fields):
+            for f_idx in range(1, num_fields + 1):
                 app.Execute(f'globalStr0 = DBFieldGetName({d}, {t}, {f_idx});')
-                fname = app.Request("System", "globalStr0+:0:0:0") or ""
+                fname = _read_str0(app) or ""
                 app.Execute(f'globalInt0 = DBFieldGetProperties({d}, {t}, {f_idx}, 1);')
                 ftype_code = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
                 ftype = DB_FIELD_TYPE_MAP.get(ftype_code, f"unknown({ftype_code})")
@@ -10230,19 +10426,17 @@ def _extract_hierarchies(app) -> list:
     current_id = -1
 
     while True:
-        app.Execute(f"global0 = objectIDNext({current_id}, 0);")
+        # which=1 visits H-blocks. This walked the ordinary blocks (which=0) and
+        # kept those of type 4 - which that walk never contains, so the section was
+        # always empty.
+        app.Execute(f"global0 = objectIDNext({current_id}, {OBJ_NEXT_HBLOCKS});")
         bid = int(parse_float(app.Request("System", "global0+:0:0:0")))
         if bid == -1:
             break
         current_id = bid
 
-        app.Execute(f"global0 = GetBlockTypeNumeric({bid});")
-        btype = int(parse_float(app.Request("System", "global0+:0:0:0")))
-        if btype != 4:
-            continue
-
         app.Execute(f'globalStr0 = GetBlockLabel({bid});')
-        label = app.Request("System", "globalStr0+:0:0:0") or ""
+        label = _read_str0(app) or ""
 
         app.Execute(f'global0 = LocalNumBlocks2({bid});')
         child_count = int(parse_float(app.Request("System", "global0+:0:0:0")))
@@ -10262,7 +10456,8 @@ def _extract_hierarchies(app) -> list:
 def _extract_global_arrays(app) -> list:
     """Extract global array names and sizes.
 
-    Uses same pattern as ga_list(): GALastUsedIndex, GAGetName, GAGetRows, GAGetCols.
+    Uses same pattern as ga_list(): GALastUsedIndex, GAGetName, GAGetRowsByIndex,
+    GAGetColumnsByIndex.
     Wrapped in try/except since GA functions may not work on all models.
     """
     try:
@@ -10275,14 +10470,14 @@ def _extract_global_arrays(app) -> list:
         for i in range(last_idx + 1):
             try:
                 app.Execute(f'globalStr0 = GAGetName({i});')
-                name = app.Request("System", "globalStr0+:0:0:0") or ""
+                name = _read_str0(app) or ""
                 if not name or name.startswith("_"):
                     continue  # Skip empty and internal ExtendSim arrays
 
-                app.Execute(f'globalInt0 = GAGetRows({i});')
+                app.Execute(f'globalInt0 = GAGetRowsByIndex({i});')
                 rows = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
-                app.Execute(f'globalInt0 = GAGetCols({i});')
+                app.Execute(f'globalInt0 = GAGetColumnsByIndex({i});')
                 cols = int(parse_float(app.Request("System", "globalInt0+:0:0:0")))
 
                 arrays.append({"name": name, "rows": rows, "cols": cols})
@@ -10307,9 +10502,15 @@ def model_extract(save_path=None, sections=None, model_id=None):
 
         # Get model info
         app.Execute("globalStr0 = GetModelName();")
-        model_name = app.Request("System", "globalStr0+:0:0:0") or ""
-        app.Execute("globalStr0 = GetModelPathName();")
-        model_path = app.Request("System", "globalStr0+:0:0:0") or ""
+        model_name = _read_str0(app) or ""
+        # GetModelPath(name) returns the model's folder. This used to call
+        # GetModelPathName(), which does not exist: every model_extract raised a
+        # compile-error modal that blocked COM (seen live on ExtendSim 2026).
+        model_path = ""
+        if model_name:
+            app.Execute(f'globalStr0 = GetModelPath("{_escape_modl_string(model_name)}");')
+            folder = _read_str0(app) or ""
+            model_path = (folder + model_name).replace("\\", "/") if folder else ""
 
         result_sections = {}
         blocks = None  # Cache for reuse by connections and parameters
@@ -10321,7 +10522,10 @@ def model_extract(save_path=None, sections=None, model_id=None):
         if "connections" in sections:
             if blocks is None:
                 blocks = _extract_blocks(app)
-            result_sections["connections"] = _extract_connections(app, blocks)
+            connections, unresolved = _extract_connections(app, blocks)
+            result_sections["connections"] = connections
+            if unresolved:
+                result_sections["unresolvedConnectionNodes"] = unresolved
 
         if "parameters" in sections:
             if blocks is None:
@@ -10373,11 +10577,10 @@ def _psg_read_connectors(app, bid):
     n = int(parse_float(app.Request("System", "global0+:0:0:0")))
     for c in range(n):
         app.Execute(f'globalStr0 = GetConName({bid}, {c});')
-        name = app.Request("System", "globalStr0+:0:0:0") or ""
+        name = _read_str0(app) or ""
         app.Execute(f"global0 = NodeGetIDIndex({bid}, {c});")
         node_index = int(parse_float(app.Request("System", "global0+:0:0:0")))
-        low = name.lower()
-        direction = "in" if "in" in low else "out" if "out" in low else "unknown"
+        direction = _get_connector_direction(name)
         conns.append({"idx": c, "connName": name,
                       "direction": direction, "nodeIndex": node_index})
     return conns
@@ -10390,7 +10593,7 @@ def _psg_hblock_type(app, bid):
     proves unreliable, return None (fail-closed, no guess) rather than a wrong tag.
     """
     app.Execute(f'globalStr0 = GetLibraryPathName({bid}, 2);')
-    lib = app.Request("System", "globalStr0+:0:0:0") or ""
+    lib = _read_str0(app) or ""
     return "pure" if lib else "physical"
 
 
@@ -10398,15 +10601,22 @@ def _psg_gather_scope(app, scope_id, kind, parent_scope_id, label, block_ids, ou
     """Build one scope's raw block list and recurse into its child H-blocks."""
     meta = []
     for bid in block_ids:
+        # Only real blocks. Inside an H-block, LocalToGlobal2 also returns text
+        # blocks and anchor points - on Bank.mox far more of them than blocks - and
+        # both have a BlockName (a text block's is its text, an anchor's a connector
+        # name), so they used to be mined as blocks of type "Tellers available" or
+        # "ItemOut". Measured live 2026-09-23.
+        app.Execute(f'global0 = GetBlockTypeNumeric({bid});')
+        obj_kind = int(parse_float(app.Request("System", "global0+:0:0:0")))
+        if obj_kind not in (BT_EXECUTABLE, BT_HIERARCHICAL):
+            continue
         app.Execute(f"globalStr0 = BlockName({bid});")
-        btype = app.Request("System", "globalStr0+:0:0:0") or ""
+        btype = _read_str0(app) or ""
         if not btype:
             continue
         app.Execute(f'globalStr0 = GetLibraryPathName({bid}, 2);')
-        lib = app.Request("System", "globalStr0+:0:0:0") or ""
-        app.Execute(f'global0 = GetBlockTypeNumeric({bid});')
-        is_h = int(parse_float(app.Request("System", "global0+:0:0:0"))) == 4
-        meta.append({"id": bid, "type": btype, "lib": lib, "isHBlock": is_h})
+        lib = _read_str0(app) or ""
+        meta.append({"id": bid, "type": btype, "lib": lib, "isHBlock": obj_kind == BT_HIERARCHICAL})
 
     # _extract_parameters returns {"blocks": {str(bid): {...}}, "skippedBlocks": [...]}
     param_map = _extract_parameters(
@@ -10453,15 +10663,20 @@ def _psg_gather_scope(app, scope_id, kind, parent_scope_id, label, block_ids, ou
             if gid > 0:
                 internal.append(gid)
         app.Execute(f'globalStr0 = GetBlockLabel({hb});')
-        hlabel = app.Request("System", "globalStr0+:0:0:0") or ""
+        hlabel = _read_str0(app) or ""
         _psg_gather_scope(app, f"h{hb}", "hblock", scope_id, hlabel, internal, out_scopes)
 
 
 def _psg_top_level_ids(app):
-    """Top-level block ids (objectIDNext), filtered to those enclosed by the model root."""
+    """Top-level block ids, H-blocks included, filtered to those enclosed by the root.
+
+    Walks ObjectIDNext with ALL blocks. It walked ordinary blocks only (which=0), so no
+    top-level H-block was ever seen and mining never descended into one: on Bank.mox it
+    returned one scope of 6 blocks and missed all 10 H-blocks and the 44 blocks in them.
+    """
     ids, current = [], -1
     while True:
-        app.Execute(f"global0 = objectIDNext({current}, 0);")
+        app.Execute(f"global0 = objectIDNext({current}, {OBJ_NEXT_ALL});")
         bid = int(parse_float(app.Request("System", "global0+:0:0:0")))
         if bid == -1:
             break
@@ -10497,7 +10712,7 @@ def extract_psg(file_path=None, save_path=None, model_id=None):
                 return chk
 
         app.Execute("globalStr0 = GetModelName();")
-        model_name = app.Request("System", "globalStr0+:0:0:0") or ""
+        model_name = _read_str0(app) or ""
         psg = psg_extract.build_psg(_gather_psg_raw(app, model_name))
 
         if save_path:
