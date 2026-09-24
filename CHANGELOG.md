@@ -3,6 +3,86 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
+## 1.22.5 — 2026-09-24
+
+Two features and a fix. Your own modelling guides: the AI drafts a guide from a model
+you built, you fill in what only you know, and it is found next to the official guides.
+The server can pick up newer official guides from duke.se without an upgrade (at most
+once a month; off switch below). `modl_search` no longer gives the AI wrong ModL facts.
+107 tools (was 104). Verified live on ExtendSim 2024, including Bank.mox.
+
+**Upgrading:** this is the first release that makes a network call (the monthly guide
+check). Set `SIMULATIONSMCP_WEB_LOOKUP=off`, or create `policy.json` in the install
+folder, to keep the server fully offline - see below.
+
+### Added — your own modelling guides
+- Three tools: `guide_draft` drafts a guide from the open model (blocks, connections, set
+  parameters; the top level or one hierarchical block, at most 50 blocks) and lists what
+  only a person can fill in; `guide_save` checks it against the official guide schema,
+  listing every problem, and saves it; `guide_delete` removes one. 107 tools.
+- Own guides live in `%APPDATA%\SimulationsMCP\guides\` (one file per guide) and appear in
+  `modeling_guide`, `model_advisor` and `MCP_init` marked `"source": "local"`. A broken
+  file is skipped and reported (`localGuideErrors`), never takes the official guides down;
+  a key clash is shown as `<key>_local` (`localGuideRenames`). The duke.se off switch does
+  not affect own guides.
+- `model_extract` blocks now carry `parentBlockId` (the enclosing hierarchical block, or
+  null at top level).
+- Fixed: `guide_draft` was silently dropping every connection that crossed a hierarchical-
+  block boundary (found live on Bank.mox, where it left 5 top-level H-blocks with 0
+  connections). It now climbs from each endpoint to its ancestor at the drafted level and
+  keeps the connection, rendered `<block> (via <inner block> <connector>)` when the level
+  block only contains the endpoint; `needsInput` then asks for the real connector names.
+
+### Fixed — modl_search gave the AI wrong ModL facts
+- `modl_reference.json` listed **`GAGetCols`**, which ExtendSim does not have, and
+  described `GAGetRows` and `GAGetType` as taking an array *index* when they take its
+  *name*. An AI following `modl_search` into `execute_command` got a compile-error dialog
+  that blocks COM. The reference now lists `GAGetRows` / `GAGetColumns` / `GAGetType`
+  (by name) and `GAGetRowsByIndex` / `GAGetColumnsByIndex` / `GAGetTypeByIndex` (by index),
+  with the five array types. `MCP_init`'s example no longer mentions `GAGetCols`.
+- A full audit of `modl_reference.json` against ExtendSim's own function list, its
+  shipped ModL and the 2026 binary found more:
+  - **Database indices were described as 0-based.** ExtendSim's are 1-based (measured
+    live) - very likely where the server's own 0/1 bug came from. `DBDatabasesGetNum`
+    is now described as the highest index in use (not a count) and `DBTablesGetNum` as
+    possibly counting empty slots.
+  - **Field types were given as 0-3**; the real codes are the `DB_FIELDTYPE_*` values
+    (4096 integer, 8192 real, 16384 string, ...).
+  - **`DBTableCreate` / `DBFieldCreate` take names**, not indices; the `...ByIndex` forms
+    are now listed too. `DBRecordFind` searches for a *string*, returns a 1-based record,
+    and 0 or less means not found.
+  - Argument forms corrected for `ConArraySendMsgToAllCons/Inputs/Outputs`,
+    `FindInHierarchy2` and `Get/SetDialogItemEColor`.
+  - **`ModelSettingsGet`, `ModelSettingsSet` and `RunSetup` removed** - found in none of
+    ExtendSim's sources.
+
+### Changed — the server now checks duke.se for newer guides (on by default)
+
+Existing installations pick up this behaviour on upgrade: the default changes from no
+outbound network activity to one HTTPS check per month.
+Turning the check off also makes the server serve its bundled guides only; a copy
+fetched earlier stays on disk but is not used.
+
+- **What is fetched:** one file, `https://duke.se/simulationsmcp/v1/modeling_guides.json`.
+  Nothing else.
+- **When:** at most once every 30 days per user, checked only when `modeling_guide`,
+  `model_advisor` or `MCP_init` is called — never at startup, never in the background.
+  After a failed check, the next attempt waits 24 hours.
+- **What is sent:** nothing identifying beyond what any HTTPS GET carries — no cookies,
+  no query string, no custom headers. An `If-None-Match` ETag is sent for a copy
+  already held.
+- **Turning it off:** set `SIMULATIONSMCP_WEB_LOOKUP=off` (also accepts `0`/`false`), or
+  create `policy.json` in the installation folder (default
+  `C:\Program Files\SimulationsMCP`) with `{ "webLookup": false }` machine-wide
+  (administrator rights required; any "off" wins over a user setting).
+- **New in tool output:** `modeling_guide` and `MCP_init` now report `guideSource`
+  (`"bundled"` or `"web"`) and `guideVersion`, and `newerGuides` when the guide file in
+  use contains guides newer than this server version — they are hidden until the
+  server is upgraded.
+- Guide file `schemaVersion` 1; bundled content version 1.13.0.
+- README, `SECURITY.md`, `docs/DESIGN_DOCUMENT.md` and `docs/USER_MANUAL.md` are
+  rewritten in this same release to reflect the change (FR-N7).
+
 ## 1.22.4 — 2026-09-23
 
 A correctness and safety release. Everything in it was found by testing the tools

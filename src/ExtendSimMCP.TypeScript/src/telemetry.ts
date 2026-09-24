@@ -111,6 +111,16 @@ export function recordToolCall(
   }
 }
 
+/** A non-tool event, e.g. a guide fetch. Same envelope as tool calls; never throws. */
+export function recordEvent(type: string, fields: Record<string, unknown>): void {
+  try {
+    eventCount++;
+    writeEvent({ ts: new Date().toISOString(), sid: sessionId, seq: sequence++, type, ...fields });
+  } catch {
+    // Fire-and-forget - never throw
+  }
+}
+
 export function getStatus(): Record<string, unknown> {
   let fileSize = 0;
   try {

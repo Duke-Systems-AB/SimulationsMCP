@@ -240,9 +240,9 @@
         },
         "GetDialogItemEColor": {
           "description": "Returns the EColor value of the color of the dialog item.",
-          "signature": "GetDialogItemEColor(blockName, dialogItemName)",
+          "signature": "GetDialogItemEColor(blockNum, dialogItemName)",
           "arguments": [
-            {"name": "blockName", "type": "long", "description": "Block ID"},
+            {"name": "blockNum", "type": "integer", "description": "Block number"},
             {"name": "dialogItemName", "type": "string", "description": "Dialog item name"}
           ],
           "returns": "I"
@@ -403,9 +403,9 @@
         },
         "SetDialogItemEColor": {
           "description": "Sets the EColor value of the dialog item color.",
-          "signature": "SetDialogItemEColor(blockName, dialogItemName, value)",
+          "signature": "SetDialogItemEColor(blockNum, dialogItemName, value)",
           "arguments": [
-            {"name": "blockName", "type": "long", "description": "Block ID"},
+            {"name": "blockNum", "type": "integer", "description": "Block number"},
             {"name": "dialogItemName", "type": "string", "description": "Dialog item name"},
             {"name": "value", "type": "long", "description": "EColor value"}
           ],
@@ -763,26 +763,6 @@
           ],
           "returns": "I",
           "notes": "Returns FALSE if successful. Invisible blocks cannot be selected."
-        },
-        "ModelSettingsGet": {
-          "description": "Returns a model setting value.",
-          "signature": "ModelSettingsGet(modelName, which)",
-          "arguments": [
-            {"name": "modelName", "type": "string", "description": "Model name (empty string for active model)"},
-            {"name": "which", "type": "integer", "description": "0=exists, 1=animation on, 2=dirty, 3=run mode, 4=sim running"}
-          ],
-          "returns": "R"
-        },
-        "ModelSettingsSet": {
-          "description": "Sets a model setting value.",
-          "signature": "ModelSettingsSet(modelName, which, value)",
-          "arguments": [
-            {"name": "modelName", "type": "string", "description": "Model name (empty string for active model)"},
-            {"name": "which", "type": "integer", "description": "1=animation on, 2=dirty, 3=run mode"},
-            {"name": "value", "type": "real", "description": "Value to set"}
-          ],
-          "returns": "I",
-          "notes": "Returns 0 for success, non-zero for failure"
         },
         "MoveBlock": {
           "description": "Moves the specified block by the specified number of pixels.",
@@ -1238,15 +1218,6 @@
           "arguments": [],
           "returns": "V"
         },
-        "RunSetup": {
-          "description": "Opens Simulation Setup dialog with OK button instead of Run Now.",
-          "signature": "RunSetup(trueFalse)",
-          "arguments": [
-            {"name": "trueFalse", "type": "integer", "description": "TRUE to show RunNow button, FALSE to hide"}
-          ],
-          "returns": "I",
-          "notes": "Returns TRUE if OK clicked"
-        },
         "RunSimulation": {
           "description": "Runs the model simulation.",
           "signature": "RunSimulation(trueFalse)",
@@ -1376,12 +1347,13 @@
         },
         "FindInHierarchy2": {
           "description": "Same as FindInHierarchy but takes a block number argument.",
-          "signature": "FindInHierarchy2(blockNumber, findBlockName, findBlockLabel, findDialog)",
+          "signature": "FindInHierarchy2(blockNumber, FindBlockName, FindBlockLabel, FindDialogName, FindDialog)",
           "arguments": [
-            {"name": "blockNumber", "type": "integer", "description": "Block number"},
-            {"name": "findBlockName", "type": "string", "description": "Block name to find"},
-            {"name": "findBlockLabel", "type": "string", "description": "Block label to find"},
-            {"name": "findDialog", "type": "integer", "description": "Search mode"}
+            {"name": "blockNumber", "type": "integer", "description": "Block number of the hierarchical block to search"},
+            {"name": "FindBlockName", "type": "string", "description": "Block name to find"},
+            {"name": "FindBlockLabel", "type": "string", "description": "Block label to find"},
+            {"name": "FindDialogName", "type": "string", "description": "Dialog item name to find"},
+            {"name": "FindDialog", "type": "integer", "description": "Dialog value to find"}
           ],
           "returns": "I"
         },
@@ -1979,7 +1951,7 @@
           "description": "Sends a connector message to all connectors connected to the specified connector.",
           "signature": "ConArraySendMsgToAllCons(origConName, nthConn)",
           "arguments": [
-            {"name": "origConName", "type": "integer", "description": "Owning connector name"},
+            {"name": "origConName", "type": "string", "description": "Name of the array connector that owns the connections"},
             {"name": "nthConn", "type": "integer", "description": "Index in array"}
           ],
           "returns": "V"
@@ -1988,7 +1960,7 @@
           "description": "Sends a connector message to input connectors connected to the specified connector.",
           "signature": "ConArraySendMsgToInputs(origConName, nthConn)",
           "arguments": [
-            {"name": "origConName", "type": "integer", "description": "Owning connector name"},
+            {"name": "origConName", "type": "string", "description": "Name of the array connector that owns the connections"},
             {"name": "nthConn", "type": "integer", "description": "Index in array"}
           ],
           "returns": "V"
@@ -1997,7 +1969,7 @@
           "description": "Sends a connector message to output connectors connected to the specified connector.",
           "signature": "ConArraySendMsgToOutputs(origConName, nthConn)",
           "arguments": [
-            {"name": "origConName", "type": "integer", "description": "Owning connector name"},
+            {"name": "origConName", "type": "string", "description": "Name of the array connector that owns the connections"},
             {"name": "nthConn", "type": "integer", "description": "Index in array"}
           ],
           "returns": "V"
@@ -2176,48 +2148,48 @@
           "returns": "I"
         },
         "DBDatabasesGetNum": {
-          "description": "Returns the total number of databases in the current model.",
+          "description": "Returns the highest database index in use in the current model - NOT a count: system databases sit at 101 and above, so enumerate 1..n and skip indices whose DBDatabaseGetName is empty.",
           "args": [],
           "returns": "I"
         },
         "DBDatabaseGetName": {
           "description": "Returns the name of a database given its index.",
           "args": [
-            {"name": "dbIdx", "type": "integer", "description": "Database index (0-based)"}
+            {"name": "databaseIndex", "type": "integer", "description": "Database index, 1-based (0 is never valid)"}
           ],
           "returns": "S"
         },
         "DBTablesGetNum": {
-          "description": "Returns the number of tables in a database.",
+          "description": "Returns the number of table slots in a database. A slot can be empty (no name, -1 records), so skip tables whose DBTableGetName is empty.",
           "args": [
-            {"name": "dbIdx", "type": "integer", "description": "Database index"}
+            {"name": "databaseIndex", "type": "integer", "description": "Database index, 1-based (0 is never valid)"}
           ],
           "returns": "I"
         },
         "DBTableGetName": {
           "description": "Returns the name of a table given its database and table indices.",
           "args": [
-            {"name": "dbIdx", "type": "integer", "description": "Database index"},
-            {"name": "tblIdx", "type": "integer", "description": "Table index (0-based)"}
+            {"name": "databaseIndex", "type": "integer", "description": "Database index, 1-based (0 is never valid)"},
+            {"name": "tableIndex", "type": "integer", "description": "Table index, 1-based (0 is never valid)"}
           ],
           "returns": "S"
         },
         "DBFieldGetName": {
           "description": "Returns the name of a field given database, table, and field indices.",
           "args": [
-            {"name": "dbIdx", "type": "integer", "description": "Database index"},
-            {"name": "tblIdx", "type": "integer", "description": "Table index"},
-            {"name": "fldIdx", "type": "integer", "description": "Field index (0-based)"}
+            {"name": "databaseIndex", "type": "integer", "description": "Database index, 1-based (0 is never valid)"},
+            {"name": "tableIndex", "type": "integer", "description": "Table index, 1-based (0 is never valid)"},
+            {"name": "fieldIndex", "type": "integer", "description": "Field index, 1-based (0 is never valid)"}
           ],
           "returns": "S"
         },
         "DBFieldGetProperties": {
-          "description": "Returns a property of a database field. which=1 returns field type (0=real, 1=integer, 2=string, 3=boolean).",
+          "description": "Returns a property of a database field. which=1 returns the field type as a DB_FIELDTYPE_* constant: DB_FIELDTYPE_INTEGER_VALUE 4096, DB_FIELDTYPE_INTEGER_BOOLEAN 4097, DB_FIELDTYPE_REAL_GENERAL 8192 (8193-8197: scientific, percent, currency, date/time, DB address), DB_FIELDTYPE_STRING_VALUE 16384, DB_FIELDTYPE_TABLELIST 16385.",
           "args": [
-            {"name": "dbIdx", "type": "integer", "description": "Database index"},
-            {"name": "tblIdx", "type": "integer", "description": "Table index"},
-            {"name": "fldIdx", "type": "integer", "description": "Field index"},
-            {"name": "which", "type": "integer", "description": "Property to return (1=type)"}
+            {"name": "databaseIndex", "type": "integer", "description": "Database index, 1-based (0 is never valid)"},
+            {"name": "tableIndex", "type": "integer", "description": "Table index, 1-based (0 is never valid)"},
+            {"name": "fieldIndex", "type": "integer", "description": "Field index, 1-based (0 is never valid)"},
+            {"name": "which", "type": "integer", "description": "Property to return (1 = field type)"}
           ],
           "returns": "I"
         },
@@ -2229,32 +2201,58 @@
           "returns": "I"
         },
         "DBTableCreate": {
-          "description": "Creates a new table in a database and returns its index.",
+          "description": "Creates a table in the database with this NAME and returns the new table's index. For a database index use DBTableCreateByIndex.",
           "args": [
-            {"name": "dbIdx", "type": "integer", "description": "Database index"},
-            {"name": "tblName", "type": "string", "description": "Name for the new table"}
+            {"name": "databaseName", "type": "string", "description": "Database name"},
+            {"name": "tableName", "type": "string", "description": "Name for the new table"}
+          ],
+          "returns": "I"
+        },
+        "DBTableCreateByIndex": {
+          "description": "Creates a table in the database at this index and returns the new table's index.",
+          "args": [
+            {"name": "databaseIndex", "type": "integer", "description": "Database index, 1-based (0 is never valid)"},
+            {"name": "tableName", "type": "string", "description": "Name for the new table"}
           ],
           "returns": "I"
         },
         "DBFieldCreate": {
-          "description": "Creates a new field in a table and returns its index.",
+          "description": "Creates a field in the table with these NAMES and returns the new field's index. For indices use DBFieldCreateByIndex.",
           "args": [
-            {"name": "dbIdx", "type": "integer", "description": "Database index"},
-            {"name": "tblIdx", "type": "integer", "description": "Table index"},
-            {"name": "fldName", "type": "string", "description": "Field name"},
-            {"name": "fldType", "type": "integer", "description": "Field type (0=real, 1=integer, 2=string, 3=boolean)"}
+            {"name": "databaseName", "type": "string", "description": "Database name"},
+            {"name": "tableName", "type": "string", "description": "Table name"},
+            {"name": "fieldName", "type": "string", "description": "Field name"},
+            {"name": "format", "type": "integer", "description": "DB_FIELDTYPE_* constant: DB_FIELDTYPE_INTEGER_VALUE 4096, DB_FIELDTYPE_INTEGER_BOOLEAN 4097, DB_FIELDTYPE_REAL_GENERAL 8192 (8193-8197: scientific, percent, currency, date/time, DB address), DB_FIELDTYPE_STRING_VALUE 16384, DB_FIELDTYPE_TABLELIST 16385 - pass the constant name"},
+            {"name": "decimals", "type": "integer", "description": "Decimals shown (ExtendSim's own blocks use 5 for reals, 0 otherwise)"},
+            {"name": "unique", "type": "integer", "description": "1 = values must be unique"},
+            {"name": "readOnly", "type": "integer", "description": "1 = read-only"},
+            {"name": "invisible", "type": "integer", "description": "1 = hidden"}
+          ],
+          "returns": "I"
+        },
+        "DBFieldCreateByIndex": {
+          "description": "Creates a field in the table at these indices and returns the new field's index.",
+          "args": [
+            {"name": "databaseIndex", "type": "integer", "description": "Database index, 1-based (0 is never valid)"},
+            {"name": "tableIndex", "type": "integer", "description": "Table index, 1-based (0 is never valid)"},
+            {"name": "fieldName", "type": "string", "description": "Field name"},
+            {"name": "format", "type": "integer", "description": "DB_FIELDTYPE_* constant: DB_FIELDTYPE_INTEGER_VALUE 4096, DB_FIELDTYPE_INTEGER_BOOLEAN 4097, DB_FIELDTYPE_REAL_GENERAL 8192 (8193-8197: scientific, percent, currency, date/time, DB address), DB_FIELDTYPE_STRING_VALUE 16384, DB_FIELDTYPE_TABLELIST 16385 - pass the constant name"},
+            {"name": "decimals", "type": "integer", "description": "Decimals shown (ExtendSim's own blocks use 5 for reals, 0 otherwise)"},
+            {"name": "unique", "type": "integer", "description": "1 = values must be unique"},
+            {"name": "readOnly", "type": "integer", "description": "1 = read-only"},
+            {"name": "invisible", "type": "integer", "description": "1 = hidden"}
           ],
           "returns": "I"
         },
         "DBRecordFind": {
-          "description": "Searches for a value in a database field and returns the record index, or -1 if not found.",
+          "description": "Searches a field for a value and returns the 1-based record index where it is found; 0 or less means not found.",
           "args": [
-            {"name": "dbIdx", "type": "integer", "description": "Database index"},
-            {"name": "tblIdx", "type": "integer", "description": "Table index"},
-            {"name": "fldIdx", "type": "integer", "description": "Field index to search"},
-            {"name": "startRec", "type": "integer", "description": "Record to start searching from"},
-            {"name": "exactMatch", "type": "integer", "description": "1=exact match, 0=partial"},
-            {"name": "findValue", "type": "real", "description": "Value to search for"}
+            {"name": "databaseIndex", "type": "integer", "description": "Database index, 1-based (0 is never valid)"},
+            {"name": "tableIndex", "type": "integer", "description": "Table index, 1-based (0 is never valid)"},
+            {"name": "fieldIndex", "type": "integer", "description": "Field index to search, 1-based (0 is never valid)"},
+            {"name": "startRecordIndex", "type": "integer", "description": "Record to start from, 1-based (0 is never valid)"},
+            {"name": "exactMatch", "type": "integer", "description": "1 = exact match, 0 = partial"},
+            {"name": "findValueStr", "type": "string", "description": "Value to search for, as a string"}
           ],
           "returns": "I"
         },
@@ -2332,23 +2330,44 @@
           "returns": "S"
         },
         "GAGetRows": {
-          "description": "Returns the number of rows in a global array.",
+          "description": "Returns the number of rows in the global array with this name. For an index use GAGetRowsByIndex.",
           "args": [
-            {"name": "index", "type": "integer", "description": "Array index"}
+            {"name": "name", "type": "string", "description": "Global array name"}
           ],
           "returns": "I"
         },
-        "GAGetCols": {
-          "description": "Returns the number of columns in a global array.",
+        "GAGetRowsByIndex": {
+          "description": "Returns the number of rows in the global array at this index.",
           "args": [
-            {"name": "index", "type": "integer", "description": "Array index"}
+            {"name": "arrayIndex", "type": "integer", "description": "Global array index (from GAGetIndex)"}
+          ],
+          "returns": "I"
+        },
+        "GAGetColumns": {
+          "description": "Returns the number of columns in the global array with this name. For an index use GAGetColumnsByIndex. There is no GAGetCols.",
+          "args": [
+            {"name": "name", "type": "string", "description": "Global array name"}
+          ],
+          "returns": "I"
+        },
+        "GAGetColumnsByIndex": {
+          "description": "Returns the number of columns in the global array at this index.",
+          "args": [
+            {"name": "arrayIndex", "type": "integer", "description": "Global array index (from GAGetIndex)"}
           ],
           "returns": "I"
         },
         "GAGetType": {
-          "description": "Returns the type of a global array (1=real, 2=integer, 3=string).",
+          "description": "Returns the type of the global array with this name: 1=real (GAReal), 2=integer (GAInteger), 3=string (GAString), 4=string15, 5=string31. For an index use GAGetTypeByIndex.",
           "args": [
-            {"name": "index", "type": "integer", "description": "Array index"}
+            {"name": "name", "type": "string", "description": "Global array name"}
+          ],
+          "returns": "I"
+        },
+        "GAGetTypeByIndex": {
+          "description": "Returns the type of the global array at this index: 1=real (GAReal), 2=integer (GAInteger), 3=string (GAString), 4=string15, 5=string31.",
+          "args": [
+            {"name": "arrayIndex", "type": "integer", "description": "Global array index (from GAGetIndex)"}
           ],
           "returns": "I"
         },

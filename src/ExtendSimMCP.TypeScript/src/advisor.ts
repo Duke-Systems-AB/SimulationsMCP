@@ -23,7 +23,8 @@ export interface AdvisorIssue {
 export interface AdvisorSuggestion {
   type: "suggestion";
   message: string;
-  source: "pattern_library" | "modeling_guide";
+  /** "local": the suggestion comes from one of the user's own guides. */
+  source: "pattern_library" | "modeling_guide" | "local";
   scenario?: string;
   overlap?: number;
 }
@@ -177,7 +178,7 @@ export function analyzeSuggestions(
       suggestions.push({
         type: "suggestion",
         message: `Model matches '${scenario.name}' guide (${Math.round(overlap * 100)}% overlap).${mistakeHint}`,
-        source: "modeling_guide",
+        source: scenario.source === "local" ? "local" : "modeling_guide",
         scenario: key,
         overlap,
       });

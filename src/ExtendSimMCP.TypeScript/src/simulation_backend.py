@@ -10214,7 +10214,12 @@ def _read_set_attributes(app, bid):
 
 
 def _extract_blocks(app) -> list:
-    """Extract all blocks with type, label, library, position."""
+    """Extract all blocks with type, label, library, position and enclosing H-block.
+
+    parentBlockId is the H-block a block sits in (None at top level), read with
+    GetEnclosingHblockNum2 like _extract_hierarchies does; guide_draft uses it to draft
+    one level of a model.
+    """
     blocks = []
     current_id = -1
 
@@ -10236,11 +10241,15 @@ def _extract_blocks(app) -> list:
         app.Execute(f'globalStr0 = GetLibraryPathName({bid}, 2);')
         library = _read_str0(app) or ""
 
+        app.Execute(f'global0 = GetEnclosingHblockNum2({bid});')
+        parent = int(parse_float(app.Request("System", "global0+:0:0:0")))
+
         blocks.append({
             "id": bid,
             "type": block_type,
             "library": library,
             "label": label,
+            "parentBlockId": parent if parent >= 0 else None,
         })
     return blocks
 

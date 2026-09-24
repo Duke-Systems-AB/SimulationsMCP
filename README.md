@@ -13,7 +13,7 @@ AI Client (Claude, Gemini, Cursor, ChatGPT)
     │
     │  MCP Protocol (JSON-RPC 2.0)
     ▼
-TypeScript MCP Server (104 tools)
+TypeScript MCP Server (107 tools)
     │
     │  JSON over stdin/stdout
     ▼
@@ -24,7 +24,7 @@ Python COM Backend (pywin32)
 ExtendSim Application
 ```
 
-The server exposes **104 tools** across 18 categories:
+The server exposes **107 tools** across 18 categories:
 
 | Category | Tools |
 |----------|-------|
@@ -38,7 +38,7 @@ The server exposes **104 tools** across 18 categories:
 | Database | `db_list`, `db_table_info`, `db_get_value`, `db_set_value`, `db_get_records`, `db_add_records`, `db_delete_records`, `db_create`, `db_import`, `db_export`, `db_find_record`, `db_sort`, `db_relations_list`, `db_relation_create` |
 | Global Arrays | `ga_list`, `ga_create`, `ga_read`, `ga_write` |
 | Hierarchy | `hierarchy_list`, `hierarchy_get_contents` |
-| AI Assistance | `MCP_init`, `modeling_guide`, `pattern_search`, `model_advisor`, `simulation_type_guide` |
+| AI Assistance | `MCP_init`, `modeling_guide`, `pattern_search`, `model_advisor`, `simulation_type_guide`, `guide_draft`, `guide_save`, `guide_delete` |
 | Reference | `modl_search`, `block_search`, `dialog_search`, `template_list`, `block_template` |
 | Templates | `text_block_add` |
 | Time/Date | `time_convert` |
@@ -70,9 +70,9 @@ npm run build
 
 ### Install from Installer
 
-Download `SimulationsMCP-Setup-1.22.4.exe` from the `installer/` directory and run it.
+Download `SimulationsMCP-Setup-1.22.5.exe` from the `installer/` directory and run it.
 
-The prebuilt installer matches the current source: **v1.22.4, 104 tools** (including
+The prebuilt installer matches the current source: **v1.22.5, 107 tools** (including
 `block_introspect`, `table_get`/`table_set`, `detect_attributes`, and the full
 pattern-mining pipeline). See `CHANGELOG.md` for release history.
 
@@ -122,35 +122,24 @@ For other clients (Claude Desktop, Gemini CLI, Cursor, ChatGPT), see the [User M
 - [User Manual](docs/USER_MANUAL.md) — Installation, configuration, tool reference, workflows, troubleshooting
 - [Design Document](docs/DESIGN_DOCUMENT.md) — Architecture, security analysis, threat model, data flows
 
-## Build and Test
+## Build
 
 ```bash
 cd src/ExtendSimMCP.TypeScript
-
-# Build
+npm install
 npm run build
-
-# Run every offline test: 153 TypeScript + 426 Python. No ExtendSim required.
-npm run test:all
-
-# ...or one language at a time
-npm test          # vitest, 153 tests
-npm run test:py   # pytest, 426 tests + 3 skipped
-
-# Lint both languages (eslint + ruff)
-npm run lint:all
-
-# Run live COM tests (requires a running ExtendSim; they skip themselves if absent)
-npm run test:live
 ```
+
+The test suite and development tooling are kept in the development repository and are
+not part of this distribution.
 
 ## Security
 
-- **stdio mode**: Zero network attack surface — all communication via process-local pipes
+- **stdio mode**: In stdio mode the server listens on no port. Its only network activity is that monthly guide check; the fetched file is treated as untrusted input (size-capped, schema-validated, unknown fields dropped).
 - **No credentials stored** — COM uses Windows process-level trust
 - **Local-only telemetry** — Usage patterns logged to disk, never transmitted
 - **Input validation** — Zod schemas on all tool parameters, ModL string sanitization
-- **No cloud dependencies** — Everything runs locally on your machine
+- **Works fully offline.** By default the server checks `duke.se` for newer modelling guides **at most once a month**, with one HTTPS GET that sends nothing about you or your models. Turn it off with `SIMULATIONSMCP_WEB_LOOKUP=off`, or machine-wide with `policy.json` (see the user manual).
 
 See the [Design Document](docs/DESIGN_DOCUMENT.md) for the full security architecture and threat analysis.
 

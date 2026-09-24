@@ -1,6 +1,6 @@
 # Simulations MCP Server — User Manual
 
-**Version:** 1.22.4
+**Version:** 1.22.5
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 
@@ -24,7 +24,7 @@
 
 ## 1. Introduction
 
-The Simulations MCP Server is a Model Context Protocol (MCP) server that enables AI assistants to build, configure, run, and analyze ExtendSim simulation models programmatically. It bridges AI clients (Claude Code, Claude Desktop, Gemini CLI, Cursor, ChatGPT) to ExtendSim's full modeling environment through 104 specialized tools.
+The Simulations MCP Server is a Model Context Protocol (MCP) server that enables AI assistants to build, configure, run, and analyze ExtendSim simulation models programmatically. It bridges AI clients (Claude Code, Claude Desktop, Gemini CLI, Cursor, ChatGPT) to ExtendSim's full modeling environment through 107 specialized tools.
 
 ### What is MCP?
 
@@ -74,7 +74,7 @@ ExtendSim registers its COM component during installation. If needed, run Extend
 
 ### Option A: Installer (Recommended)
 
-1. Run `SimulationsMCP-Setup-1.22.4.exe` as administrator (the prebuilt installer matches the current source)
+1. Run `SimulationsMCP-Setup-1.22.5.exe` as administrator (the prebuilt installer matches the current source)
 2. Choose installation directory (default: `C:\Program Files\SimulationsMCP`)
 3. Select whether to install as a Windows Service (only needed for ChatGPT — see Section 4.5)
 4. Complete the installation
@@ -99,7 +99,7 @@ The server supports two transport modes:
 
 | Mode | Use Case | How it Works |
 |------|----------|-------------|
-| **stdio** (default) | Claude Code, Claude Desktop, Gemini CLI, Cursor | AI client starts the server as a local subprocess. No network, no port. |
+| **stdio** (default) | Claude Code, Claude Desktop, Gemini CLI, Cursor | AI client starts the server as a local subprocess. No port is opened for this transport; the server's only network activity is the monthly guide check described in §4.7. |
 | **HTTP** | ChatGPT | Runs as a Windows Service on `localhost:3001/mcp`. Requires HTTPS reverse proxy for ChatGPT. |
 
 Most users need **stdio only**. The server starts automatically when your AI client connects — no manual startup required.
@@ -182,6 +182,86 @@ net start "SimulationsMCP"
 net stop "SimulationsMCP"
 ```
 
+### 4.7 Guide updates from duke.se
+
+By default, the server checks `https://duke.se/simulationsmcp/v1/modeling_guides.json`
+for newer modelling guides than the ones bundled with the install. This is the server's
+only network activity outside of ExtendSim COM and whichever transport you use.
+
+**What is fetched and how often:** one JSON file, over HTTPS GET, with a 3-second
+timeout, no redirects and no query string. The check runs at most once every 30 days
+per user, and only when `modeling_guide`, `model_advisor` or `MCP_init` is called — never
+at startup and never in the background. If a check fails, the server waits 24 hours
+before trying again and keeps using the guides it already has. Nothing identifying is
+sent beyond what any HTTPS GET carries (no cookies, no query string, no custom headers);
+an `If-None-Match` ETag is sent for a copy already held. The downloaded file is capped
+at 1 MB while streaming and validated against a strict schema (`schemaVersion` 1) that
+drops unknown fields and caps every string and list before any of it is used.
+
+**Tool output:** `modeling_guide` and `MCP_init` report `guideSource` (`"bundled"` or
+`"web"`) and `guideVersion` (the version of the guide content in use). When the guide
+file in use contains guides whose `since` version is higher than this server version,
+those guides are hidden from the response, and `newerGuides` reports how many are
+waiting — install a newer server to see them.
+
+**Turning it off:**
+- Per user or per MCP client: set the environment variable `SIMULATIONSMCP_WEB_LOOKUP`
+  to `off`, `0` or `false` (case-insensitive) in the client's server configuration or as
+  a system environment variable.
+- Machine-wide, for administrators: create `policy.json` in the installation folder
+  (default `C:\Program Files\SimulationsMCP`) with exactly:
+  ```json
+  { "webLookup": false }
+  ```
+  Creating this file requires administrator rights (it lives in the install directory),
+  and it survives upgrades. Without a policy file, the lookup is **on**. A policy file
+  that is present but unreadable, not valid JSON, or does not contain
+  `"webLookup": true` is treated as **off** — the policy file can only turn the check
+  off, never force it on over a user's own setting. If either the environment variable
+  or the policy file says off, the check is off.
+
+**Local cache:** a per-user copy of the guide file and its fetch state is kept in
+`%LOCALAPPDATA%\SimulationsMCP\guides\`. It can be deleted at any time; the server falls
+back to the bundled guides and fetches again on the next eligible check.
+
+Turning the lookup off (either method above) stops all fetching **and** makes the server
+serve the guides bundled with it only. A guide file fetched earlier stays in the cache
+folder but is not used while the lookup is off; delete the folder if you also want it
+gone from disk.
+
+See `SECURITY.md` for the full security analysis of this check, and
+`docs/DESIGN_DOCUMENT.md` §5.9 for the architectural detail.
+
+### 4.8 Your own guides
+
+You can turn a model you have built into a modelling guide of your own. The AI then
+finds it through `modeling_guide`, `model_advisor` and `MCP_init` exactly like the
+official guides, marked `"source": "local"`.
+
+**Making one.** Open the model and ask the AI to make a guide of it. `guide_draft` reads
+the blocks, connections and set parameters (the top level, or with `hierarchyBlockId`
+the inside of one hierarchical block — at most 50 blocks) and lists in `needsInput` what
+only you can tell: the name, when to use it, what each block is for, what to measure and
+common mistakes. When that is filled in, `guide_save` checks the guide against the same
+schema as the official guides and saves it. It is marked verified only when you have run
+the model and confirmed the guide.
+
+A connection that crosses into a hierarchical block is shown as `<block> (via <inner
+block> <connector>)`, and `needsInput` then asks you to fill in the real connector names
+in `pattern.connections` — the block being drafted only knows the inner block's own port.
+
+**Where they live.** `%APPDATA%\SimulationsMCP\guides\`, one `<key>.json` per guide. You
+can copy a file to a colleague's folder or delete it by hand; `guide_delete` does the
+same. Nothing in this folder is ever sent anywhere, and turning the duke.se guide check
+off (§4.7) does not affect it.
+
+**When something is wrong.** A file that is not valid is skipped and reported in
+`localGuideErrors` with the file and field; the official guides keep working. A guide
+whose key is already used by an official guide is shown as `<key>_local` and reported in
+`localGuideRenames` — it never replaces the official one. Every own guide also carries
+`savedAs`, the key it is saved under: to update a renamed guide, save it with that key
+and `overwrite: true`.
+
 ---
 
 ## 5. Getting Started
@@ -241,7 +321,7 @@ These rules prevent common errors that can crash ExtendSim or produce invalid mo
 
 ## 6. Tool Reference
 
-The server provides 104 tools organized into categories. Each tool accepts structured parameters (validated with JSON Schema) and returns structured JSON responses.
+The server provides 107 tools organized into categories. Each tool accepts structured parameters (validated with JSON Schema) and returns structured JSON responses.
 
 ### 6.1 Model Management
 
@@ -394,6 +474,9 @@ the one that works.
 | `pattern_search` | Search 268 verified example models by keyword or domain |
 | `model_advisor` | Analyze current model: returns warnings, suggestions, and completions |
 | `simulation_type_guide` | Choose the right simulation type for your system |
+| `guide_draft` | Draft a guide of your own from the open model (nothing is saved) |
+| `guide_save` | Check and save a guide of your own to your personal guide folder |
+| `guide_delete` | Delete one of your own guides |
 
 ### 6.12 Reference Tools
 
@@ -763,6 +846,18 @@ recovery hint — treat it as a bonus, not a guarantee.
 | `COM_TIMEOUT` | Command timed out with **no** dialog to explain why (see the per-command timeout table below). ExtendSim may be busy or unresponsive; a retry can succeed |
 | `INVALID_JSON` | Invalid JSON response from the Python backend |
 | `TOOL_ERROR` | Unhandled error in tool execution |
+
+**Own guides (`guide_draft`, `guide_save`, `guide_delete`; §4.8)**
+
+| Error Code | Meaning |
+|------------|---------|
+| `GUIDE_INVALID_KEY` | The key is not 1-64 characters of a-z, 0-9 and _, is a reserved name, or is only the display name (`<key>_local`) of a guide saved under another key |
+| `GUIDE_INVALID` | The guide does not match the guide schema, lacks content every guide needs, or would exceed 100 KB; every problem is listed in `issues` and nothing was saved |
+| `GUIDE_EXISTS` | You already have a guide with this key; pass `overwrite: true` to replace it |
+| `GUIDE_NOT_FOUND` | You have no own guide saved under this key |
+| `GUIDE_TOO_LARGE_MODEL` | More than 50 blocks at this level of the model; draft the inside of one hierarchical block with `hierarchyBlockId` |
+| `GUIDE_WRITE_FAILED` | The guide file could not be written or deleted; nothing was changed |
+| `GUIDE_NOTHING_TO_DRAFT` | There are no blocks at this level of the model to draft a guide from |
 
 ### Per-Command Timeouts
 

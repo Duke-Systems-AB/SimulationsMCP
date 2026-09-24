@@ -1,6 +1,6 @@
 # Simulations MCP Server — Architecture and Design Document
 
-**Version:** 1.22.4
+**Version:** 1.22.5
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 **Classification:** Technical — for IT security specialists, software architects, and power users
@@ -26,14 +26,14 @@
 
 ## 1. Executive Summary
 
-The Simulations MCP Server is a Model Context Protocol (MCP) server that bridges AI assistants to the ExtendSim discrete-event simulation platform. It exposes 104 tools across 18 categories, enabling AI-driven model construction, simulation execution, result analysis, and the mining of reusable modelling patterns out of existing models.
+The Simulations MCP Server is a Model Context Protocol (MCP) server that bridges AI assistants to the ExtendSim discrete-event simulation platform. It exposes 107 tools across 18 categories, enabling AI-driven model construction, simulation execution, result analysis, and the mining of reusable modelling patterns out of existing models.
 
 **Key architectural properties:**
 
 - **Single-machine deployment** — All components run locally on the same Windows machine
-- **No cloud dependencies** — Zero external API calls, no data exfiltration
+- **Works fully offline** — by default the server checks `duke.se` for newer modelling guides at most once a month (one HTTPS GET, no data sent about the user or their models); see §5.9. No other outbound network calls in normal operation.
 - **Two-process architecture** — Node.js (TypeScript) for MCP protocol + Python for COM integration
-- **Dual transport** — stdio (default, zero network) or HTTP (localhost only, for ChatGPT)
+- **Dual transport** — stdio (default, no listening port) or HTTP (localhost only, for ChatGPT)
 - **Fire-and-forget** — Long-running operations are non-blocking with status polling
 - **Local-only telemetry** — Usage patterns logged to disk, never transmitted
 
@@ -58,7 +58,7 @@ The Simulations MCP Server is a Model Context Protocol (MCP) server that bridges
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
 │  │  MCP SDK     │  │  Tool        │  │  Reference Data      │  │
 │  │  Protocol    │  │  Definitions │  │  (JSON files, lazy)  │  │
-│  │  Handler     │  │  (104 tools) │  │                      │  │
+│  │  Handler     │  │  (107 tools) │  │                      │  │
 │  └──────┬───────┘  └──────┬───────┘  └──────────────────────┘  │
 │         │                 │                                     │
 │         │    ┌────────────┴─────────────┐                      │
@@ -126,11 +126,11 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 
 ## 3. Component Design
 
-### 3.1 MCP Server (index.ts, ~2540 lines)
+### 3.1 MCP Server (index.ts, ~2632 lines)
 
 **Responsibilities:**
 - MCP protocol handling via `@modelcontextprotocol/sdk`
-- Tool registration with Zod schema validation (104 tools)
+- Tool registration with Zod schema validation (107 tools)
 - Reference data management (lazy-loaded JSON files)
 - Search engines (ModL functions, blocks, dialog variables)
 - Session logging and telemetry integration
@@ -249,7 +249,7 @@ dialog API, which is what `block_introspect` needs them for).
 **Design decision — pure core + injected backend.** Every one of these modules takes
 the COM layer as an injected dependency (`backend`, `EsOps`, or a reader object)
 instead of importing it. The production call passes `simulation_backend`; tests pass
-a fake. This is why 239 of the 390 offline tests can cover COM-shaped logic with no
+a fake. This is why most of the offline test suite can cover COM-shaped logic with no
 ExtendSim installed, and why the mining pipeline can also run fully offline from
 saved JSON (`psgPath`, `candidatesPaths`).
 
@@ -264,7 +264,7 @@ saved JSON (`psgPath`, `candidatesPaths`).
 **stdio transport (default):**
 - AI client spawns `node dist/index.js` as a child process
 - Communication via stdin/stdout pipes
-- No network stack involved
+- No network stack involved in this protocol — the process itself makes one outbound HTTPS call at most once a month for the guide check (§5.9); nothing listens
 - Recommended for all clients except ChatGPT
 
 **HTTP transport:**
@@ -316,10 +316,11 @@ saved JSON (`psgPath`, `candidatesPaths`).
 | Python subprocess | None (process-local) | stdin/stdout pipes | N/A |
 | COM interface | Local machine | DCOM | Windows process-level |
 | Telemetry | Local filesystem | File I/O | OS file permissions |
+| Outbound guide fetch (§5.9) | Outbound only, to one pinned host (`duke.se`) | HTTPS GET | None — response is untrusted input, validated by schema |
 
 ### 5.2 Network Exposure
 
-**stdio mode (default):** Zero network exposure. The MCP server is a child process of the AI client, communicating exclusively via stdin/stdout pipes. No ports are opened. No listening sockets are created.
+**stdio mode (default):** Zero *inbound* network exposure. The MCP server is a child process of the AI client, communicating exclusively via stdin/stdout pipes. No ports are opened. No listening sockets are created. The server does make one outbound HTTPS call, at most once a month, to check for newer modelling guides — see §5.9. It adds no listening port; the one new element is an outbound fetch whose response is untrusted input, handled as described in §5.9 and §10.2.
 
 **HTTP mode:** Listens on `localhost:<port>` (default 3001). The server binds to the loopback interface only. There is no built-in TLS, authentication beyond session IDs, or rate limiting.
 
@@ -403,8 +404,29 @@ The MCP server reads and writes files in these locations:
 | `dist/` (install dir) | Read | Server code, reference JSON files |
 | `temp/` | Read/Write | Telemetry, session logs, Python startup log |
 | User-specified paths | Read/Write | Model files (via `model_open`, `model_save`, `db_import`, `db_export`) |
+| `%LOCALAPPDATA%\SimulationsMCP\guides\` | Read/Write | Per-user cache of the fetched guide file and its fetch state (§5.9) |
+| `{app}\policy.json` | Read | Admin policy file that can force the guide check off (§5.9); installation folder, default `C:\Program Files\SimulationsMCP` |
 
 Model file paths are provided by the AI client (ultimately by the user). The server does not restrict which files can be opened — it relies on OS-level file permissions.
+
+### 5.9 Outbound Guide Check
+
+- **What:** one file, `https://duke.se/simulationsmcp/v1/modeling_guides.json`. Nothing else, ever.
+- **When:** only when `modeling_guide`, `model_advisor` or `MCP_init` is called, at most once per 30 days per user; after a failure, not again for 24 hours. Never at start-up, never in the background.
+- **How:** HTTPS GET, 3 s timeout, no redirects. Nothing identifying is sent beyond what any HTTPS GET carries (no cookies, no query string, no custom headers); an `If-None-Match` ETag is sent for a copy already held.
+- **Validation:** 1 MB cap enforced while downloading; JSON; `schemaVersion` 1; a strict schema that drops unknown fields and caps every string and list. A file that fails is discarded; the server keeps using what it had.
+- **Residual risk:** content that is valid but deliberately misleading (for example after a compromise of the web server, DNS or the publishing repo) would reach the AI. Accepted in this version; signing is planned before wide distribution.
+- **Turning it off:** `SIMULATIONSMCP_WEB_LOOKUP=off` in the MCP client configuration or as a system variable, or `policy.json` in the installation folder (default `C:\Program Files\SimulationsMCP`) containing `{ "webLookup": false }`. The policy file needs administrator rights to create, and no user setting can override it. Turning it off stops all fetching and makes the server serve its bundled guides only; a guide file fetched earlier stays in the per-user cache but is not used while the lookup is off.
+
+This is the one exception to §5.2's "zero *inbound* network exposure": it adds no
+listening port, but the outbound fetch's response is untrusted input — see the
+"Tampered guide file" row in §10.2 for how that is handled and what residual risk
+remains.
+
+Own guides are unrelated to this network check: they are read from
+`%APPDATA%\SimulationsMCP\guides\` on every guide call by `local-guides.ts`, validated by
+the same `ScenarioSchema`, and merged by `combineGuides()` after `filterBySince`, never
+replacing an official key. No network is involved.
 
 ---
 
@@ -576,7 +598,8 @@ On `SIGINT` or process exit:
 │                       │  ExtendSim  │   │
 │                       └─────────────┘   │
 └─────────────────────────────────────────┘
-  No network. No ports. No firewall rules.
+  No inbound network. No ports. No firewall rules. (Outbound: the monthly guide
+  check only, §5.9 — nothing listens.)
 ```
 
 ### 8.2 HTTP Deployment (ChatGPT)
@@ -690,11 +713,14 @@ When installed as a Windows Service:
 | **ModL command injection** | Low | `_escape_modl_string()` splices quotes in as `StrPutAscii(34)`, so user text cannot end a string literal (ModL has no escape character; the pre-1.22.4 `\"` escaping did not hold). ModL itself has no filesystem/network/OS access. |
 | **Denial of service (ExtendSim crash)** | Medium | Dangerous `ExecuteMenuCommand` IDs (1–4) are blocked. `AbortSilent()` outside simulation is blocked. `ClearBlock(0)` is blocked. Timeouts prevent hangs. |
 | **Local privilege escalation** | Very Low | All processes run as the same user. No setuid, no service accounts with elevated privileges. |
-| **Data exfiltration** | Very Low | No outbound network calls. Telemetry is local-only. No cloud APIs. |
+| **Data exfiltration** | Very Low | The only outbound network call is the monthly guide check (§5.9), which sends nothing identifying beyond what any HTTPS GET carries (an `If-None-Match` ETag, no cookies, no query string, no custom headers). Telemetry is local-only. No cloud APIs. |
 | **Session hijacking (HTTP mode)** | Low | Session IDs are random UUIDs. Localhost-only binding. Reverse proxy should add authentication. |
-| **Supply chain attack** | Low | Minimal runtime dependencies (see Section 12). No auto-update mechanism. |
+| **Supply chain attack** | Low | Minimal runtime dependencies (see Section 12). The server binary has no auto-update mechanism; guide *content* does update itself from duke.se (§5.9) — no code is ever fetched or executed from there, only schema-validated JSON text. |
 | **File system traversal** | Medium | Model file paths from AI client are passed to ExtendSim without path restriction. OS file permissions are the only guard. |
 | **NaN/Infinity serialization** | Low | All numeric outputs sanitized before JSON serialization. Python `allow_nan=False` enforced. |
+| **Tampered guide file (web server, DNS or web repo compromised)** | Medium | HTTPS to one pinned host, no redirects; 1 MB cap; schemaVersion check; Zod schema strips unknown fields and caps lengths. **Residual:** valid-but-misleading content reaches the AI's context — accepted in v1, signing planned. |
+| **Own guide file copied from someone else** | Low | Read from the user's own folder only; Zod schema strips unknown fields and caps lengths; 100 KB per file, 500 files; never executed. **Residual:** as for the web guide file, valid-but-misleading content reaches the AI's context verbatim. |
+| **Guide check as a tracking signal** | Low | At most one GET per user per 30 days; nothing sent identifying beyond an `If-None-Match` ETag; no query string or identifying headers. The ETag itself is chosen by the server and echoed back by the client, so a compromised duke.se could hand out a distinct ETag per client and use it to correlate repeat checks; disabling the lookup (§5.9) removes this signal entirely. Can be disabled per client or locked off machine-wide. |
 
 ### 10.3 Residual Risks
 
@@ -777,9 +803,9 @@ Timeouts are defined in `backend.ts` and cannot be changed without rebuilding. C
 | `@types/node` | ^20.0.0 | Node.js type definitions |
 | `@types/express` | ^5.0.6 | Express type definitions |
 
-### 12.4 No Auto-Update
+### 12.4 No Auto-Update (Code)
 
-The server has no auto-update mechanism. Updates are manual (new installer or `git pull` + `npm run build`). This eliminates supply chain risks from automatic dependency resolution at runtime.
+The server binary has no auto-update mechanism. Updates are manual (new installer or `git pull` + `npm run build`). This eliminates supply chain risks from automatic dependency resolution at runtime. Guide *content* is the one exception (§5.9): the server fetches a newer `modeling_guides.json` from duke.se on its own, but that path only ever ingests schema-validated JSON text — never code, and never anything `npm`/`pip` would install or execute.
 
 ---
 

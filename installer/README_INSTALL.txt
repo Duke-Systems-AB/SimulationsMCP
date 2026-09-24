@@ -1,9 +1,9 @@
 Simulations MCP Server - Installation Guide
 ============================================
 Duke Systems AB
-Version 1.22.4 — 104 tools
+Version 1.22.5 — 107 tools
 Build the installer with installer\build-installer.bat (requires Inno Setup 6 +
-Node + Python) -> output\SimulationsMCP-Setup-1.22.4.exe
+Node + Python) -> output\SimulationsMCP-Setup-1.22.5.exe
 
 PREREQUISITES
 -------------
@@ -47,9 +47,12 @@ The server supports two transport modes:
 
 - stdio (RECOMMENDED for most users)
   Direct process communication — the AI client starts the server as a
-  local subprocess. No network, no port, no service needed. This is the
-  simplest and most reliable setup. Used by Claude Code, Claude Desktop,
-  Gemini CLI, and Cursor.
+  local subprocess. No port and no service needed for this transport.
+  This is the simplest and most reliable setup. Used by Claude Code,
+  Claude Desktop, Gemini CLI, and Cursor.
+
+  The server's only network activity, in either transport, is a monthly
+  guide check (see GUIDE UPDATES FROM DUKE.SE below).
 
 - HTTP (only needed for ChatGPT)
   Streamable HTTP on localhost via Windows Service. Only required for
@@ -57,6 +60,40 @@ The server supports two transport modes:
   endpoint. If you are NOT using ChatGPT, you do NOT need the Windows
   Service or port configuration — just use stdio mode above.
   Configured via MCP_TRANSPORT=http and MCP_PORT environment variables.
+
+GUIDE UPDATES FROM DUKE.SE
+--------------------------
+By default, the server checks duke.se for newer modelling guides than the
+ones bundled with this install. This is its only network activity outside
+of ExtendSim COM and whichever transport you use above.
+
+One HTTPS GET, at most once every 30 days per user, only when a guide tool
+is called (modeling_guide, model_advisor, or MCP_init) — never at startup,
+never in the background. Nothing identifying is sent beyond what any HTTPS
+GET carries (no cookies, no query string, no custom headers); an ETag is
+sent for a copy already held. After a failed check, the server waits 24
+hours before trying again and keeps using the guides it already has.
+
+To turn this off:
+  - Per install: set SIMULATIONSMCP_WEB_LOOKUP=off (also accepts 0/false)
+    in the MCP client's server configuration or as a system variable.
+  - Machine-wide (administrator rights required): create policy.json in
+    the installation folder (default C:\Program Files\SimulationsMCP)
+    containing exactly:
+      { "webLookup": false }
+    This survives upgrades and overrides any user setting.
+
+Turning the lookup off stops all fetching and makes the server serve
+the guides bundled with this install only. A guide file fetched earlier
+stays in %LOCALAPPDATA%\SimulationsMCP\guides\ but is not used while
+the lookup is off; delete that folder if you also want it gone.
+
+Your own guides (made with the guide_draft and guide_save tools) are kept
+in %APPDATA%\SimulationsMCP\guides\, one file per guide. They are never
+sent anywhere, and turning the guide check off does not affect them.
+
+Full details: see "Guide updates from duke.se" in the User Manual:
+https://github.com/Duke-Systems-AB/SimulationsMCP/blob/main/docs/USER_MANUAL.md
 
 MCP CONFIGURATION — AI CLIENTS
 -------------------------------
@@ -151,7 +188,7 @@ FIRST SESSION — IMPORTANT
 When your AI client connects, it should call MCP_init first.
 This returns critical usage rules, available tools, and workflow guidance.
 
-The server provides 104 tools across these categories:
+The server provides 107 tools across these categories:
   Model, Block, Block Layout, Values, Config, Attributes,
   Simulation, Statistics, Multi-run, Database, DB Relations,
   Global Arrays, Hierarchy, Analysis (Optimizer, Scenario Manager),
@@ -162,6 +199,7 @@ Key tools for AI assistants:
   - modeling_guide  — Step-by-step guidance for common scenarios
   - pattern_search  — Search 268 verified example models
   - model_advisor   — Analyze model and get warnings/suggestions
+  - guide_draft / guide_save — Turn a model you built into a guide of your own
   - block_configure — Configure any block type with one call
 
 FIRE-AND-FORGET OPERATIONS

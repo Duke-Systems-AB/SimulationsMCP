@@ -1,5 +1,6 @@
 {
-  "version": "1.12.0",
+  "schemaVersion": 1,
+  "version": "1.13.0",
   "description": "Modeling guides for common ExtendSim simulation scenarios. Each guide describes when to use the pattern, which blocks and connections to use, key parameters, and common mistakes.",
   "categories": {
     "queuing": { "label": "Queuing Systems", "scenarios": ["simple_queue", "multi_server", "priority_queue"] },

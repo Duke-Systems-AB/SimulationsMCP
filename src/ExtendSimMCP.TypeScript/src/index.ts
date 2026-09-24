@@ -16,7 +16,13 @@ import * as backend from "./backend.js";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { analyzeWarnings, analyzeSuggestions, analyzeCompletions } from "./advisor.js";
-import { initTelemetry, recordToolCall, getStatus as getTelemetryStatus, closeTelemetry } from "./telemetry.js";
+import { initTelemetry, recordToolCall, recordEvent, getStatus as getTelemetryStatus, closeTelemetry } from "./telemetry.js";
+import { createGuideSource } from "./guide-source.js";
+import {
+  combineGuides, draftFromExtract, draftPurpose, prepareForSave, renamedFrom, validateLocalKey, localDate,
+  type LocalGuideRename,
+} from "./local-guides-core.js";
+import { defaultLocalGuideDir, loadLocalGuides, saveLocalGuide, deleteLocalGuide, GuideStoreError } from "./local-guides.js";
 import { appendFileSync, mkdirSync, existsSync } from "fs";
 
 // Session logging — opt-in via MCP_SESSION_LOG=1 env var OR temp/mcp_session_enable marker file.
@@ -173,21 +179,6 @@ function getSimulationTypeGuide(): Record<string, unknown> {
     }
   }
   return simulationTypeGuide!;
-}
-
-// Lazy-loaded modeling guides
-let modelingGuides: Record<string, unknown> | null = null;
-
-function getModelingGuides(): Record<string, unknown> {
-  if (modelingGuides === null) {
-    try {
-      modelingGuides = JSON.parse(readFileSync(join(__dirname, "modeling_guides.json"), "utf-8"));
-    } catch (e) {
-      console.error("Warning: Could not load modeling_guides.json:", e);
-      modelingGuides = { error: "Could not load modeling guides" };
-    }
-  }
-  return modelingGuides!;
 }
 
 // Lazy-loaded pattern library
@@ -444,6 +435,21 @@ try {
   // Fallback to hardcoded version
 }
 
+// Modelling guides: bundled, or a newer copy from duke.se (spec 2026-09-23-web-guide-lookup).
+const guideSource = createGuideSource({
+  distDir: __dirname,
+  serverVersion,
+  report: (e) => recordEvent("guide_fetch", { outcome: e.outcome, dur_ms: e.durMs, version: e.version }),
+});
+
+// The user's own guides (spec 2026-09-23-own-guides-design): read on every call, so a
+// saved guide shows up at once. The web-lookup off switch does not affect them.
+const localGuideDir = defaultLocalGuideDir();
+
+async function currentGuides(): Promise<{ guides: Record<string, unknown>; meta: Record<string, unknown> }> {
+  return combineGuides(await guideSource.getGuides(), loadLocalGuides(localGuideDir));
+}
+
 const server = new McpServer({
   name: "simulations-mcp-server",
   version: serverVersion
@@ -467,7 +473,7 @@ server.tool(
           rule: "ALWAYS use modl_search to verify a ModL function exists before using it in execute_command. ExtendSim ModL has non-obvious function names and many functions you might guess do NOT exist. Using a non-existent function can crash ExtendSim.",
           wrong: "NEVER guess or assume a ModL function name. Functions like GetMaxBlockNumber(), GetBlockPosition(), GetConnectedBlock(), MakeStringFromValue(), DBGetIndex() do NOT exist.",
           solution: "Run modl_search('keyword') first. Similarly, use block_search before block_add and dialog_search before block_set_value.",
-          example: "modl_search('block position') → finds GetBlockTypePosition(). modl_search('array size') → finds GAGetRows(), GAGetCols()."
+          example: "modl_search('block position') → finds GetBlockTypePosition(). modl_search('array size') → finds GAGetRowsByIndex(), GAGetColumnsByIndex()."
         },
         {
           topic: "2. Connection direction",
@@ -523,6 +529,7 @@ server.tool(
       ],
       knowledge_tools: {
         modeling_guide: "Get step-by-step guidance for common scenarios (queuing, manufacturing, logistics, resources, flow, continuous). Returns recommended blocks, connections, parameters, and common mistakes.",
+        guide_draft: "guide_draft / guide_save / guide_delete - turn a model the user built into a guide of their own.",
         pattern_search: "Search 268 verified example models by keyword or domain. Returns block topologies, connections, and metadata from real ExtendSim models.",
         model_advisor: "Analyze your current model and get warnings (missing connections, bad patterns), suggestions (improvements), and completions (what to add next).",
         simulation_type_guide: "Choose the right simulation type (discrete event, continuous, flow, RBD) based on your system."
@@ -539,8 +546,12 @@ server.tool(
         optimizer_run: "Returns immediately by default. Poll with simulation_status, collect with optimizer_get_results.",
         blocking_mode: "Set waitForCompletion=true on any of these to wait for completion (legacy behavior)."
       },
+      guides: null as unknown,
       license: null as unknown
     };
+
+    // FR-N3: the first call of every session is a fetch trigger (at most once a month).
+    guideContent.guides = (await currentGuides()).meta;
 
     // Try to detect license (non-blocking - don't fail MCP_init if this fails)
     try {
@@ -744,7 +755,7 @@ server.tool(
 
 server.tool(
   "modeling_guide",
-  "Get modeling guidance for common simulation scenarios. Returns recommended block patterns, key parameters, common mistakes, and example references. Use this when deciding how to model a system.",
+  "Get modeling guidance for common simulation scenarios. Returns recommended block patterns, key parameters, common mistakes, and example references. Use this when deciding how to model a system. Includes the user's own guides (source: local); see guide_draft to create one.",
   {
     query: z.string().optional().describe("Search term or scenario description (e.g. 'queue', 'manufacturing', 'supply chain')"),
     category: z.string().optional().describe("Filter by category: queuing, manufacturing, logistics, resources, flow, continuous"),
@@ -752,14 +763,14 @@ server.tool(
   },
   async ({ query, category, scenario }) => {
     const startTime = performance.now();
-    const guides = getModelingGuides();
+    const { guides, meta } = await currentGuides();
     const scenarios = guides.scenarios as Record<string, unknown> | undefined;
     const categories = guides.categories as Record<string, unknown> | undefined;
     const params = { category, scenario };
 
     if (!scenarios) {
       recordToolCall("modeling_guide", startTime, { status: "ok" }, params);
-      return { content: [{ type: "text" as const, text: JSON.stringify(guides, null, 2) }] };
+      return { content: [{ type: "text" as const, text: JSON.stringify({ ...guides, ...meta }, null, 2) }] };
     }
 
     // Direct scenario lookup
@@ -767,14 +778,15 @@ server.tool(
       const s = scenarios[scenario];
       recordToolCall("modeling_guide", startTime, { status: "ok" }, params);
       if (s) {
-        return { content: [{ type: "text" as const, text: JSON.stringify(s, null, 2) }] };
+        return { content: [{ type: "text" as const, text: JSON.stringify({ ...(s as Record<string, unknown>), ...meta }, null, 2) }] };
       }
       return {
         content: [{
           type: "text" as const,
           text: JSON.stringify({
             message: `No scenario '${scenario}'`,
-            availableScenarios: Object.keys(scenarios)
+            availableScenarios: Object.keys(scenarios),
+            ...meta
           }, null, 2)
         }]
       };
@@ -797,12 +809,13 @@ server.tool(
             type: "text" as const,
             text: JSON.stringify({
               message: `No scenarios in category '${category}'`,
-              availableCategories: categories ? Object.keys(categories) : []
+              availableCategories: categories ? Object.keys(categories) : [],
+              ...meta
             }, null, 2)
           }]
         };
       }
-      return { content: [{ type: "text" as const, text: JSON.stringify({ scenarios: matches }, null, 2) }] };
+      return { content: [{ type: "text" as const, text: JSON.stringify({ scenarios: matches, ...meta }, null, 2) }] };
     }
 
     // Text search across name, description, useWhen, category
@@ -824,12 +837,13 @@ server.tool(
             text: JSON.stringify({
               message: `No scenarios matching '${query}'`,
               availableScenarios: Object.keys(scenarios),
-              availableCategories: categories ? Object.keys(categories) : []
+              availableCategories: categories ? Object.keys(categories) : [],
+              ...meta
             }, null, 2)
           }]
         };
       }
-      return { content: [{ type: "text" as const, text: JSON.stringify({ scenarios: matches }, null, 2) }] };
+      return { content: [{ type: "text" as const, text: JSON.stringify({ scenarios: matches, ...meta }, null, 2) }] };
     }
 
     // No filters — return overview (categories + scenario keys, not full content)
@@ -845,7 +859,85 @@ server.tool(
       )
     };
     recordToolCall("modeling_guide", startTime, { status: "ok" }, params);
-    return { content: [{ type: "text" as const, text: JSON.stringify(overview, null, 2) }] };
+    return { content: [{ type: "text" as const, text: JSON.stringify({ ...overview, ...meta }, null, 2) }] };
+  }
+);
+
+server.tool(
+  "guide_draft",
+  "Draft a modelling guide of the user's own from the open model. Blocks, connections and set parameters come from the model; the fields only a person can write are listed in needsInput - ask the user for them, then call guide_save. Nothing is saved. Drafts the top level of the model, or with hierarchyBlockId the blocks directly inside one hierarchical block (a guide shows a pattern of at most 50 blocks).",
+  {
+    hierarchyBlockId: z.number().int().optional().describe("Draft only the blocks directly inside this hierarchical block (ids from hierarchy_list)"),
+    modelId: z.string().optional().describe("Model ID"),
+  },
+  async ({ hierarchyBlockId, modelId }) => {
+    return safeToolCall("guide_draft", async () => {
+      const extract = await backend.modelExtract({ sections: ["blocks", "connections", "parameters", "hierarchies"], modelId });
+      if (!extract || extract.success === false) return extract;
+      let ctx: unknown = null;
+      try {
+        ctx = await backend.contextGet({ modelId });
+      } catch {
+        ctx = null;   // no context is no purpose, not a failed draft
+      }
+      const r = draftFromExtract(extract, draftPurpose(ctx), { hierarchyBlockId });
+      return r.ok ? { success: true, ...r.value } : { success: false, errorCode: r.errorCode, error: r.error };
+    }, { hierarchyBlockId, modelId });
+  }
+);
+
+server.tool(
+  "guide_save",
+  "Save a modelling guide of the user's own - normally a guide_draft completed together with the user - to their personal guide folder, where modeling_guide, model_advisor and MCP_init find it at once. It is checked against the same schema as the official guides and every problem is listed. Set userConfirmedRun only when the user has run the model and confirmed the guide: it marks the guide verified with today's date. To update an own guide, save under the key it was saved as (its savedAs): a guide shown as <key>_local is saved as <key>.",
+  {
+    key: z.string().describe("Guide key and file name: 1-64 characters of a-z, 0-9 and _ (guide_draft suggests one)"),
+    guide: z.record(z.string(), z.unknown()).describe("The complete guide, in the same form as a modeling_guide scenario"),
+    overwrite: z.boolean().optional().describe("Replace an existing own guide with this key (default false)"),
+    userConfirmedRun: z.boolean().optional().describe("True only if the user ran the model and confirmed the guide (default false)"),
+  },
+  async ({ key, guide, overwrite, userConfirmedRun }) => {
+    return safeToolCall("guide_save", async () => {
+      const badKey = validateLocalKey(key);
+      if (badKey) return { success: false, errorCode: "GUIDE_INVALID_KEY", error: badKey };
+      const prepared = prepareForSave(guide, { userConfirmedRun: userConfirmedRun === true, today: localDate() });
+      if (!prepared.ok) return { success: false, errorCode: prepared.errorCode, error: prepared.error, issues: prepared.issues };
+      // A renamed own guide is shown as <key>_local: saving under that name would make a second file.
+      const before = combineGuides(guideSource.peek(), loadLocalGuides(localGuideDir)).meta;
+      const fileKey = renamedFrom(key, (before.localGuideRenames as LocalGuideRename[] | undefined) ?? []);
+      if (fileKey !== null && !existsSync(join(localGuideDir, `${key}.json`))) {
+        return { success: false, errorCode: "GUIDE_INVALID_KEY",
+          error: `'${key}' is the display name of your guide saved as '${fileKey}'. Save with key '${fileKey}' and overwrite: true to update it.` };
+      }
+      try {
+        const saved = saveLocalGuide(localGuideDir, key, prepared.text, overwrite === true);
+        const { meta } = combineGuides(guideSource.peek(), loadLocalGuides(localGuideDir));
+        const renames = (meta.localGuideRenames as Array<{ file: string; shownAs: string }> | undefined) ?? [];
+        const shownAs = renames.find((r) => r.file === `${key}.json`)?.shownAs ?? key;
+        return { success: true, key, shownAs, path: saved.path, overwritten: saved.overwritten,
+          verified: prepared.scenario.verified ?? null };
+      } catch (e) {
+        if (e instanceof GuideStoreError) return { success: false, errorCode: e.code, error: e.message };
+        throw e;
+      }
+    }, { key, overwrite, userConfirmedRun });
+  }
+);
+
+server.tool(
+  "guide_delete",
+  "Delete one of the user's own modelling guides from their personal guide folder. Official guides cannot be deleted. Confirm with the user before calling.",
+  {
+    key: z.string().describe("The key the guide was saved under (a guide shown as <key>_local is saved as <key>)"),
+  },
+  async ({ key }) => {
+    return safeToolCall("guide_delete", async () => {
+      try {
+        return { success: true, key, ...deleteLocalGuide(localGuideDir, key) };
+      } catch (e) {
+        if (e instanceof GuideStoreError) return { success: false, errorCode: e.code, error: e.message };
+        throw e;
+      }
+    }, { key });
   }
 );
 
@@ -993,7 +1085,7 @@ server.tool(
     if (f === "all" || f === "suggestions") {
       const lib = getPatternLibrary();
       const patterns = (lib.patterns as Array<Record<string, unknown>>) || [];
-      const guides = getModelingGuides();
+      const { guides } = await currentGuides();
       result.suggestions = analyzeSuggestions(blocks, connections, patterns, guides);
     }
 
