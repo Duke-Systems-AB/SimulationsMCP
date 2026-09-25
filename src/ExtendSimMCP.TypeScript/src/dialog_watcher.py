@@ -31,6 +31,7 @@ import ctypes
 import ctypes.wintypes
 import win32gui
 import win32con
+import win32process
 
 # ─── Strategy 1: UI Automation (for responsive ExtendSim) ─────────────────────
 
@@ -251,9 +252,10 @@ def _find_extendsim_dialog_windows():
     """Find ExtendSim dialog windows (not the main window) via win32gui."""
     dialogs = []
     main_hwnd = None
+    main_title = ""
 
     def enum_callback(hwnd, _):
-        nonlocal main_hwnd
+        nonlocal main_hwnd, main_title
         if not win32gui.IsWindowVisible(hwnd):
             return True
         title = win32gui.GetWindowText(hwnd)
@@ -262,25 +264,50 @@ def _find_extendsim_dialog_windows():
         if not title or "ExtendSim" not in title:
             return True
 
-        # Main window has model name in brackets or "Pro" in title
-        if "[" in title and ("Pro" in title or "DE" in title or "CP" in title):
-            main_hwnd = hwnd
-        elif title == "ExtendSim" and cls in ("Qt5QWindowIcon", "Ghost"):
-            # This is likely a QMessageBox dialog
-            dialogs.append({"hwnd": hwnd, "title": title, "class": cls})
-        elif "Maintenance" in title:
+        # Maintenance dialogs first - "ExtendSim Maintenance ..." also starts with
+        # "ExtendSim" and would otherwise be mistaken for the main window below.
+        if "Maintenance" in title:
             dialogs.append({
                 "hwnd": hwnd, "title": title, "class": cls,
                 "is_maintenance": True
             })
+        elif title == "ExtendSim" and cls in ("Qt5QWindowIcon", "Ghost"):
+            # This is likely a QMessageBox dialog
+            dialogs.append({"hwnd": hwnd, "title": title, "class": cls})
+        elif cls in ("Qt5QWindowIcon", "Ghost") and title.startswith("ExtendSim") and title != "ExtendSim":
+            # Main window candidate. Covers "ExtendSim Pro" with no model open,
+            # "ExtendSim Pro   [Model-1.mox]" with one, and DE/CP editions either way
+            # (measured live 2026-09-25: a bare "ExtendSim Pro" window, no brackets, is
+            # the real main window when no model is open). When several windows match,
+            # prefer the one with a model open ("[" in the title); otherwise keep the
+            # first match - never let a later, worse match overwrite an earlier one.
+            if main_hwnd is None or ("[" in title and "[" not in main_title):
+                main_hwnd = hwnd
+                main_title = title
         return True
 
     win32gui.EnumWindows(enum_callback, None)
     return dialogs, main_hwnd
 
 
-def _find_win32_error_dialogs():
-    """Find standard Windows #32770 error dialogs."""
+def _window_pid(hwnd):
+    """Owning process id of a window, or None if it can't be determined."""
+    try:
+        return win32process.GetWindowThreadProcessId(hwnd)[1]
+    except Exception:
+        return None
+
+
+def _find_win32_error_dialogs(extendsim_pid=None):
+    """Find standard Windows #32770 error dialogs that belong to ExtendSim's process.
+
+    Without a known ExtendSim pid we cannot tell a #32770 dialog apart from any other
+    application's, so we return nothing rather than risk clicking OK on someone else's
+    message box.
+    """
+    if extendsim_pid is None:
+        return []
+
     dialogs = []
 
     def enum_callback(hwnd, _):
@@ -288,6 +315,8 @@ def _find_win32_error_dialogs():
             return True
         cls = win32gui.GetClassName(hwnd)
         if cls != "#32770":
+            return True
+        if _window_pid(hwnd) != extendsim_pid:
             return True
 
         title = win32gui.GetWindowText(hwnd)
@@ -327,8 +356,11 @@ def try_win32gui_strategy():
     """
     dismissed = []
 
-    # 1. Handle standard Win32 #32770 error dialogs (click OK button)
-    win32_dialogs = _find_win32_error_dialogs()
+    # 1. Handle standard Win32 #32770 error dialogs (click OK button) - only ones that
+    # belong to ExtendSim's own process (reuses the main-window lookup below).
+    qt_dialogs, main_hwnd = _find_extendsim_dialog_windows()
+    extendsim_pid = _window_pid(main_hwnd) if main_hwnd else None
+    win32_dialogs = _find_win32_error_dialogs(extendsim_pid)
     for d in win32_dialogs:
         for btn in d["buttons"]:
             if btn["text"] in ("OK", "Ok", "ok"):
@@ -347,7 +379,6 @@ def try_win32gui_strategy():
                 break
 
     # 2. Handle Qt ExtendSim dialogs (SetForegroundWindow + SendInput Enter)
-    qt_dialogs, _main_hwnd = _find_extendsim_dialog_windows()
     for d in qt_dialogs:
         if d.get("is_maintenance"):
             # Dismiss maintenance dialog too

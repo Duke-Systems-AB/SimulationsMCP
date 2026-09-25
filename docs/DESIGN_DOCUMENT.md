@@ -1,6 +1,6 @@
 # Simulations MCP Server — Architecture and Design Document
 
-**Version:** 1.22.5
+**Version:** 1.22.6
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 **Classification:** Technical — for IT security specialists, software architects, and power users
@@ -119,6 +119,7 @@ The Simulations MCP Server is a Model Context Protocol (MCP) server that bridges
 | MCP Server | TypeScript (Node.js) | Started by AI client | Protocol handling, tool routing, reference data |
 | COM Backend | Python | Singleton subprocess | COM communication with ExtendSim |
 | Dialog Watcher | Python | Spawned on-demand | UI Automation to dismiss blocking dialogs |
+| ExtendSim Probe | Python | Long-lived, no COM | Watchdog checks: win32 window list and responsiveness; UI Automation only to read and click a box it has found |
 
 The Python process is a long-lived singleton — spawned once and kept alive for the entire MCP session. This avoids the overhead of per-call COM initialization.
 
@@ -216,7 +217,7 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - File rotation at 10 MB
 - Privacy-safe: no user data, file paths, or model content
 
-### 3.7 Auxiliary Python Modules (~1600 lines across 13 files)
+### 3.7 Auxiliary Python Modules (~2030 lines across 14 files)
 
 Capabilities added after v1.19 live in their own modules rather than growing
 `simulation_backend.py` further. They fall into two groups.
@@ -246,6 +247,12 @@ Capabilities added after v1.19 live in their own modules rather than growing
 straight out of the compiled `.lbr` blob — these names are invisible to the COM
 dialog API, which is what `block_introspect` needs them for).
 
+**Watchdog helper:**
+
+| Module | Purpose |
+|--------|---------|
+| `extendsim_probe.py` | Long-lived process that reads ExtendSim's windows (dialogs, responsiveness) without COM, for the stuck-command watchdog (§6.3) |
+
 **Design decision — pure core + injected backend.** Every one of these modules takes
 the COM layer as an injected dependency (`backend`, `EsOps`, or a reader object)
 instead of importing it. The production call passes `simulation_backend`; tests pass
@@ -272,6 +279,8 @@ saved JSON (`psgPath`, `candidatesPaths`).
 - Endpoint: `POST /mcp` (tool calls), `GET /mcp` (SSE), `DELETE /mcp` (session close)
 - Session management via `mcp-session-id` header
 - UUID session IDs generated server-side
+- One MCP server instance per session (built from a shared tool registry,
+  `tool-registry.ts`); sessions never share a server or transport
 - **No TLS** — localhost only. External exposure requires reverse proxy with HTTPS.
 
 ### 4.2 MCP Server ↔ Python Backend
@@ -512,15 +521,55 @@ AI Client                MCP Server              Python Backend          ExtendS
    │                         │  → no dialog found      │               │shown │
    │                         │                         │               └──────┤
    │                         │                         │                      │
-   │                         │  10s: TIMEOUT           │                      │
-   │                         │  spawn dialog_watcher.py│                      │
+   │                         │  10s, 20s, ...: watchdog check                 │
+   │                         │  extendsim_probe.py (long-lived, no COM)       │
    │                         │       ──────────────────┼──UIAutomation──────►│
    │                         │       dialog text found │               click  │
    │                         │       dialog dismissed  │               OK     │
+   │                         │       → running → stuck (5s grace lapsed)      │
    │                         │                         │                      │
-   │  { error, dialogText } │                         │                      │
+   │  another_tool_call()   │                         │                      │
+   │────────────────────────►│  answered at once:      │                      │
+   │  { EXTENDSIM_BUSY }    │  never sent to Python    │                      │
    │◄────────────────────────│                         │                      │
+   │                         │                         │                      │
+   │                         │  command's own timeout  │                      │
+   │                         │  spawn dialog_watcher.py│                      │
+   │                         │                         │                      │
+   │  { error, dialogText } │  stuck → idle when       │                      │
+   │◄────────────────────────│  Python's late answer   │                      │
+   │                         │  finally arrives         │                      │
 ```
+
+Three states track a command in flight (`backend.ts`): **idle** (nothing running, commands
+sent to Python as usual), **running** (a command in flight within its timeout, checked at 1 s
+via `dialog_watcher.py` and then every 10 s via `extendsim_probe.py`), and **stuck** (the
+command's outcome has already been settled — by the main timeout or by a dialog found and its
+grace period lapsed — but Python has not answered it yet). While stuck, every further command
+is answered immediately with `EXTENDSIM_BUSY` (what ExtendSim is busy with, for how long, and
+a suggestion) instead of being queued behind the blocked COM call; `extendsim_status` answers
+from TypeScript in this state too, without touching Python. The state returns to idle by
+itself once Python's late answer for the settled command finally arrives (discarded, as
+before) or the Python process dies and restarts.
+
+`extendsim_probe.py` is a second, long-lived Python process, separate from the COM backend,
+started once and reused for the life of the server. It never opens a COM connection to
+ExtendSim and holds no connection to anything — it only asks Windows whether ExtendSim's
+window has a dialog on it and whether the window is responding — so it can never become a
+second driver contending for the same COM apartment. Each check uses only the win32 window
+list and `IsHungAppWindow`, which answer in about a millisecond even during a simulation run;
+UI Automation, which blocks while ExtendSim is busy, is used only to read and click a box that
+the win32 check has already found (ExtendSim then waits on the box, so it answers). Only a box
+owned by ExtendSim's own process is ever clicked. Checks happen every 10 s while a command
+runs; a check that itself takes more than 1 s widens the interval (doubling, capped at 30 s)
+so a slow machine does not add its own load on top of an already-slow ExtendSim. If the probe
+cannot start, or dies twice in a row, the watchdog is disabled for the session and detection
+falls back to today's behaviour: the 1 s early check and the timeout check, both via
+`dialog_watcher.py`.
+
+Telemetry records a sanitized form of any dialog text encountered (quoted names, paths and
+numbers replaced with placeholders) rather than the raw text, so causes can be grouped and
+fixed at the source without recording model content.
 
 ---
 
@@ -537,6 +586,7 @@ AI Client                MCP Server              Python Backend          ExtendS
 | `MISSING_PARAMETER` | TypeScript (Zod) | Low | None (client error) |
 | `EXTENDSIM_NOT_RUNNING` | Python | High | User must start ExtendSim |
 | `TIMEOUT` | TypeScript | Medium | Dialog dismissal + retry |
+| `EXTENDSIM_BUSY` | TypeScript | Medium | Answered at once while stuck; resumes by itself |
 | `INVALID_JSON` | TypeScript | High | Discard + retry |
 | `TOOL_ERROR` | TypeScript | Medium | None |
 
@@ -555,14 +605,35 @@ AI Client                MCP Server              Python Backend          ExtendS
 3. Next call attempts `GetActiveObject()` reconnection
 
 **Dialog blocking:**
-1. Early dialog check at 1 second
-2. If found: dismiss and return dialog text as error
-3. If not found: wait for main timeout
-4. On timeout: spawn dialog watcher again
-5. Dialog text included in error response for debugging
+1. Early dialog check at 1 second, via `dialog_watcher.py`
+2. If found: dismiss and return dialog text as error (never for Scenario Manager or optimizer
+   runs, which are report-only)
+3. If not found: the watchdog checks again every 10 seconds via the long-lived
+   `extendsim_probe.py` (widening to 30 seconds when a check itself runs slow), until Python
+   answers or the command's own timeout fires
+4. A dialog found mid-run is dismissed immediately, not held until the timeout
+5. On the command's own timeout: spawn `dialog_watcher.py` once more, as before
+6. Dialog text included in error response for debugging; a sanitized form (names, paths and
+   numbers removed) is recorded in telemetry
+
+**Stuck state (no cascading commands):**
+1. A command becomes **stuck** once its outcome has been settled (main timeout, or a
+   dismissed dialog past its grace period) but Python has not yet answered it
+2. Every further command is answered immediately with `EXTENDSIM_BUSY` — never queued behind
+   the blocked COM call — naming what is busy, for how long, and what to do
+3. `extendsim_status` is answered directly from TypeScript while stuck, without a Python call
+4. The state returns to idle by itself when Python's late answer finally arrives (discarded)
+   or the Python process dies and is restarted — which should also cover the user restarting
+   ExtendSim by hand
+5. ExtendSim itself is never killed or restarted by the server
 
 **Stale responses:**
-After a timeout, the Python process may still produce a response for the timed-out command. The stale response counter ensures these late responses are discarded and don't corrupt the response for the next command.
+After a timeout, the Python process may still produce a response for the timed-out command.
+Because that command was settled while Python was still inside its COM call, the server is in
+the stuck state, and nothing is written to Python in the meantime: every further command is
+answered with `EXTENDSIM_BUSY` instead. The late answer therefore can only belong to the
+settled command — it is discarded and ends the stuck state, and the next command starts
+clean. A late answer can never be mistaken for the response to a later command.
 
 ### 7.3 Graceful Shutdown
 
@@ -714,6 +785,7 @@ When installed as a Windows Service:
 | **Denial of service (ExtendSim crash)** | Medium | Dangerous `ExecuteMenuCommand` IDs (1–4) are blocked. `AbortSilent()` outside simulation is blocked. `ClearBlock(0)` is blocked. Timeouts prevent hangs. |
 | **Local privilege escalation** | Very Low | All processes run as the same user. No setuid, no service accounts with elevated privileges. |
 | **Data exfiltration** | Very Low | The only outbound network call is the monthly guide check (§5.9), which sends nothing identifying beyond what any HTTPS GET carries (an `If-None-Match` ETag, no cookies, no query string, no custom headers). Telemetry is local-only. No cloud APIs. |
+| **Cross-session response mix-up (HTTP mode)** | Low | Each session gets its own MCP server instance; one instance refuses a second transport (SDK 1.26+), so a regression fails loudly instead of mixing up answers. Fixed after 1.22.5 (GHSA-345p-7cg4-v4c7). |
 | **Session hijacking (HTTP mode)** | Low | Session IDs are random UUIDs. Localhost-only binding. Reverse proxy should add authentication. |
 | **Supply chain attack** | Low | Minimal runtime dependencies (see Section 12). The server binary has no auto-update mechanism; guide *content* does update itself from duke.se (§5.9) — no code is ever fetched or executed from there, only schema-validated JSON text. |
 | **File system traversal** | Medium | Model file paths from AI client are passed to ExtendSim without path restriction. OS file permissions are the only guard. |
@@ -765,7 +837,7 @@ Timeouts are defined in `backend.ts` and cannot be changed without rebuilding. C
 | `dist/index.js` | Server entry point |
 | `dist/simulation_backend.py` | Python COM backend |
 | `dist/dialog_watcher.py` | Dialog auto-dismisser |
-| `dist/*.py` (13 more) | Auxiliary modules — see §3.7 |
+| `dist/*.py` (14 more) | Auxiliary modules — see §3.7 |
 | `dist/*.json` | Reference data (7 files) |
 | `patterns/molecules/*.json` | Molecule library — read by `list_patterns`/`instantiate_pattern`, written by `approve_pattern` |
 | `patterns/flows/*.json` | Flow library — read by `list_patterns`/`compose_flow` |
@@ -781,7 +853,7 @@ Timeouts are defined in `backend.ts` and cannot be changed without rebuilding. C
 
 | Package | Version | Purpose | Risk Assessment |
 |---------|---------|---------|-----------------|
-| `@modelcontextprotocol/sdk` | ^1.0.0 | MCP protocol implementation | Official Anthropic package |
+| `@modelcontextprotocol/sdk` | ^1.30.1 | MCP protocol implementation | Official Anthropic package |
 | `express` | ^5.2.1 | HTTP transport (only when `MCP_TRANSPORT=http`) | Widely used, well-audited |
 | `zod` | ^3.22.0 | Input schema validation | Widely used, no native code |
 | `node-windows` | ^1.0.0-beta.8 | Windows Service management (installer only) | Windows-specific |

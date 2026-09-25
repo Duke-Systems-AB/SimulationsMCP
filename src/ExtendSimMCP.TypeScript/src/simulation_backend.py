@@ -10598,7 +10598,7 @@ def _psg_read_connectors(app, bid):
 def _psg_hblock_type(app, bid):
     """Best-effort pure/physical: library origin -> pure, else physical.
 
-    NOTE: the pure/physical signal is a live-verification item (Task 5). If it
+    NOTE: the pure/physical signal still needs confirming against live models. If it
     proves unreliable, return None (fail-closed, no guess) rather than a wrong tag.
     """
     app.Execute(f'globalStr0 = GetLibraryPathName({bid}, 2);')

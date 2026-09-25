@@ -5,7 +5,6 @@
  * Uses Python backend via subprocess for COM integration.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
@@ -18,6 +17,7 @@ import { join } from "path";
 import { analyzeWarnings, analyzeSuggestions, analyzeCompletions } from "./advisor.js";
 import { initTelemetry, recordToolCall, recordEvent, getStatus as getTelemetryStatus, closeTelemetry } from "./telemetry.js";
 import { createGuideSource } from "./guide-source.js";
+import { ToolRegistry } from "./tool-registry.js";
 import {
   combineGuides, draftFromExtract, draftPurpose, prepareForSave, renamedFrom, validateLocalKey, localDate,
   type LocalGuideRename,
@@ -450,10 +450,10 @@ async function currentGuides(): Promise<{ guides: Record<string, unknown>; meta:
   return combineGuides(await guideSource.getGuides(), loadLocalGuides(localGuideDir));
 }
 
-const server = new McpServer({
-  name: "simulations-mcp-server",
-  version: serverVersion
-});
+// Every tool below is registered once on this registry; each connection gets its own
+// McpServer built from it (stdio: one; HTTP: one per session). See tool-registry.ts.
+const server = new ToolRegistry();
+const SERVER_INFO = { name: "simulations-mcp-server", version: serverVersion };
 
 // ============================================================================
 // GUIDE AND REFERENCE TOOLS
@@ -491,6 +491,12 @@ server.tool(
           rule: "There MUST be at least one Queue block between Create→Activity and between Activity→Activity",
           wrong: "NEVER connect Create directly to Activity or Activity directly to Activity",
           pattern: "Create → Queue → Activity → Queue → Activity → Exit"
+        },
+        {
+          topic: "5. When ExtendSim is stuck",
+          rule: "EXTENDSIM_BUSY means ExtendSim has not finished an earlier command (a blocking dialog, or a long call). Make NO changes; call extendsim_status until it reports state 'idle', and tell the user what its suggestion says. After COM_TIMEOUT, wait for state 'idle' first.",
+          wrong: "Do not retry the command or work around it while ExtendSim is busy - nothing is sent to ExtendSim until it answers.",
+          related: "EXTENDSIM_ERROR_DIALOG still means ExtendSim reported an error about the model: fix the cause (dialog.text), do not retry the same call."
         }
       ],
       other_tips: [
@@ -562,6 +568,8 @@ server.tool(
           libraries: licenseResult.libraries,
           simulationTypes: licenseResult.simulationTypes
         };
+      } else if (licenseResult?.errorCode === "EXTENDSIM_BUSY") {
+        guideContent.license = { busy: true, suggestion: licenseResult.suggestion };
       }
     } catch {
       // License detection failed - leave as null, not critical
@@ -2554,7 +2562,7 @@ async function main() {
               delete transports[sid];
             }
           };
-          await server.connect(transport);
+          await server.createServer(SERVER_INFO).connect(transport);   // one server per session
           await transport.handleRequest(req, res, req.body);
           return;
         } else {
@@ -2613,7 +2621,7 @@ async function main() {
   } else {
     // Default: stdio transport (for Claude Code CLI)
     const transport = new StdioServerTransport();
-    await server.connect(transport);
+    await server.createServer(SERVER_INFO).connect(transport);
     console.error("Simulations MCP Server running on stdio");
     if (SESSION_LOG_ENABLED) {
       if (!existsSync(SESSION_LOG_DIR)) mkdirSync(SESSION_LOG_DIR, { recursive: true });

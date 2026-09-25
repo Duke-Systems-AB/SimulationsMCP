@@ -9,7 +9,7 @@ attributes through the AttribsTable_ttbl dialog table.
 """
 
 # Column layout of AttribsTable_ttbl on the Set block.
-# Pinned by live discovery (see plan Task 0). Named so tests bind to the symbol,
+# Pinned by inspecting the live Set block. Named so tests bind to the symbol,
 # not the number, and a discovery adjustment does not churn the tests.
 ATTR_NAME_COL = 0       # string column: attribute name
 ATTR_VALUE_COL = 1      # value column: constant value

@@ -3,6 +3,41 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
+## 1.22.6 — 2026-09-25
+
+A robustness and security release. One ExtendSim call that does not come back no longer
+ruins the session, message boxes during long commands are found in about 10 seconds, and
+HTTP mode (the Windows Service used for ChatGPT) can no longer send one client's answer to
+another. Tool count unchanged at 107. Verified live on ExtendSim 2024.
+
+**Upgrade first if you use** ChatGPT through the Windows Service (HTTP mode), or long
+simulations that sometimes show a message box.
+
+### Changed — one stuck ExtendSim call no longer ruins the session
+- While ExtendSim has not finished a command, further commands are answered at once with
+  `EXTENDSIM_BUSY` (what it is busy with, for how long, what to do) instead of queuing behind
+  it and timing out one after another. The server resumes by itself when ExtendSim answers.
+- Message boxes during long commands (simulation runs) are found within about 10 seconds
+  instead of at the end of the command's time limit (up to 10 minutes).
+- `extendsim_status` answers while ExtendSim is busy and reports `state`.
+- `COM_TIMEOUT` now tells the AI to wait until `extendsim_status` reports `idle` before
+  retrying, and to run long simulations with `waitForCompletion=false`, instead of
+  retrying at once into `EXTENDSIM_BUSY`.
+- Usage statistics now record which message boxes occur, with names, paths and numbers
+  removed.
+- The automatic OK-click now only ever touches ExtendSim's own message boxes; before, a
+  fallback could also click a standard Windows message box of another program.
+
+### Security — HTTP mode could answer the wrong client
+- In HTTP mode (the Windows Service used for ChatGPT) every session was connected to one
+  shared MCP server. With the MCP SDK in use until now (1.25.3) that server followed the
+  newest session, so with two clients connected a response could reach the other client
+  (GHSA-345p-7cg4-v4c7). Each HTTP session now gets its own server. stdio mode (Claude
+  Code, Claude Desktop, Cursor, Gemini CLI) was not affected.
+- MCP SDK 1.25.3 -> 1.30.1, and the SDK's own dependencies (hono, path-to-regexp,
+  fast-uri, ajv, body-parser, qs) updated within their ranges: `npm audit --omit=dev`
+  now reports no known vulnerabilities in what the installer ships.
+
 ## 1.22.5 — 2026-09-24
 
 Two features and a fix. Your own modelling guides: the AI drafts a guide from a model

@@ -13,10 +13,14 @@
 import { spawn, execFile, ChildProcess } from "child_process";
 import * as path from "path";
 import * as readline from "readline";
+import { busyResult, stuckStatus, type StuckInfo } from "./stuck-state.js";
+import { WATCHDOG_INTERVAL_MS, nextInterval, shouldDismiss, dialogLine, type ProbeCheck } from "./watchdog-core.js";
+import { ProbeClient, type ProbeLike, type ProbeDismissed } from "./probe-client.js";
 
 // Path to Python scripts
 const PYTHON_SCRIPT = path.join(__dirname, "simulation_backend.py");
 const DIALOG_WATCHER_SCRIPT = path.join(__dirname, "dialog_watcher.py");
+const PROBE_SCRIPT = path.join(__dirname, "extendsim_probe.py");
 
 // ============================================================================
 // TIMEOUT CONFIGURATION
@@ -110,17 +114,199 @@ export interface PendingRequest {
   earlyResolved?: boolean;
   // Grace-window timer after a successful dialog dismiss (W2-2).
   graceTimerId?: ReturnType<typeof setTimeout>;
+  // The watchdog (spec §5.3): a probe check every ~10s while this request runs.
+  watchdogTimerId?: ReturnType<typeof setTimeout>;
+  // The most recent probe result seen for this request, if any.
+  lastCheck?: ProbeCheck | null;
+  // Bumped by clearRequestTimers - so on every (re-)arm, every resolve/reject, AND the
+  // instant a dying Python process's timers are cleared for retry (bumping only on re-arm
+  // would leave a gap between the death and the retry being re-armed, during which a
+  // callback from the dead attempt would still see the request queued, the same attempt,
+  // and freshly-reset flags). Scheduled async callbacks capture the value at schedule time
+  // and bail if it no longer matches after an await.
+  attempt?: number;
+  // True from the moment the main timeout's own dialog check starts until it either settles
+  // the request or defers it into the grace window. While true, the watchdog does not run a
+  // check of its own - the two would otherwise race the same dialog.
+  timeoutChecking?: boolean;
+  // True from just before the watchdog calls p.dismiss() until it returns. Tells the main
+  // timeout, if it fires during that window, to defer to the watchdog's outcome instead of
+  // running its own, separate dialog_watcher check against a dialog the probe may already
+  // have clicked away.
+  watchdogActing?: boolean;
+  // Set by the main timeout when it found `watchdogActing` set and stood aside. If the
+  // watchdog then finds the dialog gone, it owes the timeout an answer - it runs the
+  // timeout's own check itself rather than silently losing it.
+  timeoutDeferred?: boolean;
 }
 const requestQueue: PendingRequest[] = [];
 let isProcessingRequest = false;
-// Counts stale responses to discard after timeouts (see A4 fix)
-let staleResponseCount = 0;
+// The stuck state (spec 2026-09-24 §5.1): a command's outcome was settled (timeout, or a
+// dialog and the grace window lapsed) while Python is still inside its COM call. Nothing is
+// written to Python until it answers that call - this replaces the old stale-response
+// counter, which let the queue write the next command behind the blocked one, where it
+// timed out in turn (one stuck call ruined the whole session).
+let stuck: StuckInfo | null = null;
 // Re-entrancy guard for handleProcessDeath (C4 fix)
 let isHandlingProcessDeath = false;
+
+// The watchdog's eyes (spec §5.2): started on first use; null when disabled for the session.
+let probe: ProbeLike | null = null;
+let probeCreated = false;
+let stuckPollTimer: ReturnType<typeof setInterval> | null = null;
+
+function getProbe(): ProbeLike | null {
+  if (!probe && !probeCreated) { probe = new ProbeClient(PROBE_SCRIPT); probeCreated = true; }
+  return probe && !probe.disabled ? probe : null;
+}
+
+/** Same shape the early and timeout checks build from dialog_watcher.py output. */
+function dialogInfoFrom(dismissed: ProbeDismissed[]): DialogInfo {
+  return {
+    found: true,
+    text: dismissed.flatMap((d) => d.texts ?? []).join("; "),
+    dismissed: dismissed.every((d) => d.dismissed === true),
+    details: dismissed,
+  };
+}
+
+/** A probe call that throws is treated exactly like one that returns null: no answer. */
+async function probeCall<T>(call: () => Promise<T | null>): Promise<T | null> {
+  try {
+    return await call();
+  } catch (e) {
+    console.error(`Probe call failed: ${e}`);
+    return null;
+  }
+}
+
+/**
+ * Re-arms the watchdog after `delay` ms: asks the probe for a check, dismisses
+ * a dialog for ordinary commands (S6/S7), and widens the interval when checks
+ * are slow. Silently does nothing when the request has already settled, when
+ * there is no usable probe (fallback: today's 1s + timeout checks only), when
+ * a later attempt has superseded this one, or while the main timeout's own
+ * dialog check is running (the two would otherwise race the same dialog).
+ *
+ * A dialog is acted on only when the probe also recognised ExtendSim's main window
+ * (`windowFound`). The probe reports any visible window titled "ExtendSim" as a dialog,
+ * but dismiss() refuses to click one it cannot tie to ExtendSim - acting on it anyway
+ * would settle the command as "could not be dismissed" for a window we were never allowed
+ * to touch. Without the main window the check is only recorded and the watch goes on.
+ */
+function scheduleWatchdog(req: PendingRequest, delay: number): void {
+  const attempt = req.attempt;
+  const bail = () =>
+    !requestQueue.includes(req) || req.earlyResolved || !!req.graceTimerId || !!req.timeoutChecking || req.attempt !== attempt;
+
+  req.watchdogTimerId = setTimeout(async () => {
+    req.watchdogTimerId = undefined;
+    if (bail()) return;
+    const p = getProbe();
+    if (!p) return;                                   // fallback: today's 1 s + timeout checks only
+    const check = await probeCall(() => p.check());
+    if (bail()) return;
+    if (check) req.lastCheck = check;
+    if (check && check.windowFound && shouldDismiss(req.command, check)) {
+      // Tells the main timeout, if it fires while this is in flight, to defer to us instead
+      // of running its own separate check against a dialog we may be about to click away.
+      // Cleared in `finally` so the timeout can never be left deferring forever.
+      req.watchdogActing = true;
+      let dismissed: ProbeDismissed[] | null;
+      try {
+        dismissed = await probeCall(() => p.dismiss());
+      } finally {
+        req.watchdogActing = false;
+      }
+      if (bail()) return;
+      if (!dismissed || dismissed.length === 0) {
+        // An empty dismiss means "nothing there to click" (the dialog may have closed on
+        // its own), not "found but could not click". Re-check once before deciding: still
+        // there -> genuinely stuck; gone (or the re-check itself fails, same as
+        // `dismissed === null`) -> nothing to report, keep watching.
+        const recheck = await probeCall(() => p.check());
+        if (bail()) return;
+        if (recheck && recheck.windowFound && recheck.dialogs.length > 0) {
+          req.earlyResolved = true;
+          clearTimeout(req.timeoutId);
+          const info: DialogInfo = {
+            found: true, text: recheck.dialogs.map(dialogLine).join("; "), dismissed: false, details: recheck.dialogs,
+          };
+          console.error(`Watchdog found a dialog during '${req.command}': ${info.text} (dismissed: ${info.dismissed})`);
+          handleDialogResult(req, info, "watchdog");
+          return;
+        }
+        if (req.timeoutDeferred) {
+          // The main timeout fired while we were mid-dismiss and stood aside. Now that we
+          // know the dialog is gone, its check is ours to run - otherwise its answer (and,
+          // if nothing is found, the request's genuine COM_TIMEOUT) is simply lost.
+          req.timeoutDeferred = false;
+          await runTimeoutCheck(req, attempt);
+          return;
+        }
+        scheduleWatchdog(req, nextInterval(delay, recheck ? recheck.durationMs : null));
+        return;
+      }
+      req.earlyResolved = true;
+      clearTimeout(req.timeoutId);
+      const info = dialogInfoFrom(dismissed);
+      console.error(`Watchdog found a dialog during '${req.command}': ${info.text} (dismissed: ${info.dismissed})`);
+      handleDialogResult(req, info, "watchdog");
+      return;
+    }
+    scheduleWatchdog(req, nextInterval(delay, check ? check.durationMs : null));
+  }, delay);
+}
+
+/** While stuck, keep polling the probe so extendsim_status shows a fresh last check (spec
+ * §5.1). Captures the stuck episode before the await: a process death (or the command
+ * finally answering) between the check starting and finishing must not write a check from
+ * one episode into the next. */
+function startStuckPolling(): void {
+  stopStuckPolling();
+  const poll = async () => {
+    const p = getProbe();
+    const episode = stuck;
+    if (!p || !episode) return;
+    const check = await probeCall(() => p.check());
+    if (check && stuck === episode) episode.lastCheck = check;
+  };
+  void poll();
+  stuckPollTimer = setInterval(() => { void poll(); }, WATCHDOG_INTERVAL_MS);
+}
+
+function stopStuckPolling(): void {
+  if (stuckPollTimer) clearInterval(stuckPollTimer);
+  stuckPollTimer = null;
+}
 
 // ============================================================================
 // DIALOG WATCHER
 // ============================================================================
+
+/** Shape reported by dialog_watcher.py on stdout (and passed back up from here). */
+interface DialogWatcherResult {
+  found: boolean;
+  dialogText?: string;
+  dialogs?: any[];
+}
+
+/**
+ * Parses dialog_watcher.py's stdout. Returns null when stdout is not the expected JSON
+ * (e.g. the process was killed before printing anything), which is the only case that
+ * should be logged as an error - a normal "no dialog" run exits 1 with valid JSON.
+ */
+function parseDialogWatcherOutput(stdout: string): DialogWatcherResult | null {
+  try {
+    const result = JSON.parse(stdout.trim());
+    if (result && typeof result === "object" && "found" in result) {
+      return result;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Spawns a separate Python process to detect and dismiss blocking ExtendSim dialogs.
@@ -129,11 +315,7 @@ let isHandlingProcessDeath = false;
  * Called when a COM command times out - the dialog may be blocking ExtendSim.
  * Returns the dialog text (if found) so it can be included in the error message.
  */
-async function dismissExtendSimDialog(timeoutSec: number = 5): Promise<{
-  found: boolean;
-  dialogText?: string;
-  dialogs?: any[];
-}> {
+export async function dismissExtendSimDialog(timeoutSec: number = 5): Promise<DialogWatcherResult> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       resolve({ found: false });
@@ -145,28 +327,31 @@ async function dismissExtendSimDialog(timeoutSec: number = 5): Promise<{
       { timeout: (timeoutSec + 3) * 1000 },
       (error, stdout, _stderr) => {
         clearTimeout(timer);
-        if (error) {
-          console.error(`Dialog watcher error: ${error.message}`);
+        // execFile reports an error for dialog_watcher.py's own exit code 1, which it
+        // uses for the normal "no dialog found" case (see dialog_watcher.py). If stdout
+        // still parsed as the expected JSON, treat it like any other result instead of
+        // logging an error on every routine "no dialog" check.
+        const result = parseDialogWatcherOutput(stdout);
+        if (!result) {
+          if (error) {
+            console.error(`Dialog watcher error: ${error.message}`);
+          } else {
+            console.error(`Dialog watcher invalid output: ${stdout}`);
+          }
           resolve({ found: false });
           return;
         }
-        try {
-          const result = JSON.parse(stdout.trim());
-          if (result.found && result.dialogs?.length > 0) {
-            // Combine all dialog texts into a single string
-            const allTexts = result.dialogs
-              .flatMap((d: any) => d.texts || [])
-              .join("; ");
-            resolve({
-              found: true,
-              dialogText: allTexts,
-              dialogs: result.dialogs,
-            });
-          } else {
-            resolve({ found: false });
-          }
-        } catch {
-          console.error(`Dialog watcher invalid output: ${stdout}`);
+        if (result.found && (result.dialogs?.length ?? 0) > 0) {
+          // Combine all dialog texts into a single string
+          const allTexts = (result.dialogs ?? [])
+            .flatMap((d: any) => d.texts || [])
+            .join("; ");
+          resolve({
+            found: true,
+            dialogText: allTexts,
+            dialogs: result.dialogs,
+          });
+        } else {
           resolve({ found: false });
         }
       }
@@ -204,6 +389,8 @@ function stopHeartbeat(): void {
 function handleProcessDeath(): void {
   if (isHandlingProcessDeath) return; // Re-entrancy guard (C4)
   isHandlingProcessDeath = true;
+  stuck = null; // a new Python process is not stuck
+  stopStuckPolling();
   isInitialized = false;
   pythonProcess = null;
   rl = null;
@@ -324,11 +511,10 @@ export async function initBackend(): Promise<void> {
  * Handles response from Python
  */
 export function processResponse(response: any): void {
-  // Discard stale responses from timed-out requests (A4 fix)
-  if (staleResponseCount > 0) {
-    staleResponseCount--;
-    console.error(`Discarding stale response from timed-out request`);
-    // Don't process next - the next request was already sent after timeout
+  // The answer to a command that was already settled (see `stuck`): ExtendSim is free again.
+  if (stuck) {
+    leaveStuck();
+    processNextRequest();
     return;
   }
 
@@ -347,6 +533,8 @@ export function processResponse(response: any): void {
  * Processes the next request in queue
  */
 function processNextRequest(): void {
+  if (stuck) { failQueuedAsBusy(); return; }
+
   if (isProcessingRequest || requestQueue.length === 0) {
     return;
   }
@@ -379,6 +567,35 @@ function processNextRequest(): void {
   }
 }
 
+function enterStuck(command: string, lastCheck: ProbeCheck | null): void {
+  stuck = { command, since: Date.now(), lastCheck };
+  console.error(`ExtendSim is stuck in '${command}'; answering further commands with EXTENDSIM_BUSY until it returns`);
+  startStuckPolling();
+}
+
+function leaveStuck(): void {
+  if (stuck) console.error(`'${stuck.command}' answered after ${Math.round((Date.now() - stuck.since) / 1000)} s; ExtendSim is free again`);
+  stuck = null;
+  stopStuckPolling();
+}
+
+/** While stuck, nothing waits in the queue: every waiting command is answered at once. */
+function failQueuedAsBusy(): void {
+  while (stuck && requestQueue.length > 0) {
+    const pending = requestQueue.shift();
+    pending?.resolve(busyResult(stuck, Date.now()));
+  }
+}
+
+/** A dialog that was found but not clicked away is the best "last check" we have. */
+function checkFromDialog(dialogInfo: DialogInfo): ProbeCheck | null {
+  if (!dialogInfo.found || dialogInfo.dismissed) return null;
+  return {
+    dialogs: [{ title: "ExtendSim", texts: dialogInfo.text ? [dialogInfo.text] : [], buttons: [] }],
+    windowFound: true, windowResponding: null, at: Date.now(), durationMs: 0,
+  };
+}
+
 /**
  * Gets the timeout for a specific command
  */
@@ -392,15 +609,27 @@ export type DialogInfo = { found: boolean; text?: string; dismissed?: boolean; d
  * Clears every timer that may be armed for a request (main timeout, early
  * dialog check, dialog-dismiss grace window) and resets their bookkeeping.
  * Safe to call repeatedly / when some timers were never armed (W2-1, W2-2).
+ *
+ * Also bumps `attempt`: this is called at every point that can
+ * invalidate in-flight callbacks - a fresh arm, a resolve/reject, AND (via
+ * handleProcessDeath) the moment a dying attempt's timers are torn down for retry, closing
+ * the gap that a bump-on-re-arm-only left between the death and the retry actually being
+ * re-armed.
  */
 export function clearRequestTimers(req: PendingRequest): void {
   clearTimeout(req.timeoutId);
   clearTimeout(req.earlyDialogTimerId);
   clearTimeout(req.graceTimerId);
+  clearTimeout(req.watchdogTimerId);
   req.timeoutId = undefined;
   req.earlyDialogTimerId = undefined;
   req.graceTimerId = undefined;
+  req.watchdogTimerId = undefined;
   req.earlyResolved = false;
+  req.timeoutChecking = false;
+  req.watchdogActing = false;
+  req.timeoutDeferred = false;
+  req.attempt = (req.attempt ?? 0) + 1;
 }
 
 /**
@@ -414,11 +643,10 @@ export function resolveWithDialogError(req: PendingRequest, dialogInfo: DialogIn
   const index = requestQueue.indexOf(req);
   if (index === -1) return; // already resolved (e.g. real response arrived during grace window)
 
-  if (index === 0 && isProcessingRequest) {
-    staleResponseCount++;
-  }
+  const wasInFlight = index === 0 && isProcessingRequest;
   requestQueue.splice(index, 1);
   isProcessingRequest = false;
+  if (wasInFlight) enterStuck(req.command, checkFromDialog(dialogInfo) ?? req.lastCheck ?? null);
 
   const timeout = getTimeout(req.command);
   let message: string;
@@ -443,7 +671,11 @@ export function resolveWithDialogError(req: PendingRequest, dialogInfo: DialogIn
   } else {
     errorCode = "COM_TIMEOUT";
     message = `Command '${req.command}' timed out after ${timeout / 1000}s. No blocking dialog was detected.`;
-    suggestion = "ExtendSim may be busy or unresponsive. Check extendsim_status or retry the command.";
+    // The server is now stuck until ExtendSim answers this call, so an immediate retry only
+    // meets EXTENDSIM_BUSY (and for a long blocking simulation_run it invites a loop).
+    suggestion = "ExtendSim has not answered yet and no blocking dialog was found. The server waits for it: " +
+      "poll extendsim_status until state is 'idle' before sending anything else, then retry if the command did not take effect. " +
+      "For long simulations use waitForCompletion=false and read results with simulation_get_results.";
   }
 
   req.resolve({
@@ -484,15 +716,58 @@ export function handleDialogResult(req: PendingRequest, dialogInfo: DialogInfo, 
 
   if (!requestQueue.includes(req)) return; // already resolved elsewhere
 
+  const attempt = req.attempt;
   console.error(
     `Dialog dismissed for '${req.command}' (${source}); waiting up to ${DIALOG_DISMISS_GRACE_MS / 1000}s for the real response before treating this as an error...`,
   );
   req.graceTimerId = setTimeout(() => {
     req.graceTimerId = undefined;
-    if (!requestQueue.includes(req)) return; // real response already resolved it
+    // Real response already resolved it, or a later attempt has since superseded this one.
+    if (!requestQueue.includes(req) || req.attempt !== attempt) return;
     console.error(`Grace window lapsed for '${req.command}' with no response; falling back to synthetic dialog error`);
     resolveWithDialogError(req, dialogInfo, source);
   }, DIALOG_DISMISS_GRACE_MS);
+}
+
+/**
+ * Runs the actual "is there a blocking dialog" check via dialog_watcher.py and settles (or
+ * defers) the request from its result. This is the main timeout's own check - extracted so
+ * the watchdog can run it on the timeout's behalf: if the timeout fires
+ * while the watchdog is mid-`p.dismiss()`, the timeout defers instead of racing its own,
+ * separate dialog_watcher check against a dialog the probe may already have clicked away: it
+ * is the watchdog's job to call this once it knows the outcome, so the timeout's answer is
+ * never simply lost.
+ */
+async function runTimeoutCheck(req: PendingRequest, attempt: number | undefined): Promise<void> {
+  let dialogInfo: DialogInfo = { found: false };
+  try {
+    console.error(`Timeout on '${req.command}' - checking for blocking dialog...`);
+    const dialogResult = await dismissExtendSimDialog(5);
+    if (dialogResult.found && dialogResult.dialogs?.length) {
+      const allTexts = dialogResult.dialogText || "";
+      const allDismissed = dialogResult.dialogs.every((d: any) => d.dismissed);
+      dialogInfo = {
+        found: true,
+        text: allTexts,
+        dismissed: allDismissed,
+        details: dialogResult.dialogs,
+      };
+      if (allDismissed) {
+        console.error(`Dismissed ExtendSim dialog: ${allTexts}`);
+      } else {
+        console.error(`ExtendSim dialog found but NOT dismissed: ${allTexts}`);
+      }
+    } else {
+      console.error(`No blocking dialog found`);
+    }
+  } catch (e) {
+    console.error(`Dialog watcher failed: ${e}`);
+  }
+
+  // Re-validate after the await: a later attempt may have superseded this one, or the
+  // watchdog/early check may have already settled or deferred this request.
+  if (!requestQueue.includes(req) || req.graceTimerId || req.attempt !== attempt) return;
+  handleDialogResult(req, dialogInfo, "timeout");
 }
 
 /**
@@ -503,7 +778,8 @@ export function handleDialogResult(req: PendingRequest, dialogInfo: DialogInfo, 
  * inheriting a countdown left over from a previous attempt.
  */
 export function armRequestTimers(req: PendingRequest): void {
-  clearRequestTimers(req);
+  clearRequestTimers(req); // also bumps req.attempt, invalidating the previous attempt's callbacks
+  const attempt = req.attempt;
 
   const timeout = getTimeout(req.command);
 
@@ -513,14 +789,15 @@ export function armRequestTimers(req: PendingRequest): void {
   req.earlyDialogTimerId = SKIP_EARLY_DIALOG_CHECK.has(req.command)
     ? undefined
     : setTimeout(async () => {
-        // Skip if request already completed
-        if (!requestQueue.includes(req)) return;
+        // Skip if request already completed, or a later attempt has superseded this one
+        // (a retry after a process death re-sends the same req).
+        if (!requestQueue.includes(req) || req.attempt !== attempt) return;
 
         try {
           console.error(`Early dialog check on '${req.command}' (${EARLY_DIALOG_CHECK_MS / 1000}s)...`);
           const dialogResult = await dismissExtendSimDialog(3);
-          // Skip if request completed while we were checking
-          if (!requestQueue.includes(req)) return;
+          // Skip if request completed, or was superseded, while we were checking
+          if (!requestQueue.includes(req) || req.attempt !== attempt) return;
 
           if (dialogResult.found && dialogResult.dialogs?.length) {
             const allTexts = dialogResult.dialogText || "";
@@ -541,39 +818,20 @@ export function armRequestTimers(req: PendingRequest): void {
         }
       }, EARLY_DIALOG_CHECK_MS);
 
-  // Main timeout: fires after full timeout period (fallback if early check found nothing)
+  // Main timeout: fires after full timeout period (fallback if early check found nothing).
+  // While this runs, `req.timeoutChecking` tells the watchdog to stand aside rather than run
+  // its own check of the same dialog concurrently. Conversely, if the watchdog is already
+  // mid-`p.dismiss()` (`req.watchdogActing`) when this fires, the timeout defers to it
+  // instead of racing it with a second, separate check - `runTimeoutCheck` is then run by
+  // the watchdog on the timeout's behalf once its own outcome is known (see scheduleWatchdog).
   req.timeoutId = setTimeout(async () => {
-    if (req.earlyResolved) return; // early check already handled this
-
-    if (!requestQueue.includes(req)) return;
-
-    let dialogInfo: DialogInfo = { found: false };
-    try {
-      console.error(`Timeout on '${req.command}' - checking for blocking dialog...`);
-      const dialogResult = await dismissExtendSimDialog(5);
-      if (dialogResult.found && dialogResult.dialogs?.length) {
-        const allTexts = dialogResult.dialogText || "";
-        const allDismissed = dialogResult.dialogs.every((d: any) => d.dismissed);
-        dialogInfo = {
-          found: true,
-          text: allTexts,
-          dismissed: allDismissed,
-          details: dialogResult.dialogs,
-        };
-        if (allDismissed) {
-          console.error(`Dismissed ExtendSim dialog: ${allTexts}`);
-        } else {
-          console.error(`ExtendSim dialog found but NOT dismissed: ${allTexts}`);
-        }
-      } else {
-        console.error(`No blocking dialog found`);
-      }
-    } catch (e) {
-      console.error(`Dialog watcher failed: ${e}`);
-    }
-
-    handleDialogResult(req, dialogInfo, "timeout");
+    if (req.earlyResolved || req.graceTimerId || !requestQueue.includes(req)) return;
+    if (req.watchdogActing) { req.timeoutDeferred = true; return; }
+    req.timeoutChecking = true;
+    await runTimeoutCheck(req, attempt);
   }, timeout);
+
+  scheduleWatchdog(req, WATCHDOG_INTERVAL_MS);
 }
 
 /**
@@ -602,6 +860,8 @@ export function wrapResolveReject(
  * Sends a command to Python backend
  */
 async function sendCommand(command: string, params: object): Promise<any> {
+  if (stuck) return busyResult(stuck, Date.now());
+
   // Ensure backend is initialized
   if (!isInitialized || !pythonProcess || pythonProcess.killed) {
     await initBackend();
@@ -642,12 +902,35 @@ export function __getRequestQueueForTests(): PendingRequest[] {
   return requestQueue;
 }
 
+/** The current stuck state, or null. */
+export function __getStuckForTests(): StuckInfo | null {
+  return stuck;
+}
+
+/** Marks the head of the queue as written to Python (as processNextRequest would). */
+export function __markInFlightForTests(): void {
+  isProcessingRequest = true;
+}
+
 /** Resets all mutable backend queue/process-flag state between tests. */
 export function __resetBackendStateForTests(): void {
   requestQueue.length = 0;
   isProcessingRequest = false;
-  staleResponseCount = 0;
+  stuck = null;
+  stopStuckPolling();
   isHandlingProcessDeath = false;
+}
+
+/** Sets (or clears) the probe the watchdog uses, bypassing the lazy real-ProbeClient creation. */
+export function __setProbeForTests(p: ProbeLike | null): void {
+  probe = p;
+  probeCreated = true;
+}
+
+/** Drives the real process-death path (handleProcessDeath is otherwise private) so tests can
+ * verify it clears `stuck` without spawning or killing a real Python process. */
+export function __simulateProcessDeathForTests(): void {
+  handleProcessDeath();
 }
 
 // ============================================================================
@@ -660,6 +943,10 @@ export function __resetBackendStateForTests(): void {
  */
 export function shutdownBackend(): void {
   stopHeartbeat();
+  stopStuckPolling();
+  probe?.stop();
+  probe = null;
+  probeCreated = false;
 
   if (pythonProcess && !pythonProcess.killed) {
     try {
@@ -673,7 +960,7 @@ export function shutdownBackend(): void {
   rl = null;
   isInitialized = false;
   isProcessingRequest = false;
-  staleResponseCount = 0;
+  stuck = null;
   isHandlingProcessDeath = false;
 
   // Reject all pending requests
@@ -689,8 +976,16 @@ export function shutdownBackend(): void {
 // STATUS OPERATIONS
 // ============================================================================
 
+/** Every extendsim_status answer reports queue state (spec: `state` is always present),
+ * even a genuine Python-side error - it is not itself a sign the queue is stuck. */
+export function withQueueState<T extends object>(r: T, isStuck: boolean): T & { state: "stuck" | "idle" } {
+  return { ...r, state: isStuck ? "stuck" : "idle" };
+}
+
 export async function extendsimStatus() {
-  return await sendCommand("extendsim_status", {});
+  if (stuck) return stuckStatus(stuck, Date.now());
+  const r = await sendCommand("extendsim_status", {});
+  return withQueueState(r, stuck !== null);
 }
 
 export async function extendsimStart() {

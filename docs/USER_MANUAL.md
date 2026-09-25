@@ -1,6 +1,6 @@
 # Simulations MCP Server — User Manual
 
-**Version:** 1.22.5
+**Version:** 1.22.6
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 
@@ -74,7 +74,7 @@ ExtendSim registers its COM component during installation. If needed, run Extend
 
 ### Option A: Installer (Recommended)
 
-1. Run `SimulationsMCP-Setup-1.22.5.exe` as administrator (the prebuilt installer matches the current source)
+1. Run `SimulationsMCP-Setup-1.22.6.exe` as administrator (the prebuilt installer matches the current source)
 2. Choose installation directory (default: `C:\Program Files\SimulationsMCP`)
 3. Select whether to install as a Windows Service (only needed for ChatGPT — see Section 4.5)
 4. Complete the installation
@@ -748,6 +748,31 @@ ExtendSim may display a modal dialog (e.g., COM error `sCode: 80004003`) that bl
 **Symptom:** Tool calls time out
 **Fix:** The server includes an auto-dialog-dismisser that detects and closes these dialogs. If manual intervention is needed, click OK/Close in the ExtendSim dialog.
 
+### When ExtendSim gets stuck
+
+ExtendSim sometimes stops to show a message box (an error in the model, or a message
+about a block), or takes longer than expected over a command.
+
+- **The server clicks OK on ExtendSim's own blocking message boxes automatically** (never on
+  another program's) and passes the message
+  to the AI as `EXTENDSIM_ERROR_DIALOG`, with the text in `dialog.text`. It does this so a
+  single message box does not stop the session until someone comes to the computer.
+  It looks for message boxes shortly after each command starts and every 10 seconds while a
+  long command (such as a simulation run) is going. During Scenario Manager and optimizer
+  runs it only reports what it sees and never clicks.
+- **While ExtendSim has not finished a command**, every further command is answered at once
+  with `EXTENDSIM_BUSY` instead of being queued. The answer says which command ExtendSim is
+  still busy with, for how long, and what to do: click OK in a message box that could not be
+  closed automatically, or wait for a long run. A long command can make Windows show ExtendSim
+  as "Not responding" for as long as it works - that is normal; restart ExtendSim only if it
+  stays that way for many minutes.
+  `extendsim_status` answers even in this state.
+- **The server carries on by itself** as soon as ExtendSim answers again. After ExtendSim
+  has been restarted by hand it should carry on by itself as well. It never closes or
+  restarts ExtendSim itself.
+- **If ExtendSim never answers** (it has crashed or hangs for good), close ExtendSim, start
+  it again, and restart your AI client (which restarts the server).
+
 ### Large Model Performance
 
 Models with 20,000+ blocks may cause slower response times.
@@ -844,6 +869,7 @@ recovery hint — treat it as a bonus, not a guarantee.
 |------------|---------|
 | `EXTENDSIM_ERROR_DIALOG` | ExtendSim raised an error dialog while the command ran — almost always an error in the model, such as a missing resource pool or an index out of range in a block. The dialog text is in `dialog.text` and usually names the block (e.g. `[62]Queue`). **Retrying the same call will hit the same error; fix the cause.** If `dialog.dismissed` is false the dialog is still open and a person must close it. If a simulation is running, the dialog may come from the run rather than from this command |
 | `COM_TIMEOUT` | Command timed out with **no** dialog to explain why (see the per-command timeout table below). ExtendSim may be busy or unresponsive; a retry can succeed |
+| `EXTENDSIM_BUSY` | ExtendSim has not finished an earlier command; nothing is sent to it until it answers. Wait, follow `suggestion`, check `extendsim_status` |
 | `INVALID_JSON` | Invalid JSON response from the Python backend |
 | `TOOL_ERROR` | Unhandled error in tool execution |
 

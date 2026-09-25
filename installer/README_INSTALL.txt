@@ -1,9 +1,9 @@
 Simulations MCP Server - Installation Guide
 ============================================
 Duke Systems AB
-Version 1.22.5 — 107 tools
+Version 1.22.6 — 107 tools
 Build the installer with installer\build-installer.bat (requires Inno Setup 6 +
-Node + Python) -> output\SimulationsMCP-Setup-1.22.5.exe
+Node + Python) -> output\SimulationsMCP-Setup-1.22.6.exe
 
 PREREQUISITES
 -------------
@@ -229,6 +229,12 @@ TROUBLESHOOTING
 - Verify port is not blocked by firewall (HTTP mode)
 - Check Windows Services (services.msc) for service status
 - If COM errors occur, restart ExtendSim and retry
+- EXTENDSIM_BUSY means ExtendSim has not finished an earlier command. Wait;
+  the server carries on by itself when ExtendSim answers. A long command can
+  make Windows show ExtendSim as "Not responding" - that is normal while it
+  works. Restart ExtendSim only if it stays that way for many minutes.
+- The server clicks OK on ExtendSim's own blocking message boxes and reports
+  their text; it never clicks another program's message boxes.
 - On large models (20k+ blocks), first status poll may take 10-15s
 
 SUPPORT

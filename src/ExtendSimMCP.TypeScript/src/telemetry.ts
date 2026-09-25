@@ -3,13 +3,15 @@
  *
  * Always-on, fire-and-forget. Writes JSONL to temp/telemetry/telemetry.jsonl.
  * Nothing leaves the machine automatically. Privacy-safe: no file paths,
- * labels, parameter values, or user-defined names are logged.
+ * labels, parameter values, or user-defined names are logged. A dialog's
+ * text is recorded with quoted names, paths and numbers removed.
  */
 
 import { randomBytes } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, renameSync, statSync, WriteStream } from "node:fs";
 import { join } from "node:path";
 import { platform, version as nodeVersion, release as osRelease } from "node:os";
+import { sanitizeDialogText } from "./dialog-text.js";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB rotation threshold
 
@@ -95,9 +97,7 @@ export function recordToolCall(
       if (result?.errorCode) event.err = result.errorCode;
     }
 
-    if (result?.dialog?.found) {
-      event.dialog = true;
-    }
+    Object.assign(event, dialogEventFields(result));
 
     const ctx = extractContext(toolName, params);
     if (ctx && Object.keys(ctx).length > 0) {
@@ -119,6 +119,28 @@ export function recordEvent(type: string, fields: Record<string, unknown>): void
   } catch {
     // Fire-and-forget - never throw
   }
+}
+
+function asRecord(x: unknown): Record<string, unknown> | undefined {
+  return x && typeof x === "object" ? (x as Record<string, unknown>) : undefined;
+}
+
+/** Dialog and stuck facts for a tool event - the dialog text only ever sanitized (spec S8). */
+export function dialogEventFields(result: unknown): Record<string, unknown> {
+  const f: Record<string, unknown> = {};
+  const r = asRecord(result);
+  const dialog = asRecord(r?.dialog);
+  if (dialog?.found) {
+    f.dialog = true;
+    if (typeof dialog.text === "string" && dialog.text.trim()) {
+      f.dialog_text = sanitizeDialogText(dialog.text);
+    }
+  }
+  const stuck = asRecord(r?.stuck);
+  if (r?.errorCode === "EXTENDSIM_BUSY" && typeof stuck?.sinceMs === "number") {
+    f.stuck_ms = stuck.sinceMs;
+  }
+  return f;
 }
 
 export function getStatus(): Record<string, unknown> {
