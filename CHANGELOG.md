@@ -3,6 +3,57 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
+## 1.22.7 — 2026-09-26
+
+A fix release. `attribute_set` and `attribute_get` (and the `tag-items` pattern) work for the first time,
+`block_configure` can no longer close your model, `approve_pattern` no longer saves a
+pattern that cannot be built, and ExtendSim's start-up reminders no longer keep the server
+out. Tool count unchanged at 107. Verified live on ExtendSim 2024
+and 2026.
+
+**Upgrade first if you use** `attribute_set` or `tag-items` (they always failed before), or
+`block_configure` on Activity and Create blocks.
+
+### Fixed
+- `attribute_set` now works. It used to write the Set block's attribute table, which ExtendSim
+  overwrites (the name came back as "None"), so it always failed - and the `tag-items`
+  molecule with it. It now registers a new attribute in the model when needed and sets the
+  Set block's attribute and value the way ExtendSim stores them, then reads them back.
+  Verified on ExtendSim 2024 and 2026: a Get block further down reads the value from the
+  items in a run. Constant values in the block's first row only; names 1-15 characters,
+  no spaces. The tool description no longer promises connector or distribution values.
+- `attribute_get` now really points a Get block at an attribute. It wrote a setting the Get
+  block no longer has and reported success without checking. It now works like
+  `attribute_set` (registers a new attribute, sets it, reads it back); its description says
+  what it does - configure the block, not read a value.
+- Pattern mining (`extract_psg`) reads a Set block's attributes the way ExtendSim stores them,
+  so attributes set through the server are seen, and it no longer reads one row past the end
+  of the block's attribute table - a read that could open a dialog and freeze ExtendSim.
+- `approve_pattern` no longer saves a molecule that `instantiate_pattern` cannot build. The
+  `seed` must be the last block of the item flow (the one the outlet binds to); any other
+  seed now fails validation instead of failing half-way through a later build. The same
+  check runs before every `instantiate_pattern`.
+- `block_configure` could close your model. When a popup change on an Activity or Create
+  block needed its save-close-reopen fallback, the model was reopened from a wrong path, so
+  it stayed closed while the tool reported success. It now reopens from the right path,
+  checks that the model is back, and says so if it is not. On a model that has never been
+  saved it now returns a clear error instead of opening "Save As", which froze ExtendSim.
+
+### Fixed — start-up reminders
+- ExtendSim's start-up reminders are now clicked away: ExtendSim 2024's "Maintenance & Support
+  Expired ..." box was missed because its title does not say "ExtendSim", and ExtendSim 2026's
+  "Subscription Renewal" box was taken for the main window. Until one of them is closed
+  ExtendSim does not answer the server at all. Only boxes of ExtendSim's own process are
+  touched.
+- The text of these reminders is never passed on to the AI or to usage statistics - the 2026
+  renewal box shows the licence's activation key.
+
+### Verified
+- Pattern mining, end to end, against a real model on ExtendSim 2026: `extract_psg`,
+  `mine_candidates`, `cluster_patterns`, and `approve_pattern` followed by
+  `instantiate_pattern`, which rebuilds the mined H-block with the same blocks, the same
+  connections and the same fingerprint.
+
 ## 1.22.6 — 2026-09-25
 
 A robustness and security release. One ExtendSim call that does not come back no longer

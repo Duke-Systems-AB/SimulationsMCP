@@ -1,6 +1,6 @@
 # Simulations MCP Server — User Manual
 
-**Version:** 1.22.6
+**Version:** 1.22.7
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 
@@ -74,7 +74,7 @@ ExtendSim registers its COM component during installation. If needed, run Extend
 
 ### Option A: Installer (Recommended)
 
-1. Run `SimulationsMCP-Setup-1.22.6.exe` as administrator (the prebuilt installer matches the current source)
+1. Run `SimulationsMCP-Setup-1.22.7.exe` as administrator (the prebuilt installer matches the current source)
 2. Choose installation directory (default: `C:\Program Files\SimulationsMCP`)
 3. Select whether to install as a Windows Service (only needed for ChatGPT — see Section 4.5)
 4. Complete the installation
@@ -381,8 +381,8 @@ example a line into a hierarchical block) under `unresolvedConnectionNodes`.
 | `block_get_value` | Get a dialog variable value from a block |
 | `execute_command` | Execute a raw ModL command string (advanced) |
 | `block_configure` | Auto-detecting block configurator — handles Activity, Queue, Create, Exit, Select Item In/Out, Gate, Resource Item, Batch/Unbatch, Equation, Tank, Valve, and more. Single tool replaces 33 individual config tools. |
-| `attribute_set` | Set an item attribute value |
-| `attribute_get` | Get an item attribute value |
+| `attribute_set` | Set a value attribute on a Set block (registers a new attribute in the model first; constant values, first row) |
+| `attribute_get` | Point a Get block at a value attribute (registers a new attribute in the model first; first row) |
 | `table_get` | Read a string-table cell (`*_ttbl` dialog tables such as `IVars_ttbl`/`OVars_ttbl`). Use this where `block_get_value` cannot — it is numeric and returns `ERR` on string cells |
 | `table_set` | Write a string-table cell. Read-back verified: fails closed with `TABLE_WRITE_REJECTED` if the cell does not hold the written value (block-controlled cells reject writes silently) |
 | `detect_attributes` | Detect which item attributes a block reads and writes (equation blocks: from their in/out variable tables). Returns `{ reads, writes, confidence }` |
@@ -760,6 +760,10 @@ about a block), or takes longer than expected over a command.
   It looks for message boxes shortly after each command starts and every 10 seconds while a
   long command (such as a simulation run) is going. During Scenario Manager and optimizer
   runs it only reports what it sees and never clicks.
+- **ExtendSim's start-up reminders are closed too** - ExtendSim 2024's "Maintenance & Support
+  Expired ..." and ExtendSim 2026's "Subscription Renewal" box. Until one of them is closed
+  ExtendSim does not answer the server at all. Their text is never passed to the AI or
+  recorded: the 2026 box shows your licence's activation key.
 - **While ExtendSim has not finished a command**, every further command is answered at once
   with `EXTENDSIM_BUSY` instead of being queued. The answer says which command ExtendSim is
   still busy with, for how long, and what to do: click OK in a message box that could not be
@@ -768,7 +772,7 @@ about a block), or takes longer than expected over a command.
   stays that way for many minutes.
   `extendsim_status` answers even in this state.
 - **The server carries on by itself** as soon as ExtendSim answers again. After ExtendSim
-  has been restarted by hand it should carry on by itself as well. It never closes or
+  has been restarted by hand it carries on by itself as well, and connects to the new ExtendSim. It never closes or
   restarts ExtendSim itself.
 - **If ExtendSim never answers** (it has crashed or hangs for good), close ExtendSim, start
   it again, and restart your AI client (which restarts the server).

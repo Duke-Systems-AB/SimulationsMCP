@@ -45,6 +45,17 @@ def validate_molecule(molecule: Dict[str, Any], params: Dict[str, Any]) -> None:
             if ref not in refs:
                 raise MoleculeError(f"edge {side} references unknown node: {ref}")
 
+    # the seed must be the flow-chain tail: build_molecule wraps the seed first and grows
+    # the chain backwards from it, so any other seed cannot be built (seen live 2026-09-26
+    # with a mined molecule seeded on a side node). Chain-shape errors are left to the build.
+    flow = [e for e in molecule.get("edges", []) if e.get("kind") == "flow"]
+    if flow:
+        tails = ({e["to"].split(".", 1)[0] for e in flow}
+                 - {e["from"].split(".", 1)[0] for e in flow})
+        if len(tails) == 1 and seeds[0]["ref"] not in tails:
+            raise MoleculeError(f"seed must be the flow-chain tail ({next(iter(tails))}), "
+                                f"got {seeds[0]['ref']}")
+
     # interface: at most one inlet/outlet (M3 builds a single linear flow), binds known
     iface = molecule.get("interface", {})
     if len(iface.get("inlets", [])) > 1 or len(iface.get("outlets", [])) > 1:

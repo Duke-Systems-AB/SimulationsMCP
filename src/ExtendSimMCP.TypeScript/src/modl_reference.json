@@ -1219,10 +1219,10 @@
           "returns": "V"
         },
         "RunSimulation": {
-          "description": "Runs the model simulation.",
-          "signature": "RunSimulation(trueFalse)",
+          "description": "Runs the model simulation. Over COM, doRunSetup must be 0 - passing 1 shows the Run Setup dialog, which blocks until a person closes it. The MCP server itself runs simulations with simulation_run, not this function.",
+          "signature": "RunSimulation(doRunSetup)",
           "arguments": [
-            {"name": "trueFalse", "type": "integer", "description": "TRUE to show Setup dialog first, FALSE to run directly"}
+            {"name": "doRunSetup", "type": "integer", "description": "1 = show the Run Setup dialog first, which blocks until a person closes it; 0 = run with the current settings"}
           ],
           "returns": "I",
           "notes": "Returns TRUE if simulation completed without errors. From scripting/OLE via ExecuteMenuCommand returns immediately after starting."

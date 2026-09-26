@@ -333,7 +333,12 @@ export async function dismissExtendSimDialog(timeoutSec: number = 5): Promise<Di
         // logging an error on every routine "no dialog" check.
         const result = parseDialogWatcherOutput(stdout);
         if (!result) {
-          if (error) {
+          if (error?.killed) {
+            // execFile's timeout stopped the watcher before it could print anything.
+            // Measured live 2026-09-25: this happens because ExtendSim was busy (a long
+            // ModL call or a simulation run), not because anything went wrong.
+            console.error(`Dialog watcher gave up after ${timeoutSec} s - ExtendSim was busy`);
+          } else if (error) {
             console.error(`Dialog watcher error: ${error.message}`);
           } else {
             console.error(`Dialog watcher invalid output: ${stdout}`);

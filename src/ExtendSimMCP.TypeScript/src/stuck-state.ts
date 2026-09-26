@@ -14,10 +14,10 @@ export function busySuggestion(check: ProbeCheck | null): string {
     return `Click OK in ExtendSim's dialog: ${dialogLine(check.dialogs[0])}.` + DO_NOT_CHANGE;
   }
   if (check && check.windowFound && check.windowResponding === false) {
-    return "ExtendSim is not responding - usually it is just busy with a long call. Wait; if it stays like this for many minutes, restart ExtendSim by hand; the server should reconnect by itself." + DO_NOT_CHANGE;
+    return "ExtendSim is not responding - usually it is just busy with a long call. Wait; if it stays like this for many minutes, restart ExtendSim by hand; the server reconnects by itself." + DO_NOT_CHANGE;
   }
   if (check && !check.windowFound) {
-    return "ExtendSim's window was not found - it may have been closed. Start ExtendSim again; the server should reconnect by itself." + DO_NOT_CHANGE;
+    return "ExtendSim's window was not found - it may have been closed. Start ExtendSim again; the server reconnects by itself." + DO_NOT_CHANGE;
   }
   return "A long ExtendSim call is still running. Wait and check extendsim_status." + DO_NOT_CHANGE;
 }

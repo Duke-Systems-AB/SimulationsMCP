@@ -2886,6 +2886,10 @@ def _persist_popup_change(app) -> dict:
     but doesn't trigger the block's internal callback. Reopening the model
     forces all blocks to reinitialize from their persisted state.
 
+    Measured live 2026-09-26 (ExtendSim 2024): GetModelPath(name) returns the folder
+    without a trailing separator, and "" for a model that has never been saved. The
+    reopen is verified by name - OpenExtendFile fails silently on a wrong path.
+
     Returns:
         dict with success status and model path
     """
@@ -2897,8 +2901,13 @@ def _persist_popup_change(app) -> dict:
             return {"success": False, "error": "No model open"}
 
         app.Execute(f'globalStr0 = GetModelPath("{_escape_modl_string(model_name)}");')
-        model_path = _read_str0(app)
-        full_path = (model_path + model_name).replace("\\", "/")
+        folder = _read_str0(app)
+        if not folder:
+            # SaveModel() on a never-saved model opens "Save As", which blocks COM.
+            return {"success": False,
+                    "error": "the model has never been saved, so it cannot be saved and "
+                             "reopened - save it with model_save first"}
+        full_path = folder.replace("\\", "/").rstrip("/") + "/" + model_name
 
         # Save current state
         app.Execute("SaveModel()")
@@ -2907,8 +2916,13 @@ def _persist_popup_change(app) -> dict:
         app.Execute("SetDirty(False);")
         app.Execute("ExecuteMenuCommand(4)")
 
-        # Reopen
-        app.Execute(f'OpenExtendFile("{full_path}")')
+        # Reopen, and confirm it really is back
+        app.Execute(f'OpenExtendFile("{_escape_modl_string(full_path)}")')
+        app.Execute("globalStr0 = GetModelName();")
+        if _read_str0(app) != model_name:
+            return {"success": False, "modelPath": full_path,
+                    "error": f"the model was saved and closed but did not reopen from "
+                             f"{full_path} - open it again with model_open"}
 
         return {"success": True, "modelPath": full_path}
     except Exception as e:
@@ -4212,12 +4226,11 @@ def attribute_set(block_id: int,
                   model_id: Optional[str] = None) -> dict:
     """Configures a Set block to assign an attribute value to items.
 
-    ExtendSim 2024's Set block stores attribute assignments in the
-    AttribsTable_ttbl dialog table, not the removed name/value-type/
-    constant-value dialog variables from earlier versions. Delegates to the
-    effect-verified, fail-closed attribute_config core. Currently only
-    value_type="constant" is supported; other types return
-    ATTRIBUTE_VALUETYPE_UNSUPPORTED.
+    The Set block keeps its attributes in static arrays (attribNamesChosen /
+    attribType / attribSetValues); AttribsTable_ttbl is only their view.
+    Delegates to the effect-verified, fail-closed attribute_config core, which
+    also registers a new attribute in the model. Only value_type="constant" in
+    row 0 is supported; other types return ATTRIBUTE_VALUETYPE_UNSUPPORTED.
     """
     import attribute_config
     import sys as _sys
@@ -4239,26 +4252,15 @@ def attribute_get(block_id: int,
 
     Returns:
         Dictionary with success status
+
+    It used to write "AttributeName_prm", which the current Get block does not have, and
+    report success unverified. The Get block keeps its attribute in the same static
+    arrays as the Set block; attribute_config.configure_get registers a new attribute,
+    writes them and reads them back (verified live 2026-09-26, 2024 and 2026).
     """
-    try:
-        app = get_extendsim_app()
-
-        # Validate block type
-        check = _validate_block_type(app, block_id, "Get")
-        if not check.get("success"):
-            return check
-
-        # Set the attribute name to read (string value — use SetDialogVariable)
-        _set_var_string(app, block_id, "AttributeName_prm", attribute_name)
-
-        return {
-            "success": True,
-            "blockId": block_id,
-            "attributeName": attribute_name
-        }
-    except Exception as e:
-        return _error(ErrorCode.SET_VALUE_FAILED, str(e),
-                      blockId=block_id, operation="attribute_get")
+    import attribute_config
+    import sys as _sys
+    return attribute_config.configure_get(_sys.modules[__name__], block_id, attribute_name)
 
 
 # ============================================================================
@@ -10176,40 +10178,51 @@ EXTRACT_STRING_PARAMS = {
 
 
 def _map_set_attributes(rows):
-    """Pure shape mapping: raw (name, value) rows read from a Set block's
-    AttribsTable_ttbl dialog table -> the setAttributes list shape used by
-    hand-authored molecules (patterns/molecules/*.json), e.g.
-    [{"name": "partType", "value": 5.0}, ...]. Stops at the first row whose
-    name is blank/"nan" (table terminator, mirrors attribute_detect's
-    empty-name convention). The live COM read that produces the raw rows
-    (_read_set_attributes) isn't unit-testable; this mapping is (W3-6a)."""
+    """Pure mapping: one (name, type, value) per row, read from a Set block's static
+    arrays attribNamesChosen / attribType / attribSetValues -> the setAttributes list
+    shape used by molecules (patterns/molecules/*.json), e.g.
+    [{"name": "partType", "value": 5.0}]. Keeps value attributes only (type 1,
+    Constants.h ATTRIB_TYPE_VALUE) - a string attribute's value is a string-list index and
+    a database one an address, neither a molecule value. Rows with no attribute
+    ("None" / blank) are skipped. The COM read is _read_set_attributes."""
+    import attribute_config
     out = []
-    for name, value in rows:
+    for name, attr_type, value in rows:
         name = (name or "").strip()
-        if not name or name.lower() == "nan":
-            break
+        if not name or name.lower() in ("none", "nan"):
+            continue
         try:
-            value = parse_float(value)
+            if int(parse_float(attr_type)) != attribute_config.ATTRIB_TYPE_VALUE:
+                continue
         except (ValueError, TypeError):
-            pass
+            continue
+        try:
+            # parse_float("") is 0.0 - a blank value must not turn into a real 0
+            value = parse_float(value) if str(value or "").strip() else None
+        except (ValueError, TypeError):
+            value = None
         out.append({"name": name, "value": value})
     return out
 
 
 def _read_set_attributes(app, bid):
-    """Live COM read of a Set block's attribute assignments via
-    AttribsTable_ttbl (name col / value col per attribute_config.py's pinned
-    layout). Loops until a blank name terminates the table."""
-    import attribute_config
-    rows = []
-    row = 0
-    while True:
-        name = _get_var(app, bid, "AttribsTable_ttbl", row, attribute_config.ATTR_NAME_COL) or ""
-        if not name.strip() or name.strip().lower() == "nan":
-            break
-        value = _get_var(app, bid, "AttribsTable_ttbl", row, attribute_config.ATTR_VALUE_COL)
-        rows.append((name, value))
-        row += 1
+    """Live COM read of a Set block's attributes from its static arrays - the
+    AttribsTable_ttbl cells are only a view of them, stale after a COM configuration
+    until the dialog draws (measured live 2026-09-26). The row count comes from
+    numRowsAttribsTable, so no read ever goes past the arrays (an out-of-range dialog
+    read pops a modal that blocks COM; the old loop-until-blank-name read one row too
+    far on every table)."""
+    def static(var, row=0):
+        app.Execute('globalStr0 = "";')
+        app.Execute(f'globalStr0 = GetDialogVariable({bid}, "{var}", {row}, 0);')
+        return _read_str0(app)
+
+    try:
+        num_rows = int(parse_float(static("numRowsAttribsTable")))
+    except (ValueError, TypeError):
+        return []
+    rows = [(static("attribNamesChosen", r), static("attribType", r), static("attribSetValues", r))
+            for r in range(max(0, min(num_rows, 100)))]
     return _map_set_attributes(rows)
 
 
@@ -10519,7 +10532,8 @@ def model_extract(save_path=None, sections=None, model_id=None):
         if model_name:
             app.Execute(f'globalStr0 = GetModelPath("{_escape_modl_string(model_name)}");')
             folder = _read_str0(app) or ""
-            model_path = (folder + model_name).replace("\\", "/") if folder else ""
+            # the folder comes back without a trailing separator (measured 2026-09-26)
+            model_path = (folder.replace("\\", "/").rstrip("/") + "/" + model_name) if folder else ""
 
         result_sections = {}
         blocks = None  # Cache for reuse by connections and parameters

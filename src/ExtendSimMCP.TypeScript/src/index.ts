@@ -1675,7 +1675,7 @@ server.tool(
 
 server.tool(
   "attribute_set",
-  "Set an item attribute value on a Set block. Supports constant values, connector input, or distribution-based values.",
+  "Set a value attribute on a Set block, so items passing through get attributeName = value. Registers the attribute in the model first if it is new. Only valueType='constant' in the block's first row is supported (connector and distribution return ATTRIBUTE_VALUETYPE_UNSUPPORTED). Names: 1-15 characters, no spaces or quotes, not starting with '_'. Every write is read back; a write ExtendSim did not keep returns ATTRIBUTE_WRITE_REJECTED.",
   {
     modelId: z.string().optional().describe("Model ID"),
     blockId: z.number().describe("Set block ID"),
@@ -1701,7 +1701,7 @@ server.tool(
 
 server.tool(
   "attribute_get",
-  "Read an item attribute configuration from a Get block.",
+  "Point a Get block at a value attribute, so it reads attributeName from each item passing through (its value output then carries it during a run). Registers the attribute in the model first if it is new. Uses the block's first row; names 1-15 characters, no spaces or quotes, not starting with '_'. The setting is read back; one ExtendSim did not keep returns ATTRIBUTE_WRITE_REJECTED.",
   {
     modelId: z.string().optional().describe("Model ID"),
     blockId: z.number().describe("Get block ID"),
@@ -1810,7 +1810,7 @@ server.tool(
     candidate: z.record(z.any()).optional().describe("Inline mined pattern candidate (from cluster_patterns)"),
     patternsPath: z.string().optional().describe("cluster_patterns output JSON to load the candidate from"),
     patternFingerprint: z.string().optional().describe("wl_fingerprint selecting which pattern in patternsPath"),
-    naming: z.record(z.any()).optional().describe("id, intent, seed, params{m9key->name}, inlet/outlet{binds,port}, edgeKinds"),
+    naming: z.record(z.any()).optional().describe("id, intent, seed, params{m9key->name}, inlet/outlet{binds,port}, edgeKinds. seed is a template node ref and must be the last block of the item flow (the one the outlet binds to), or validation fails"),
     dryRun: z.boolean().optional().describe("Preview the assembled entry without writing"),
     overwrite: z.boolean().optional().describe("Allow overwriting an existing pattern id")
   },

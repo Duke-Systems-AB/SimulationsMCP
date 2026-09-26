@@ -34,7 +34,11 @@ def _uia_boxes() -> list:
         main = dw._uia_find_main_window(uia)
         if main is None:
             return []
-        return [{"title": b["title"], "texts": b["texts"], "buttons": [x["name"] for x in b["buttons"]]}
+        # A start-up reminder's text is never passed on: the 2026 renewal box shows the
+        # activation key (seen live 2026-09-26), and these results reach the AI and telemetry.
+        return [{"title": b["title"],
+                 "texts": [] if dw._is_startup_reminder(b["title"] or "") else b["texts"],
+                 "buttons": [x["name"] for x in b["buttons"]]}
                 for b in dw._uia_find_message_boxes(uia, main)]
     except Exception:
         return []

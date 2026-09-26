@@ -1,9 +1,9 @@
 Simulations MCP Server - Installation Guide
 ============================================
 Duke Systems AB
-Version 1.22.6 — 107 tools
+Version 1.22.7 — 107 tools
 Build the installer with installer\build-installer.bat (requires Inno Setup 6 +
-Node + Python) -> output\SimulationsMCP-Setup-1.22.6.exe
+Node + Python) -> output\SimulationsMCP-Setup-1.22.7.exe
 
 PREREQUISITES
 -------------
@@ -24,11 +24,9 @@ Before installing, ensure you have:
 3. ExtendSim installed and registered
    The ExtendSim COM component must be available.
    ExtendSim must be running before using the MCP server.
-   The installer checks for the COM ProgID "ExtendSim.Application" (ExtendSim
-   2024). TESTING ExtendSim 2026 BETA: if the beta registers a different or
-   versioned COM ProgID, the backend's GetActiveObject("ExtendSim.Application")
-   call in src/ExtendSimMCP.TypeScript/src/simulation_backend.py must be updated
-   to match — otherwise the server cannot attach to the running ExtendSim.
+   The installer checks for the COM ProgID "ExtendSim.Application". ExtendSim
+   2024 and 2026 both register it (verified with 2024.1.0.0 and 2026.1.0.36).
+   Run one ExtendSim at a time.
 
 INSTALLATION
 ------------
@@ -234,7 +232,10 @@ TROUBLESHOOTING
   make Windows show ExtendSim as "Not responding" - that is normal while it
   works. Restart ExtendSim only if it stays that way for many minutes.
 - The server clicks OK on ExtendSim's own blocking message boxes and reports
-  their text; it never clicks another program's message boxes.
+  their text; it never clicks another program's message boxes. It also closes
+  ExtendSim's start-up reminders (2024 "Maintenance & Support Expired",
+  2026 "Subscription Renewal") - without reporting their text, which can hold
+  the licence's activation key.
 - On large models (20k+ blocks), first status poll may take 10-15s
 
 SUPPORT

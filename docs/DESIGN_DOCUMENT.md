@@ -1,6 +1,6 @@
 # Simulations MCP Server — Architecture and Design Document
 
-**Version:** 1.22.6
+**Version:** 1.22.7
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 **Classification:** Technical — for IT security specialists, software architects, and power users
@@ -187,7 +187,7 @@ The Python process is a long-lived singleton — spawned once and kept alive for
   its own shipped ModL; a call to a function that does not exist raises a compile-error modal
   that blocks COM, which no offline test with a fake COM object can detect
 
-### 3.4 Dialog Watcher (dialog_watcher.py, ~420 lines)
+### 3.4 Dialog Watcher (dialog_watcher.py, ~480 lines)
 
 **Responsibilities:**
 - Windows UI Automation (UIA) to detect ExtendSim modal dialogs
@@ -199,6 +199,10 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - Separate process avoids COM apartment threading conflicts
 - Configurable poll interval and timeout
 - Returns dialog text in JSON for inclusion in error messages
+- Start-up reminders (2024 "Maintenance & Support Expired ...", no "ExtendSim" in the title;
+  2026 "ExtendSim Subscription Renewal") count only when they belong to the ExtendSim main
+  window's process. They are dismissed silently: the watcher does not report them and the
+  probe never reads their text, because the 2026 box shows the licence's activation key
 
 ### 3.5 Advisor (advisor.ts, ~280 lines)
 
@@ -240,7 +244,7 @@ Capabilities added after v1.19 live in their own modules rather than growing
 | `pattern_cluster.py` | Clusters candidates (exact WL bucket + near-miss graph edit distance), infers parameter schema and interface |
 | `pattern_approve.py` | Assembles, validates and writes an approved library entry — fail-closed, nothing enters the library unapproved |
 
-**Block-level helpers:** `attribute_config.py` (Set-block attribute tables),
+**Block-level helpers:** `attribute_config.py` (Set and Get block attributes: registers new ones, writes and reads back the blocks' static arrays),
 `attribute_detect.py` (which attributes an equation block reads/writes),
 `resource_pool_config.py`, `dialog_table.py` (string-table `*_ttbl` cells), and
 `lbr_stat.py` (offline parser for a block's internal STAT storage variables, read
@@ -569,7 +573,8 @@ falls back to today's behaviour: the 1 s early check and the timeout check, both
 
 Telemetry records a sanitized form of any dialog text encountered (quoted names, paths and
 numbers replaced with placeholders) rather than the raw text, so causes can be grouped and
-fixed at the source without recording model content.
+fixed at the source without recording model content. The text of ExtendSim's start-up
+reminders is never read at all (it can hold the licence key).
 
 ---
 

@@ -169,7 +169,9 @@ def try_uia_strategy():
 
         dismissed = []
         for b in boxes:
-            is_maintenance = "Maintenance" in (b["title"] or "")
+            # Start-up reminders are clicked but never reported: the 2026 renewal box
+            # carries the activation key in its text, which must not reach the AI.
+            is_maintenance = _is_startup_reminder(b["title"] or "")
             if is_maintenance:
                 _uia_dismiss_box(b)
                 continue
@@ -188,7 +190,7 @@ def try_uia_strategy():
             time.sleep(0.5)
             boxes2 = _uia_find_message_boxes(uia, main_win)
             for b2 in boxes2:
-                if "Maintenance" not in (b2["title"] or ""):
+                if not _is_startup_reminder(b2["title"] or ""):
                     ok = _uia_dismiss_box(b2)
                     dismissed.append({
                         "title": b2["title"],
@@ -248,11 +250,22 @@ def _send_enter_key():
                                     ctypes.sizeof(INPUT))
 
 
+def _is_startup_reminder(title):
+    """ExtendSim's start-up reminders, which block COM until OK is pressed. Measured live
+    2026-09-26: 2024 "Maintenance & Support Expired 452 Days Ago" (no "ExtendSim" in it),
+    2026 "ExtendSim Subscription Renewal" (while the 2026 main window is "ExtendSim Pro
+    Subscription", so "Subscription" alone is not enough)."""
+    return "Maintenance" in title or "Subscription Renewal" in title
+
+
 def _find_extendsim_dialog_windows():
     """Find ExtendSim dialog windows (not the main window) via win32gui."""
     dialogs = []
     main_hwnd = None
     main_title = ""
+    # Reminders without "ExtendSim" in the title; kept only if they belong to the main
+    # window's process, so another program's "Maintenance" window is never touched.
+    unnamed_reminders = []
 
     def enum_callback(hwnd, _):
         nonlocal main_hwnd, main_title
@@ -261,12 +274,17 @@ def _find_extendsim_dialog_windows():
         title = win32gui.GetWindowText(hwnd)
         cls = win32gui.GetClassName(hwnd)
 
-        if not title or "ExtendSim" not in title:
+        if not title:
+            return True
+        if "ExtendSim" not in title:
+            if _is_startup_reminder(title):
+                unnamed_reminders.append({"hwnd": hwnd, "title": title, "class": cls,
+                                          "is_maintenance": True})
             return True
 
-        # Maintenance dialogs first - "ExtendSim Maintenance ..." also starts with
-        # "ExtendSim" and would otherwise be mistaken for the main window below.
-        if "Maintenance" in title:
+        # Reminders first - "ExtendSim Maintenance ..." / "ExtendSim Subscription Renewal"
+        # also start with "ExtendSim" and would otherwise be mistaken for the main window.
+        if _is_startup_reminder(title):
             dialogs.append({
                 "hwnd": hwnd, "title": title, "class": cls,
                 "is_maintenance": True
@@ -287,6 +305,10 @@ def _find_extendsim_dialog_windows():
         return True
 
     win32gui.EnumWindows(enum_callback, None)
+    if main_hwnd is not None and unnamed_reminders:
+        main_pid = _window_pid(main_hwnd)
+        dialogs.extend(d for d in unnamed_reminders
+                       if main_pid is not None and _window_pid(d["hwnd"]) == main_pid)
     return dialogs, main_hwnd
 
 
@@ -418,17 +440,26 @@ def main():
     deadline = time.time() + timeout_sec
 
     while time.time() < deadline:
-        # Strategy 1: UI Automation (best - can read dialog text)
-        uia_results = try_uia_strategy()
-        if uia_results:
-            print(json.dumps({"found": True, "dialogs": uia_results}))
-            return 0
+        # win32 first: EnumWindows/GetWindowText answer in ~1ms even while ExtendSim is
+        # busy inside a long ModL call or a simulation run. UI Automation blocks until
+        # ExtendSim is free (measured live 2026-09-25), so it is only ever called once
+        # win32 has confirmed a box is actually open.
+        qt_dialogs, main_hwnd = _find_extendsim_dialog_windows()
+        pid = _window_pid(main_hwnd) if main_hwnd is not None else None
+        win32_error_dialogs = _find_win32_error_dialogs(pid) if pid is not None else []
 
-        # Strategy 2: win32gui fallback (Ghost state - limited text reading)
-        win32_results = try_win32gui_strategy()
-        if win32_results:
-            print(json.dumps({"found": True, "dialogs": win32_results}))
-            return 0
+        if qt_dialogs or win32_error_dialogs:
+            # Strategy 1: UI Automation (best - can read dialog text)
+            uia_results = try_uia_strategy()
+            if uia_results:
+                print(json.dumps({"found": True, "dialogs": uia_results}))
+                return 0
+
+            # Strategy 2: win32gui fallback (Ghost state - limited text reading)
+            win32_results = try_win32gui_strategy()
+            if win32_results:
+                print(json.dumps({"found": True, "dialogs": win32_results}))
+                return 0
 
         time.sleep(poll_sec)
 
