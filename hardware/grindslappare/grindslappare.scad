@@ -165,11 +165,12 @@ blk_L = blk_L_manuell > 0 ? blk_L_manuell : (moturs ? 2*kopp_r + 5 : 25);
 Q = P3 + [blk_L, 0];              // flagga
 K = moturs ? Q - [R_finger, 0] : Q + [R_finger, 0];   // klockans centrum
 
-z_kopp = z_arm + nos_h + 3;       // koppens undersida
+skalle_axel = 4.8;                 // M4-skalle + bricka ovanpå spärr/blockerare
+z_kopp = z_arm + nos_h + skalle_axel + 3;   // koppens undersida
 z_klocka_topp = z_kopp + 3 + klocka_h;
 z_ring_topp = z_klocka_topp - ring_fran_topp;
-z_ben_botten = z_arm + nos_h + 2;
-flagg_h = nos_h + 14;             // flaggans höjd över armens underkant
+z_ben_botten = z_arm + nos_h + skalle_axel + 2;
+flagg_h = nos_h + skalle_axel + 14;             // flaggans höjd över armens underkant
 
 // Stoppklackar på plattan
 klack_r = 3;

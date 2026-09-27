@@ -67,21 +67,28 @@ standardvärdena ligger i `stl/`.
 
 ## Stycklista
 
-| Antal | Detalj |
-|---|---|
-| 1 | Rostfri M6-bult med sexkantsskalle, M6×45 + mutter och bricka (fingret) |
-| 1 | Ringkabelsko M6 + flexibel stängselkabel eller mångtrådig kopparkabel |
-| 3 | M4-skruv, ca M4×20 (axlar), + M4-mutter och 3 brickor |
-| 2 | Kullager 623ZZ (3×10×4) |
-| 2 | M3×12-skruv + bricka (lageraxlar, gängas direkt i plasten) |
-| 4 | M3×10 försänkt (klockkoppen mot pelarna) |
-| 1 | M3×16 + mutter (klämskruv på fingerringen) |
-| 4 | Träskruv 4–4,5 mm, försänkt (plattan mot stolpen) |
-| 1 | Mekanisk äggklocka (60 min, vridbar topp) |
+Använd rostfritt (A2 eller A4) till allt eftersom enheten sitter ute.
+
+| Antal | Detalj | Till |
+|---|---|---|
+| 1 | M6×40 sexkantsskruv, rostfri, + M6-mutter + bricka | Fingret som handtaget hakas på och som leder strömmen |
+| 1 | Ringkabelsko M6, förtennad | Stängselkabeln till fingret |
+| – | Stängselkabel (högspänningskabel) + kabelklämma till tråden/bandet | Strömmen från stängslet |
+| 1 | M4×16 insexskruv + bricka | Krokarmens axel |
+| 2 | M4×20 insexskruv + bricka | Spärrens och blockerarens axlar |
+| 3 | M4-mutter | Trycks in i plattans baksida |
+| 2 | Kullager 623-2RS (3×10×4, gummitätat) eller 623ZZ | Rullarna i steg 1 och 2 |
+| 2 | M3×12 skruv + bricka | Lageraxlar, gängas direkt i plasten |
+| 4 | M3×10 försänkt | Klockkoppen mot pelarna |
+| 1 | M3×16 + M3-mutter | Klämskruv på fingerringen |
+| 4 | Träskruv 4–4,5 mm, försänkt, ca 40 mm | Plattan mot en trästolpe. Använd slangklämmor eller M4 genom stolpen om den är av metall |
+| 1 | Mekanisk äggklocka, 60 min, där hela toppen vrids | Timern |
+| 1–2 buntband | | Håller klockan i koppen |
+| ca 150 g | PETG- eller ASA-filament | Alla tryckta delar |
 
 ## Montering
 
-1. Tryck in M4-muttrarna i sexkantsfickorna på plattans baksida.
+1. Tryck in M4-muttrarna (eventuellt med en droppe lim) i sexkantsfickorna på plattans baksida.
 2. Skruva fast krokarm, spärr och blockerare på sina navbrickor med M4 och en
    bricka ovanpå. Dra inte åt hårdare än att armarna svänger fritt.
 3. Skruva fast lagren på krokarmens svans och spärrens spets med M3 och en bricka
