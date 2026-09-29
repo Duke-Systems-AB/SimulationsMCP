@@ -7,7 +7,7 @@
   "attributes": { "reads": [], "writes": [] },
   "nodes": [
     { "ref": "q",   "lib": "Item.lbr", "type": "Queue" },
-    { "ref": "act", "lib": "Item.lbr", "type": "Activity", "seed": true, "params": { "D": "{{process_time}}" } }
+    { "ref": "act", "lib": "Item.lbr", "type": "Activity", "seed": true, "params": { "WaitDelta_prm": "{{process_time}}" } }
   ],
   "edges": [
     { "kind": "flow", "from": "q.ItemOut", "to": "act.ItemIn" }

@@ -1,9 +1,9 @@
 Simulations MCP Server - Installation Guide
 ============================================
 Duke Systems AB
-Version 1.22.7 — 107 tools
+Version 1.22.8 — 107 tools
 Build the installer with installer\build-installer.bat (requires Inno Setup 6 +
-Node + Python) -> output\SimulationsMCP-Setup-1.22.7.exe
+Node + Python) -> output\SimulationsMCP-Setup-1.22.8.exe
 
 PREREQUISITES
 -------------
@@ -25,7 +25,7 @@ Before installing, ensure you have:
    The ExtendSim COM component must be available.
    ExtendSim must be running before using the MCP server.
    The installer checks for the COM ProgID "ExtendSim.Application". ExtendSim
-   2024 and 2026 both register it (verified with 2024.1.0.0 and 2026.1.0.36).
+   2024 and 2026 both register it (verified with 2024.1.0.0, 2026.1.0.36 and 2026.1.0.39).
    Run one ExtendSim at a time.
 
 INSTALLATION

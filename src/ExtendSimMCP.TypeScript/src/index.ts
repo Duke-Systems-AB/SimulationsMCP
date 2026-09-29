@@ -1157,10 +1157,10 @@ server.tool(
 
 server.tool(
   "model_close",
-  "Close the current model. Optionally save before closing.",
+  "Close the current model. Without saveFirst, unsaved changes are DISCARDED: the result then has unsavedChanges (true/false, or null when ExtendSim cannot tell - always the case for a saved model) and a warning. Use saveFirst=true whenever the user's changes must be kept. A model that was never saved cannot be saved here: save it with model_save and a filePath first.",
   {
     modelId: z.string().optional().describe("Model ID"),
-    saveFirst: z.boolean().optional().describe("Save before closing")
+    saveFirst: z.boolean().optional().describe("Save before closing (the model must already have a file)")
   },
   async ({ modelId, saveFirst }) => {
     return safeToolCall("model_close", () => backend.modelClose({ modelId, saveFirst }), { modelId, saveFirst });
@@ -1805,7 +1805,7 @@ server.tool(
 
 server.tool(
   "approve_pattern",
-  "Approve a mined pattern candidate into the molecule library. Assembles a validated, M3-instantiable library entry (§7.1) from a candidate (inline, or selected from a cluster_patterns file by patternFingerprint) plus a naming object (id, intent, seed, param names, inlet/outlet ports), validates it against the molecule schema, and writes patterns/molecules/<id>.json. dryRun returns a preview without writing; overwrite allows replacing an existing id. Nothing is written unless valid and deliberately approved.",
+  "Approve a mined pattern candidate into the molecule library. Assembles a validated, M3-instantiable library entry (§7.1) from a candidate (inline, or selected from a cluster_patterns file by patternFingerprint) plus a naming object (id, intent, seed, param names, inlet/outlet ports), validates it against the molecule schema, and writes patterns/molecules/<id>.json. dryRun returns a preview without writing; overwrite allows replacing an existing id. Block settings are stored under ExtendSim's own variable names; a setting that chooses an attribute from a list (Queue sort attribute) is not stored but listed in the entry's notApplied - tell the user to set it by hand. Nothing is written unless valid and deliberately approved.",
   {
     candidate: z.record(z.any()).optional().describe("Inline mined pattern candidate (from cluster_patterns)"),
     patternsPath: z.string().optional().describe("cluster_patterns output JSON to load the candidate from"),

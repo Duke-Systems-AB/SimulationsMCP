@@ -13,6 +13,45 @@ import json
 from molecule_schema import validate_molecule, MoleculeError
 from patterns import infer_port_role
 
+# Mining (model_extract's EXTRACT_PARAMS) names block settings with friendly names; a molecule
+# must hold ExtendSim's own variable names, because instantiate writes them with
+# block_set_value, which fails closed on a name the block does not have. Found 2026-09-29: an
+# approved Bank.mox pattern carried Queue "rankType" and its settings had silently never been
+# applied. Activity/Workstation settings EXTRACT_PARAMS reads by dialog ID are named here
+# (IDs resolved from Item.lbr 2024). tests/unit_py/test_pattern_approve.py keeps this table in
+# step with EXTRACT_PARAMS.
+WRITE_NAMES = {
+    "Create": {"arrivalType": "CreateOptions_pop", "distribution": "Rnd_Distributions_pop",
+               "arg1": "Rnd_Arg1_prm", "arg2": "Rnd_Arg2_prm", "arg3": "Rnd_Arg3_prm",
+               "maxArrivalsEnabled": "RndI_MaxItems_chk", "maxArrivals": "RndI_MaxItems_prm"},
+    "Queue": {"rankType": "QueueRank_Pop", "sortAttribute": "SortAttrib_Pop",
+              "maxLength": "MaxLength_prm"},
+    "Activity": {"delayType": "Delay_Options_pop", "distribution": "Delay_Distributions_pop",
+                 "arg1": "Delay_Arg1_prm", "arg2": "Delay_Arg2_prm", "arg3": "Delay_Arg3_prm",
+                 "fixedDelay": "WaitDelta_prm"},
+    "Workstation": {"maxServers": "MaxServers_prm", "maxQueueLength": "MaxQueueLength_prm",
+                    "delayType": "Delay_Options_pop", "distribution": "Delay_Distributions_pop",
+                    "arg1": "Delay_Arg1_prm", "arg2": "Delay_Arg2_prm", "arg3": "Delay_Arg3_prm"},
+    "Gate": {"demandType": "DemandType_Pop", "initialState": "InitialCondition_Pop"},
+    "Select Item Out": {"mode": "SelectType_Pop"},
+    "Select Item In": {"mode": "SelectType_Pop"},
+    "Batch": {"batchSize": "Quantity_prm"},
+    "Resource Pool": {"poolName": "PoolName_prm", "initialResources": "NumberOfItems_prm"},
+    "Tank": {"capacity": "MaxLevel_prm", "initialLevel": "InitialLevel_prm"},
+    "Valve": {"maxRate": "MaxRate_prm"},
+    "Shutdown": {"tbfDistribution": "SF_TBF_Distribs_pop", "tbfArg1": "SF_TBF_Arg1_prm",
+                 "tbfArg2": "SF_TBF_Arg2_prm", "ttrDistribution": "SF_TTR_Distribs_pop",
+                 "ttrArg1": "SF_TTR_Arg1_prm", "ttrArg2": "SF_TTR_Arg2_prm"},
+    "Resource Pool Release": {"releaseQuantity": "NumReleased_PRM"},
+}
+
+# Settings that choose an ATTRIBUTE from a popup are never written: SetDialogVariable runs the
+# popup's handler, which indexes the model's attribute list - in a model without that attribute
+# it raised a modal "Array exceeded dimensional bounds" (Queue SortAttrib_Pop, 2026-09-29) and
+# blocked COM. They are listed in the entry's notApplied instead. Setting an attribute choice
+# safely (write the block's statics, like attribute_set) is part of the queues sub-project.
+NEVER_WRITE = {"SortAttrib_Pop"}
+
 _PLACEHOLDER = re.compile(r"^\{\{(.+?)\}\}$")
 _WORD = re.compile(r"^\w+$")
 
@@ -60,15 +99,14 @@ def _infer_edge_kind(frm, to, override):
     return "flow" if "item" in text else "side"
 
 
-def _infer_attribute_contract(nodes):
+def _infer_attribute_contract(nodes, not_applied=()):
     """Infer {reads, writes} from a molecule's (already-rewritten) nodes.
 
     writes = attribute names appearing in any node's setAttributes.
     reads = attribute names referenced by other nodes' params: a literal
     (non-placeholder) string value on a param whose key names an attribute
-    reference (matches the friendly-param convention used across
-    simulation_backend.py — sortAttribute, attributeName, matchAttribute,
-    ...). Mirrors the flat reads/writes list shape compose.py's
+    reference - a key containing "attrib" (sortAttribute, SortAttrib_Pop,
+    matchAttribute, ...). Mirrors the flat reads/writes list shape compose.py's
     _check_attribute_contract consumes."""
     writes = []
     for n in nodes:
@@ -79,9 +117,18 @@ def _infer_attribute_contract(nodes):
     reads = []
     for n in nodes:
         for k, v in (n.get("params") or {}).items():
-            if isinstance(v, str) and "attribute" in k.lower() and not _PLACEHOLDER.match(v):
+            # "attrib" matches both friendly keys (sortAttribute) and ExtendSim's own names
+            # (SortAttrib_Pop, attribNamesChosen) now that WRITE_NAMES translates the keys.
+            if isinstance(v, str) and "attrib" in k.lower() and not _PLACEHOLDER.match(v):
                 if v not in reads:
                     reads.append(v)
+    # An attribute choice that could not be applied (NEVER_WRITE) is still what the pattern
+    # reads - the user sets it by hand - so compose keeps warning when nothing writes it.
+    for na in not_applied:
+        v = na.get("value")
+        if isinstance(v, str) and "attrib" in na["param"].lower() and not _PLACEHOLDER.match(v):
+            if v not in reads:
+                reads.append(v)
     return {"reads": reads, "writes": writes}
 
 
@@ -125,17 +172,25 @@ def build_library_entry(candidate, naming):
 
     # nodes: rewrite placeholders, seed flag, lib normalize
     out_nodes = []
+    not_applied = []
     for n in nodes:
         on = {"ref": n["ref"], "lib": _normalize_lib(n.get("lib", "")), "type": n.get("type", "")}
         p = {}
+        write_names = WRITE_NAMES.get(on["type"], {})
         for k, v in (n.get("params") or {}).items():
+            name = write_names.get(k, k)
+            if name in NEVER_WRITE:
+                not_applied.append({"node": n["ref"], "param": k, "value": v,
+                                    "reason": "chooses an attribute from a popup; writing it over "
+                                              "COM can raise a modal box - set it by hand"})
+                continue
             if isinstance(v, str):
                 m = _PLACEHOLDER.match(v)
                 if m:
                     inner = m.group(1)
-                    p[k] = "{{" + fmap.get(inner, _sanitize(inner)) + "}}"
+                    p[name] = "{{" + fmap.get(inner, _sanitize(inner)) + "}}"
                     continue
-            p[k] = v
+            p[name] = v
         if p:
             on["params"] = p
         sa = []
@@ -176,9 +231,9 @@ def build_library_entry(candidate, naming):
 
     example = {fmap.get(k, _sanitize(k)): v for k, v in (candidate.get("example") or {}).items()}
 
-    attributes = naming.get("attributes") or _infer_attribute_contract(out_nodes)
+    attributes = naming.get("attributes") or _infer_attribute_contract(out_nodes, not_applied)
 
-    return {
+    entry = {
         "id": naming["id"],
         "version": "1.0",
         "kind": "molecule",
@@ -196,6 +251,9 @@ def build_library_entry(candidate, naming):
         },
         "example": example,
     }
+    if not_applied:
+        entry["notApplied"] = not_applied
+    return entry
 
 
 def _default_molecules_dir():

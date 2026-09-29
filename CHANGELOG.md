@@ -3,6 +3,55 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
+## 1.22.8 — 2026-09-29
+
+A fix release: models built with the pattern library now behave as designed, wiring stays
+right across models, and the server no longer reports success for a value that did not take
+or quietly discards a model's changes. Tool count unchanged at 107. Verified live on
+ExtendSim 2024 and 2026.
+
+**Upgrade first if you use** the machine patterns (`instantiate_pattern`, `compose_flow`), or
+build more than one model per session.
+
+### Fixed
+- After the first model in a session, a new model could be wired wrong without any error.
+  The server remembered which slots of a block's array connector (a Create's item output,
+  for example) it had used, keyed by block number - and ExtendSim numbers blocks from the
+  start again in every model. In the next model it skipped the real, free output, so
+  the Create stayed unconnected and a run returned 0 items. The server now decides only
+  from what ExtendSim reports about each connector.
+- The machine patterns (`simple-machine`, `resource-machine`, `machine-with-breakdowns`)
+  never set their process time: they wrote a variable the Activity block does not have.
+  They now set the Activity's delay. `machine-with-breakdowns` also ticks the Activity's
+  "Enable Shutdown", without which the Shutdown block never stopped the machine.
+- `block_set_value` said success for a variable the block does not have, and for a value
+  the block did not keep. It now reads the value back and returns `SET_VALUE_FAILED` with
+  what the block holds instead.
+- `attribute_set`, `attribute_get` and the `tag-items` pattern could fail with
+  `ATTRIBUTE_REGISTER_FAILED` for a new attribute. Registering it duplicated a helper block,
+  which goes through the Windows clipboard - while another program held the clipboard,
+  nothing was registered. The server now asks the helper block to register the name
+  directly, without copying anything.
+- A pattern approved with `approve_pattern` never got its block settings when it was built:
+  mining names settings with the server's own short names (`rankType`, `arg1`, ...), and
+  `instantiate_pattern` wrote those as if they were ExtendSim variables, which the block
+  ignored. `approve_pattern` now stores ExtendSim's own variable names. Settings that choose an
+  attribute from a list (a Queue's sort attribute) are not written - doing so can open an
+  ExtendSim error box - and are listed in the pattern's `notApplied` instead, to be set by hand.
+
+### Changed
+- `model_close` without `saveFirst` still closes the model, but now says when changes were
+  lost: the result has `unsavedChanges` (true/false, or null when ExtendSim cannot tell -
+  always the case for a model that has been saved) and a `warning`. `saveFirst` on a model that
+  has never been saved now returns `MODEL_SAVE_FAILED` with a suggestion, instead of opening
+  ExtendSim's "Save As" box, which froze the server.
+
+### Known ExtendSim issue
+- In ExtendSim 2026.1.0.39, two hierarchical blocks connected directly (for example two
+  machines from `compose_flow` wired `m1.out -> m2.in`) make the run stall at time 1. This
+  is an ExtendSim bug, being reported to Imagine That; 2024 runs the same model. Workaround: put a
+  Queue between the two hierarchical blocks.
+
 ## 1.22.7 — 2026-09-26
 
 A fix release. `attribute_set` and `attribute_get` (and the `tag-items` pattern) work for the first time,

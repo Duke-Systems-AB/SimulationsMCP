@@ -8,9 +8,13 @@ when the dialog draws. So the recipe, verified live on 2026-09-26 on ExtendSim 2
 
   1. The attribute must be in the model's registry (global arrays _AttributeList and
      _attribType). If it is not, a helper Get block gets the name in its statics and is
-     duplicated: the copy's `on PasteBlock` calls Attrib_AddName inside ExtendSim. Both
-     helper blocks are removed. NEVER resize _AttributeList from COM - GAResizeByIndex on
-     it crashed ExtendSim 2024 twice (access violation).
+     sent the PasteBlock message (SendMsgToBlock(block, PASTEBLOCKMSG)): its
+     `on PasteBlock` calls Attrib_AddName inside ExtendSim. The helper is then removed.
+     This used to duplicate the helper (DuplicateBlock), which goes through the Windows
+     clipboard - with the clipboard held by another program it returned -block and nothing
+     was registered (2026-09-29). Sending the message runs the same handler without a
+     copy. NEVER resize _AttributeList from COM - GAResizeByIndex on it crashed ExtendSim
+     2024 twice (access violation).
   2. SetDialogVariable writes the Set block's statics; each is read back as a string and a
      write that did not take returns ATTRIBUTE_WRITE_REJECTED, never a false success.
 
@@ -92,28 +96,27 @@ class _Com:
             raise RuntimeError(f"could not place a {type_} block: {r.get('error')}")
         return r["blockId"]
 
-    def duplicate(self, bid):
-        return self._num(f"DuplicateBlock({bid})")
+    def send_paste_message(self, bid):
+        # Runs the block's `on PasteBlock` without copying (no clipboard). Measured live
+        # 2026-09-29 on ExtendSim 2024: registers the attribute at once, no dialog.
+        self._app.Execute(f"SendMsgToBlock({bid}, PASTEBLOCKMSG);")
 
     def remove_block(self, bid):
         self._b.block_remove(bid)
 
 
 def _register(com, name):
-    """Register `name` as a value attribute via a duplicated helper Get block."""
-    helpers = []
+    """Register `name` as a value attribute through a helper Get block's PasteBlock handler."""
+    get_id = None
     try:
         get_id = com.add_block("Item.lbr", "Get")
-        helpers.append(get_id)
         com.set_static(get_id, "attribNamesChosen", name)
         com.set_static(get_id, "attribType", ATTRIB_TYPE_VALUE)
-        copy_id = com.duplicate(get_id)
-        if copy_id > 0:
-            helpers.append(copy_id)
+        com.send_paste_message(get_id)
     finally:
-        for bid in reversed(helpers):
+        if get_id is not None:
             try:
-                com.remove_block(bid)
+                com.remove_block(get_id)
             except Exception:
                 pass
     return name in com.registry()

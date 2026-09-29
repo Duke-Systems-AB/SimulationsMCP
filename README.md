@@ -70,9 +70,9 @@ npm run build
 
 ### Install from Installer
 
-Download `SimulationsMCP-Setup-1.22.7.exe` from the `installer/` directory and run it.
+Download `SimulationsMCP-Setup-1.22.8.exe` from the `installer/` directory and run it.
 
-The prebuilt installer matches the current source: **v1.22.7, 107 tools** (including
+The prebuilt installer matches the current source: **v1.22.8, 107 tools** (including
 `block_introspect`, `table_get`/`table_set`, `detect_attributes`, and the full
 pattern-mining pipeline). See `CHANGELOG.md` for release history.
 

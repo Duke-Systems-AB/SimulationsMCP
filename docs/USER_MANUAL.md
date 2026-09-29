@@ -1,6 +1,6 @@
 # Simulations MCP Server — User Manual
 
-**Version:** 1.22.7
+**Version:** 1.22.8
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 
@@ -74,7 +74,7 @@ ExtendSim registers its COM component during installation. If needed, run Extend
 
 ### Option A: Installer (Recommended)
 
-1. Run `SimulationsMCP-Setup-1.22.7.exe` as administrator (the prebuilt installer matches the current source)
+1. Run `SimulationsMCP-Setup-1.22.8.exe` as administrator (the prebuilt installer matches the current source)
 2. Choose installation directory (default: `C:\Program Files\SimulationsMCP`)
 3. Select whether to install as a Windows Service (only needed for ChatGPT — see Section 4.5)
 4. Complete the installation
@@ -330,7 +330,7 @@ The server provides 107 tools organized into categories. Each tool accepts struc
 | `model_new` | Create a new empty model |
 | `model_open` | Open an existing model file (.mox) |
 | `model_save` | Save the current model (optional: save-as with new path) |
-| `model_close` | Close the current model |
+| `model_close` | Close the current model. Without `saveFirst` the changes are discarded and the result says so (`unsavedChanges`, `warning`); a model that was never saved must be saved with `model_save` and a file path before `saveFirst` works |
 | `model_list` | List all open models |
 | `model_info` | Get model metadata (blocks, connections, databases) |
 | `model_validate` | Check model for structural issues (unconnected blocks, missing queues) |
@@ -377,7 +377,7 @@ example a line into a hierarchical block) under `unresolvedConnectionNodes`.
 
 | Tool | Description |
 |------|-------------|
-| `block_set_value` | Set a dialog variable value on a block |
+| `block_set_value` | Set a dialog variable value on a block. The value is read back: a variable the block does not have, or a value the block did not keep, returns `SET_VALUE_FAILED` with what the block holds |
 | `block_get_value` | Get a dialog variable value from a block |
 | `execute_command` | Execute a raw ModL command string (advanced) |
 | `block_configure` | Auto-detecting block configurator — handles Activity, Queue, Create, Exit, Select Item In/Out, Gate, Resource Item, Batch/Unbatch, Equation, Tank, Valve, and more. Single tool replaces 33 individual config tools. |
@@ -548,7 +548,7 @@ Mining patterns out of existing models — run in this order:
 | `extract_psg` | Model → Pattern Structure Graph: multi-scale nodes (`lib:blocktype` + params) and edges (`srcPort`→`dstPort`), with boundary-crossing edges marked per H-block. Reads the open model, or opens `filePath` read-only. `savePath` writes JSON |
 | `mine_candidates` | One candidate subgraph per H-block scope, each with a stable Weisfeiler–Lehman fingerprint (topology-only, parameter-independent), kind, and boundary edges |
 | `cluster_patterns` | Group candidates by exact WL fingerprint, merge near-misses via graph edit distance (flagged for review), and infer each cluster's parameter schema (fixed/required + median/range), interface and template |
-| `approve_pattern` | Turn a clustered candidate plus a naming into a validated library entry and write `patterns/molecules/<id>.json`. `dryRun` previews without writing. **Fail-closed — nothing enters the library without deliberate approval** |
+| `approve_pattern` | Turn a clustered candidate plus a naming into a validated library entry and write `patterns/molecules/<id>.json`. `dryRun` previews without writing. Settings that choose an attribute from a list (a Queue's sort attribute) are not stored but listed in the entry's `notApplied`, to be set by hand. **Fail-closed — nothing enters the library without deliberate approval** |
 
 Each mining step can run offline from the previous step's saved JSON (`psgPath`,
 `candidatesPaths`), so you can mine without ExtendSim open once the PSG is extracted.
@@ -741,6 +741,24 @@ If ExtendSim crashes or is closed, the COM connection is lost.
 **Symptom:** `COM_ERROR` or `CONNECTION_FAILED` errors
 **Fix:** Restart ExtendSim. The server automatically attempts to reconnect (up to 2 retries).
 
+### Slow new models and failed block copies (Windows clipboard)
+
+ExtendSim copies blocks through the Windows clipboard. While another program holds the
+clipboard (a clipboard manager, a remote-desktop session, a stuck application), every new
+model takes several seconds and `block_duplicate` cannot copy.
+
+**Symptom:** `model_new` is slow; `block_duplicate` fails
+**Fix:** close the program that holds the clipboard (or restart it). Attribute tools
+(`attribute_set`, `attribute_get`, `tag-items`) do not depend on the clipboard since 1.22.8.
+
+### ExtendSim 2026.1.0.39: two hierarchical blocks connected directly stall
+
+In ExtendSim 2026.1.0.39 a run stalls at time 1 when two hierarchical blocks are connected
+directly (for example two machines from `compose_flow` wired `m1.out -> m2.in`). This is an
+ExtendSim bug; ExtendSim 2024 runs the same model.
+
+**Fix:** put a Queue between the two hierarchical blocks, or use ExtendSim 2024.
+
 ### Dialog Blocking ExtendSim
 
 ExtendSim may display a modal dialog (e.g., COM error `sCode: 80004003`) that blocks all further COM calls.
@@ -823,7 +841,7 @@ recovery hint — treat it as a bonus, not a guarantee.
 |------------|---------|
 | `MODEL_NOT_OPEN` | The operation needs an open model; none is open |
 | `MODEL_OPEN_FAILED` | The model file could not be opened |
-| `MODEL_SAVE_FAILED` | The model could not be saved |
+| `MODEL_SAVE_FAILED` | The model could not be saved - also returned by `model_close` with `saveFirst` on a model that has never been saved (save it with `model_save` and a file path first) |
 | `MODEL_QUERY_FAILED` | Reading model metadata failed |
 
 **Blocks and connections**
@@ -842,7 +860,7 @@ recovery hint — treat it as a bonus, not a guarantee.
 
 | Error Code | Meaning |
 |------------|---------|
-| `GET_VALUE_FAILED` / `SET_VALUE_FAILED` | Reading or writing a dialog variable failed |
+| `GET_VALUE_FAILED` / `SET_VALUE_FAILED` | Reading or writing a dialog variable failed - including a write the block did not keep, or a variable the block does not have (`readBack` shows what it holds; use `block_introspect` to find the real name) |
 | `TABLE_NOT_FOUND` | The named table does not exist on the block |
 | `TABLE_WRITE_REJECTED` | `table_set` read the cell back and it did not hold the written value — block-controlled cells reject writes silently |
 | `DATABASE_NOT_FOUND` / `FIELD_NOT_FOUND` | No such database table or field |

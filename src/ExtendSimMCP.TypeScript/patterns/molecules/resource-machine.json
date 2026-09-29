@@ -11,7 +11,7 @@
   "attributes": { "reads": [], "writes": [] },
   "nodes": [
     { "ref": "q",   "lib": "Item.lbr", "type": "Queue" },
-    { "ref": "act", "lib": "Item.lbr", "type": "Activity", "params": { "D": "{{process_time}}" } },
+    { "ref": "act", "lib": "Item.lbr", "type": "Activity", "params": { "WaitDelta_prm": "{{process_time}}" } },
     { "ref": "rel", "lib": "Item.lbr", "type": "Resource Pool Release", "seed": true },
     { "ref": "rp",  "lib": "Item.lbr", "type": "Resource Pool" }
   ],

@@ -445,20 +445,6 @@ DB_FIELD_DECIMALS = {"real": 5}
 # Global ExtendSim application reference
 _es_app: Optional[Any] = None
 
-# Track used array connector slots per block to avoid reusing slots in same session
-# Key: (block_id, connector_name), Value: set of used slot indices
-_used_array_slots: dict = {}
-
-
-def _clear_array_slot_tracking():
-    """Clear the session tracking for array connector slots.
-
-    Should be called when a new model is opened/created to reset tracking.
-    """
-    global _used_array_slots
-    _used_array_slots = {}
-
-
 _com_log_path = os.path.join(_log_dir, "com_debug.log")
 _debug_logging = os.environ.get("EXTENDSIM_DEBUG", "").lower() in ("1", "true", "yes")
 
@@ -717,8 +703,6 @@ def detect_license(model_id: Optional[str] = None) -> dict:
 def model_open(file_path: str, read_only: bool = False) -> dict:
     """Opens an ExtendSim model."""
     try:
-        # Clear array slot tracking for new model
-        _clear_array_slot_tracking()
         _reset_auto_layout()   # BUG-002: fresh flow-layout cursor per model
 
         app = get_extendsim_app()
@@ -860,12 +844,39 @@ def model_info(model_id: Optional[str] = None, include_statistics: bool = False)
         return _com_error(e, "model_info")
 
 
+def _model_unsaved_state(app) -> "tuple[bool, Optional[bool]]":
+    """(never_saved, dirty) for the active model; dirty is None when ExtendSim cannot tell.
+
+    Measured live 2026-09-26/27 (2024 and 2026): GetModelPath(name) is "" for a model that was
+    never saved. ModelSettingGet(name, 2) (the dirty flag) is exact for such a model (0 -> 1
+    after a change), but returns -1 for every setting of a saved model - so for a saved model
+    the unsaved state is unknown.
+    """
+    app.Execute("globalStr0 = GetModelName();")
+    name = _read_str0(app)
+    app.Execute(f'globalStr0 = GetModelPath("{_escape_modl_string(name)}");')
+    never_saved = _read_str0(app) == ""
+    if not never_saved:
+        return False, None
+    app.Execute("global0 = -12345;")
+    app.Execute(f'global0 = ModelSettingGet("{_escape_modl_string(name)}", 2);')
+    flag = parse_float(app.Request("System", "global0+:0:0:0"))
+    return True, (None if flag not in (0, 1) else flag == 1)
+
+
 def model_close(model_id: Optional[str] = None, save_first: bool = False) -> dict:
-    """Closes the model."""
+    """Closes the model. Without save_first, unsaved changes are discarded - and the result
+    says so (Jonas 2026-09-29: warn, do not refuse)."""
     try:
         app = get_extendsim_app()
+        never_saved, dirty = _model_unsaved_state(app)
 
         if save_first:
+            if never_saved:
+                # SaveModel on a never-saved model opens "Save As" - a modal that blocks COM.
+                return _error(ErrorCode.MODEL_SAVE_FAILED,
+                              "this model has never been saved, so it has no file to save to",
+                              suggestion="save it first with model_save and a filePath, then close")
             app.Execute("SaveModel();")
         else:
             app.Execute("SetDirty(False);")
@@ -873,7 +884,19 @@ def model_close(model_id: Optional[str] = None, save_first: bool = False) -> dic
         # Close active window
         app.Execute("ExecuteMenuCommand(4)")
 
-        return {"success": True, "wasSaved": save_first}
+        result = {"success": True, "wasSaved": save_first}
+        if save_first:
+            return result
+        result["unsavedChanges"] = dirty
+        if dirty:
+            result["warning"] = ("Closed without saving: this model had never been saved and its "
+                                 "changes are lost. Use saveFirst=true (after model_save with a "
+                                 "filePath) when changes must be kept.")
+        elif dirty is None:
+            result["warning"] = ("Closed without saving. ExtendSim cannot tell whether a saved model "
+                                 "had unsaved changes; any were discarded. Use saveFirst=true when "
+                                 "the user's changes must be kept.")
+        return result
     except Exception as e:
         return _com_error(e, "model_close")
 
@@ -888,8 +911,6 @@ def model_new(save_path: Optional[str] = None) -> dict:
         Dictionary with success status and model info
     """
     try:
-        # Clear array slot tracking for new model
-        _clear_array_slot_tracking()
         _reset_auto_layout()   # BUG-002: fresh flow-layout cursor per model
 
         app = get_extendsim_app(create_if_missing=True)
@@ -1247,29 +1268,22 @@ def _get_array_connector_index(slot: int, base_con: int) -> int:
 def _find_free_array_slot(app, block_id, con_name):
     """Find next available slot in array connector.
 
-    Uses both NodeGetIDIndex AND session tracking (_used_array_slots) to determine
-    if a slot is free. This handles cases where NodeGetIDIndex doesn't update
-    immediately after MakeConnection.
+    Decides from NodeGetIDIndex alone - what ExtendSim reports now. A per-process
+    memory of used slots, keyed by (block id, connector name), used to be consulted
+    too; it outlived the model, so in the next model (block ids restart) it skipped a
+    free slot 0 and left e.g. a Create's ItemOut unconnected - 0 items, no error
+    (found live 2026-09-26). NodeGetIDIndex reports a new connection at once (measured
+    the same day), so nothing needs remembering.
 
     Strategy:
     1. Get base connector index with getConNumber
     2. Get number of slots with ConArrayGetNumCons
     3. Calculate connector index for each slot: base_con if slot==0 else 256-slot
-    4. Check if connected using NodeGetIDIndex AND session tracking
+    4. Check if connected using NodeGetIDIndex
     5. Return first free connector index, or expand array if all slots are used
-    6. Mark the slot as used in session tracking
     """
-    global _used_array_slots
-
     _log_debug("=== _find_free_array_slot START ===")
     _log_debug(f"  block_id={block_id}, con_name='{con_name}'")
-
-    # Get or create session tracking for this block/connector
-    tracking_key = (block_id, con_name)
-    if tracking_key not in _used_array_slots:
-        _used_array_slots[tracking_key] = set()
-    used_slots = _used_array_slots[tracking_key]
-    _log_debug(f"  Session tracking: already used slots = {used_slots}")
 
     # Step 1: Get base connector index
     cmd1 = f'global0 = getConNumber({block_id}, "{con_name}");'
@@ -1289,15 +1303,10 @@ def _find_free_array_slot(app, block_id, con_name):
         num_slots = 1  # At least one slot (the base connector)
         _log_debug("  num_slots was < 1, set to 1")
 
-    # Step 3 & 4: Find a free slot by checking NodeGetIDIndex AND session tracking
+    # Step 3 & 4: Find a free slot by checking NodeGetIDIndex
     free_con_idx = None
     free_slot = None
     for slot in range(num_slots):
-        # Skip if already used in this session
-        if slot in used_slots:
-            _log_debug(f"  Slot {slot} already used in this session, skipping")
-            continue
-
         con_idx = _get_array_connector_index(slot, base_con)
         cmd3 = f'global0 = NodeGetIDIndex({block_id}, {con_idx});'
         _log_debug(f"  Checking slot {slot} (connector {con_idx}): {cmd3}")
@@ -1328,12 +1337,7 @@ def _find_free_array_slot(app, block_id, con_name):
         free_con_idx = _get_array_connector_index(free_slot, base_con)
         _log_debug(f"  New slot {free_slot} has connector index {free_con_idx}")
 
-    # Step 6: Mark slot as used in session tracking
-    if free_slot is not None:
-        used_slots.add(free_slot)
-        _log_debug(f"  Marked slot {free_slot} as used. Updated tracking: {used_slots}")
-
-    _log_debug(f"  Returning connector index: {free_con_idx}")
+    _log_debug(f"  Returning connector index: {free_con_idx} (slot {free_slot})")
     _log_debug("=== _find_free_array_slot END ===")
     return free_con_idx
 
@@ -2776,6 +2780,35 @@ def block_set_value(block_id: int, dialog_number, value,
         # Read back using the same API that was written to
         read_back = _get_var(app, block_id, var_name, row, col)
 
+        # Fail closed (measured live 2026-09-27): a variable the block does not have reads
+        # back "nan" and used to be reported as success - the machine molecules set "D",
+        # which no Activity has, so their process time was silently never set.
+        mismatch = None
+        if isinstance(value, str):
+            if str(read_back or "").strip() != value.strip():
+                mismatch = f"the block kept {read_back!r}, not {value!r}"
+        else:
+            text = str(read_back or "").strip().lower()
+            try:
+                # parse_float does not return nan for "nan" / "-nan(ind)" (ExtendSim prints both)
+                got = float("nan") if (not text or "nan" in text) else parse_float(read_back)
+            except (TypeError, ValueError):
+                got = float("nan")
+            if got != got:   # nan: nothing by that name on the block
+                mismatch = f"block {block_id} does not have a variable '{var_name}' (it reads back {read_back!r})"
+            elif abs(got - float(value)) > 1e-9 * max(1.0, abs(float(value))):
+                mismatch = f"the block kept {read_back!r}, not {value!r}"
+        if mismatch:
+            app.Execute(f"globalStr0 = BlockName({block_id});")
+            if not (_read_str0(app) or ""):
+                return _error(ErrorCode.BLOCK_NOT_FOUND, f"Block {block_id} does not exist.",
+                              blockId=block_id, variableName=dialog_number,
+                              suggestion="Use block_list() to see available blocks.")
+            return _error(ErrorCode.SET_VALUE_FAILED, f"write of {var_name} did not take: {mismatch}",
+                          blockId=block_id, variableName=dialog_number, requested=str(value),
+                          readBack=read_back,
+                          suggestion="Use block_introspect(blockId) or dialog_search(query) to find the block's real variable names.")
+
         # Validate readBack - a value of "-1" often indicates the block ID is invalid
         # or the variable doesn't exist on the block
         if read_back == "-1" or read_back == "-1,0":
@@ -4154,7 +4187,9 @@ def execute_command(command: str, get_result: bool = False,
     """Executes an arbitrary ExtendSim ModL command.
 
     Args:
-        command: The ModL command to execute (e.g., 'ConArrayGetConNumber(17, "ValuesIn", 0);')
+        command: The ModL command to execute (e.g., 'global0 = NumBlocks();'). Raw
+            connector-array calls from COM can crash ExtendSim (ConArrayGetConNumber on an
+            Equation block did, 2026.1.0.39) - use block_connect / block_info.
         get_result: If True, retrieve result from global0/globalStr0 after execution
         result_type: "number" to get from global0, "string" to get from globalStr0
 
