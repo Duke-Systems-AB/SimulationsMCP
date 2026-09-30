@@ -70,9 +70,9 @@ npm run build
 
 ### Install from Installer
 
-Download `SimulationsMCP-Setup-1.22.8.exe` from the `installer/` directory and run it.
+Download `SimulationsMCP-Setup-1.23.0.exe` from the `installer/` directory and run it.
 
-The prebuilt installer matches the current source: **v1.22.8, 107 tools** (including
+The prebuilt installer matches the current source: **v1.23.0, 107 tools** (including
 `block_introspect`, `table_get`/`table_set`, `detect_attributes`, and the full
 pattern-mining pipeline). See `CHANGELOG.md` for release history.
 
@@ -114,6 +114,7 @@ For other clients (Claude Desktop, Gemini CLI, Cursor, ChatGPT), see the [User M
 - **Fire-and-forget** — `simulation_run`, `scenario_manager_run`, and `optimizer_run` start non-blocking by default; poll with status tools
 - **268 example models** — Search verified patterns via `pattern_search`
 - **12 modeling guides** — Step-by-step guidance for queuing, manufacturing, logistics, resources, flow, and continuous systems
+- **Block guides** — `block_search` with `detail: true` explains a block: what it is for, recipes proved with the server's tools, what is not proved, and pitfalls (first: Queue Matching, Queue Equation, Query Equation (I))
 - **Model advisor** — Automatic warnings, suggestions, and completions for your model
 - **Auto-dialog-dismisser** — Clicks OK on ExtendSim's own blocking message boxes (never another
   program's), also during long simulations, and passes the message text to the AI; also closes

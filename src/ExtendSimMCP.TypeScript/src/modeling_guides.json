@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "Modeling guides for common ExtendSim simulation scenarios. Each guide describes when to use the pattern, which blocks and connections to use, key parameters, and common mistakes.",
   "categories": {
     "queuing": { "label": "Queuing Systems", "scenarios": ["simple_queue", "multi_server", "priority_queue"] },
@@ -692,6 +692,113 @@
         { "name": "Tank level control", "scenario": "tank_system", "change": "Replace the Holding Tank Process block with actual Rate.lbr Tank+Valve blocks; feed Controller output to Valve goal connector to regulate tank level at setpoint" }
       ],
       "exampleModel": null
+    }
+  },
+  "blocks": {
+    "Item.lbr/Queue Matching": {
+      "library": "Item.lbr", "block": "Queue Matching", "since": "1.23.0", "provedOn": ["2024", "2026"],
+      "summary": "Holds items back until every input has an item with the same key value (an order id, a job number), then lets that set go. Each item input is its own internal queue.",
+      "useWhen": [
+        "Parts of one order arrive on separate lines and must continue together (kit assembly, all documents for one case).",
+        "Several item streams must be synchronised on a shared attribute before the next step."
+      ],
+      "notFor": [
+        "Plain waiting without matching - use Queue.",
+        "Choosing the next item by a computed rank - use Queue Equation.",
+        "Joining the matched items into one item - Queue Matching only releases them; add a Batch block after it."
+      ],
+      "howItWorks": "Every item input is a separate queue. Inside each queue, items are sorted into bins by the value of the match attribute; the bins for one value, across all queues, form a group. A group is released when each of its bins holds the required number of items (one by default). Items leave on the output of the queue they entered. With variable groups the block creates a group for each value that arrives.",
+      "settings": [
+        {"name": "matchAttribute", "tool": "block_configure", "meaning": "Numeric item attribute to match on. Sets variable groups first, then the attribute.", "proved": true},
+        {"name": "numQueues", "tool": "block_configure", "meaning": "Number of internal queues. Connecting a second item input to ItemIn also adds a queue.", "proved": false},
+        {"name": "releaseOptions", "tool": "block_configure", "meaning": "matchedOnly: release the required count from each bin; allInGroup: release every item of the matched group.", "proved": false},
+        {"name": "groupType", "tool": "block_configure", "meaning": "Only 'variable' is supported.", "proved": true}
+      ],
+      "recipes": [
+        {"goal": "Release a set only when both inputs have an item with the same order id",
+         "steps": [
+           "block_add Item.lbr: two Create, two Set, one Queue Matching, one Exit",
+           "block_connect Create1.ItemOut -> Set1.ItemIn and Create2.ItemOut -> Set2.ItemIn",
+           "block_connect Set1.ItemOut -> QueueMatching.ItemIn, then Set2.ItemOut -> QueueMatching.ItemIn (the second connection becomes the second queue)",
+           "block_connect QueueMatching.ItemOut -> Exit.ItemIn",
+           "block_configure QueueMatching {\"matchAttribute\": \"orderId\"}",
+           "attribute_set on each Set block: orderId (the same value on both for pairs, different values to check that nothing pairs)",
+           "simulation_run, then simulation_get_results for the Exit and Create counts"],
+         "observed": "Equal ids: exits equal the scarcer input's count (2024: 103 of 116/103; 2026: 82 of 82/107). Different ids: 0 exits on both versions.",
+         "provedOn": ["2024", "2026"], "date": "2026-09-30"}
+      ],
+      "notYetProved": [
+        "Fixed groups with predefined ids, string attributes, the common group, requirements above one item per queue, allInGroup release, batching, the Order connector.",
+        "Which queue output the single ItemOut connection above uses; where the other queue's matched items go.",
+        "The effect of numQueues and releaseOptions: block_configure accepts both on ExtendSim 2024 and 2026 (live test, numQueues 2 and matchedOnly - values this model already had), but other values were not tried."
+      ],
+      "pitfalls": [
+        "Every item must carry the match attribute: an item without a value cannot be sorted into a bin (the block's code aborts the run).",
+        "Items leave on their own queue's output: connect every output you need.",
+        "In ExtendSim's own dialog, 'fixed' groups with one group make the block ignore the attribute and pair any items - a model can look configured for matching and not be. block_configure always uses variable groups.",
+        "Never write Rotation_prm or Scale_prm from COM - they raise a modal array-bounds box on Item blocks."
+      ]
+    },
+    "Item.lbr/Queue Equation": {
+      "library": "Item.lbr", "block": "Queue Equation", "since": "1.23.0", "provedOn": ["2024", "2026"],
+      "summary": "A queue whose release order comes from your own equation: the equation gives every waiting item a rank and the release rule picks the winner.",
+      "useWhen": [
+        "The next item depends on a rule no built-in sort covers: earliest due date, least slack, fewest set-up changes.",
+        "Items should wait until a condition becomes true (release rule firstTrue or allTrue)."
+      ],
+      "notFor": [
+        "FIFO, LIFO, priority or a sort by one attribute - Queue does that without an equation.",
+        "Releasing sets that share a key - use Queue Matching.",
+        "Choosing a database record - use Query Equation (I)."
+      ],
+      "howItWorks": "Each time the queue is re-evaluated, the equation runs once per waiting item. Its input variables read item attributes or queue facts; its rank output (iRank_0 on a new block) scores the item. releaseRule then chooses: highestRank, lowestRank, firstTrue or allTrue. The equation is compiled when the run starts.",
+      "settings": [
+        {"name": "inputAttribute", "tool": "block_configure", "meaning": "Turns the block's single input row into an item attribute of this name, usable in the equation.", "proved": true},
+        {"name": "equation", "tool": "block_configure", "meaning": "The equation text, e.g. 'iRank_0 = dueDate;'. Use only variable names the block has.", "proved": true},
+        {"name": "releaseRule", "tool": "block_configure", "meaning": "highestRank | lowestRank | firstTrue | allTrue.", "proved": true}
+      ],
+      "recipes": [
+        {"goal": "Rank items by an attribute (equation compiles, items flow through)",
+         "steps": [
+           "block_add Item.lbr: Create, Set, Queue Equation, Activity, Exit; block_connect them in that order (ItemOut -> ItemIn)",
+           "block_configure Activity {\"delayType\": \"fixed\", \"value\": 2}",
+           "block_configure QueueEquation {\"inputAttribute\": \"dueDate\", \"equation\": \"iRank_0 = dueDate;\", \"releaseRule\": \"lowestRank\"}",
+           "attribute_set on the Set block: dueDate",
+           "simulation_run to 100, then simulation_get_results"],
+         "observed": "50 items exited on both versions (delay 2 over 100 time units), no message boxes.",
+         "provedOn": ["2024", "2026"], "date": "2026-09-30"}
+      ],
+      "notYetProved": [
+        "That lowestRank releases the smallest due date first when due dates differ (all items had the same value).",
+        "More than one input variable: rows cannot be added from the server."
+      ],
+      "pitfalls": [
+        "An equation that names a variable the block does not have stops the run with 'Undefined variable' in a modal box. Set inputAttribute first and use that exact name.",
+        "Only one input row: configuring inputAttribute again with another name is refused.",
+        "Every defined input must be used in the equation."
+      ]
+    },
+    "Item.lbr/Query Equation (I)": {
+      "library": "Item.lbr", "block": "Query Equation (I)", "provedOn": [],
+      "summary": "Chooses one record of a database table for each item that passes: the equation scores every record, the best score wins, and the winner's values can be written to the item. It can also create new items from qualifying records.",
+      "useWhen": [
+        "A table holds what a routing or assignment decision needs (free and nearest station, qualified operator, next job).",
+        "The item should leave carrying the winning record's index or values as attributes."
+      ],
+      "notFor": [
+        "Ranking items that wait in a queue - use Queue Equation.",
+        "Releasing matched sets - use Queue Matching.",
+        "Reading one fixed cell - use Equation (I) or Get."
+      ],
+      "howItWorks": "For each passing item the block loops over the records of its query table, runs the equation once per record and keeps the record with the best record-rank output. Only that record's results are applied to the item. Optional spawning creates items for records whose spawn rank qualifies.",
+      "settings": [],
+      "recipes": [],
+      "notYetProved": ["Everything: no setting or recipe has been run through the server yet. Build this block in ExtendSim's dialog."],
+      "pitfalls": [
+        "Never press its Test Equation button from the server - it asks for a record index in a modal prompt that blocks the connection.",
+        "The database and table popups reset the index settings - choose the table first.",
+        "Never write Rotation_prm or Scale_prm from COM."
+      ]
     }
   }
 }

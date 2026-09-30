@@ -23,6 +23,7 @@ import {
   type LocalGuideRename,
 } from "./local-guides-core.js";
 import { defaultLocalGuideDir, loadLocalGuides, saveLocalGuide, deleteLocalGuide, GuideStoreError } from "./local-guides.js";
+import { attachGuides } from "./block-guides.js";
 import { appendFileSync, mkdirSync, existsSync } from "fs";
 
 // Session logging — opt-in via MCP_SESSION_LOG=1 env var OR temp/mcp_session_enable marker file.
@@ -612,13 +613,14 @@ server.tool(
 
 server.tool(
   "block_search",
-  "Search the block reference for block types, connectors, and patterns. Use to find the right block name and library before block_add.",
+  "Search the block reference for block types, connectors, and patterns. Use to find the right block name and library before block_add. Results with hasGuide: true have a block guide (what the block is for, proved recipes with tool calls, pitfalls) - pass detail: true to get it.",
   {
     query: z.string().describe("Search term (block name, connector, or keyword)"),
     library: z.string().optional().describe("Filter by library (e.g., 'Item.lbr')"),
-    maxResults: z.number().optional().describe("Maximum results to return (default 10)")
+    maxResults: z.number().optional().describe("Maximum results to return (default 10)"),
+    detail: z.boolean().optional().describe("Include the full block guide for results that have one")
   },
-  async ({ query, library, maxResults }) => {
+  async ({ query, library, maxResults, detail }) => {
     const startTime = performance.now();
     const { results, totalMatches, truncated } = searchBlocks(query, library, maxResults);
     if (results.length === 0) {
@@ -630,7 +632,8 @@ server.tool(
         }]
       };
     }
-    const response: Record<string, unknown> = { results };
+    const blocks = guideSource.peek().file?.blocks;
+    const response: Record<string, unknown> = { results: attachGuides(results, blocks, detail ?? false) };
     if (truncated) {
       response.totalMatches = totalMatches;
       response.truncated = true;
@@ -1535,7 +1538,8 @@ server.tool(
       "Workstation: maxServers, maxQueueLength, delayType, distribution, arg1-3, value, costPerTime, costPerItem\n" +
       "Equation: equation\n" +
       "Equation(I): equation, showInputNames, showInputValues, showOutputNames, showOutputValues, outputInitValue, includeEnabled, expandRecords\n" +
-      "Queue Equation: equation, releaseRule\n" +
+      "Queue Equation: equation, releaseRule, inputAttribute\n" +
+      "Queue Matching: numQueues, groupType, matchAttribute, releaseOptions\n" +
       "Shift: schedule [{startTime, endTime, capacity}], statusType, shiftName, repeat, repeatTime, repeatUnit, timeUnit, timeFormat\n" +
       "Transport: defaultDistance, defaultSpeed\n" +
       "Convey Item: conveyorLength, defaultSpeed, accumulating\n" +

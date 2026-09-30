@@ -3,6 +3,45 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
+## 1.23.0 — 2026-09-30
+
+Queue blocks for your AI: it can now build a matching queue and an attribute-ranked queue, and
+it can read a guide for the blocks it does not know - what they are for, what has been proved
+to work with the server's tools, and the pitfalls. Guides are also delivered from duke.se
+between releases. Tool count unchanged at 107. Verified live on ExtendSim 2024 and 2026.
+
+**Upgrade first if you use** Queue Equation through `block_configure` (such models never ran),
+or `model_close` in scripts that must know the model is really closed.
+
+### Added
+- `block_configure` for **Queue Matching**: `matchAttribute` (numeric attribute; variable groups),
+  `numQueues`, `releaseOptions`. Items with different key values are never released together
+  (verified on ExtendSim 2024 and 2026).
+- `block_configure` for **Queue Equation**: `inputAttribute` turns the block's input row into an
+  item attribute the equation can use.
+- **Block guides**: `block_search` marks blocks that have a guide (`hasGuide`); `detail: true`
+  returns it - what the block is for, proved recipes written as tool calls, what is not proved,
+  pitfalls. Guides travel with the modelling guides and are updated from duke.se between
+  releases. First guides: Queue Matching, Queue Equation, Query Equation (I).
+
+### Fixed
+- ExtendSim 2026 could stay blocked at start-up once a subscription had passed its renewal
+  date: the grace-period notice ("ExtendSim Subscription Expired") was not recognised as a
+  start-up reminder, so it was not closed and the server could not reach ExtendSim. It is now
+  closed like the other start-up reminders, and its text is never passed on.
+- A Queue Equation configured with `block_configure` never ran: the run stopped with "A name
+  needs to be specified for the output variable in row 0", because a new block's output name
+  is only filled in when its dialog is opened. The name is now filled whenever the block is
+  configured. `releaseRule` now rejects unknown values (they silently became "highestRank")
+  and is read back.
+- `model_close` could report success while the model stayed open. ExtendSim's close command
+  closes the front window, and when one of the model's block dialogs was in front (after an
+  equation was written, for example) the dialog closed instead. The close is now checked
+  against the model's name and repeated, at most three times; the result carries
+  `closeAttempts` when more than one was needed, and `MODEL_CLOSE_FAILED` if the model is
+  still open. With no model open, `model_close` now returns `MODEL_NOT_OPEN` instead of
+  closing whatever window is in front.
+
 ## 1.22.8 — 2026-09-29
 
 A fix release: models built with the pattern library now behave as designed, wiring stays

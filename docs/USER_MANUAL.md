@@ -1,6 +1,6 @@
 # Simulations MCP Server — User Manual
 
-**Version:** 1.22.8
+**Version:** 1.23.0
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 
@@ -74,7 +74,7 @@ ExtendSim registers its COM component during installation. If needed, run Extend
 
 ### Option A: Installer (Recommended)
 
-1. Run `SimulationsMCP-Setup-1.22.8.exe` as administrator (the prebuilt installer matches the current source)
+1. Run `SimulationsMCP-Setup-1.23.0.exe` as administrator (the prebuilt installer matches the current source)
 2. Choose installation directory (default: `C:\Program Files\SimulationsMCP`)
 3. Select whether to install as a Windows Service (only needed for ChatGPT — see Section 4.5)
 4. Complete the installation
@@ -330,7 +330,7 @@ The server provides 107 tools organized into categories. Each tool accepts struc
 | `model_new` | Create a new empty model |
 | `model_open` | Open an existing model file (.mox) |
 | `model_save` | Save the current model (optional: save-as with new path) |
-| `model_close` | Close the current model. Without `saveFirst` the changes are discarded and the result says so (`unsavedChanges`, `warning`); a model that was never saved must be saved with `model_save` and a file path before `saveFirst` works |
+| `model_close` | Close the current model. Without `saveFirst` the changes are discarded and the result says so (`unsavedChanges`, `warning`); a model that was never saved must be saved with `model_save` and a file path before `saveFirst` works. The close is checked: if a dialog of the model was in front it is repeated (`closeAttempts`) |
 | `model_list` | List all open models |
 | `model_info` | Get model metadata (blocks, connections, databases) |
 | `model_validate` | Check model for structural issues (unconnected blocks, missing queues) |
@@ -380,7 +380,7 @@ example a line into a hierarchical block) under `unresolvedConnectionNodes`.
 | `block_set_value` | Set a dialog variable value on a block. The value is read back: a variable the block does not have, or a value the block did not keep, returns `SET_VALUE_FAILED` with what the block holds |
 | `block_get_value` | Get a dialog variable value from a block |
 | `execute_command` | Execute a raw ModL command string (advanced) |
-| `block_configure` | Auto-detecting block configurator — handles Activity, Queue, Create, Exit, Select Item In/Out, Gate, Resource Item, Batch/Unbatch, Equation, Tank, Valve, and more. Single tool replaces 33 individual config tools. |
+| `block_configure` | Auto-detecting block configurator — handles Activity, Queue, Create, Exit, Select Item In/Out, Gate, Resource Item, Batch/Unbatch, Equation, Queue Matching, Queue Equation, Tank, Valve, and more. Single tool replaces 33 individual config tools. |
 | `attribute_set` | Set a value attribute on a Set block (registers a new attribute in the model first; constant values, first row) |
 | `attribute_get` | Point a Get block at a value attribute (registers a new attribute in the model first; first row) |
 | `table_get` | Read a string-table cell (`*_ttbl` dialog tables such as `IVars_ttbl`/`OVars_ttbl`). Use this where `block_get_value` cannot — it is numeric and returns `ERR` on string cells |
@@ -483,7 +483,7 @@ the one that works.
 | Tool | Description |
 |------|-------------|
 | `modl_search` | Search ModL function reference (syntax, arguments, return types) |
-| `block_search` | Search block library (connectors, patterns, descriptions) |
+| `block_search` | Search block library (connectors, patterns, descriptions). Results for a block with a guide carry `hasGuide: true`; `detail: true` returns that guide - what the block is for, proved recipes, what is not proved, pitfalls |
 | `dialog_search` | Search block dialog variables (name, type, dialogId) |
 | `template_list` | List available block templates (26 templates) |
 | `block_template` | Get a pre-configured block template |
@@ -629,6 +629,27 @@ Each mining step can run offline from the previous step's saved JSON (`psgPath`,
 ```json
 { "blockId": 2, "config": { "createType": "interarrival", "interarrivalTime": 5.0 } }
 ```
+
+**Queue Matching** — release a set only when every input has an item with the same key value:
+```json
+{ "blockId": 7, "config": { "matchAttribute": "orderId" } }
+```
+Params: `numQueues` (number of internal queues; each item input is one queue), `groupType`
+(`variable` — only value supported: a group per attribute value), `matchAttribute` (numeric item
+attribute to match on; sets variable groups first), `releaseOptions` (`matchedOnly` | `allInGroup`).
+Items leave on their own queue's output. Only `matchAttribute` is exercised by a proved recipe
+today; `numQueues` and `releaseOptions` are write/read-back only. Full guide: `block_search`
+query `"Queue Matching"` with `detail: true`.
+
+**Queue Equation** — rank waiting items with your own equation:
+```json
+{ "blockId": 8, "config": { "inputAttribute": "dueDate", "equation": "iRank_0 = dueDate;", "releaseRule": "lowestRank" } }
+```
+Params: `equation` (ModL equation using the block's variable names, e.g. `iRank_0 = dueDate;`),
+`releaseRule` (`highestRank` | `lowestRank` | `firstTrue` | `allTrue`), `inputAttribute` (turns the
+block's single input row into this item attribute, name used in the equation). Only one input row
+can be set from COM. The output-name cells are filled automatically. Full guide: `block_search`
+query `"Queue Equation"` with `detail: true`.
 
 ---
 
@@ -841,6 +862,7 @@ recovery hint — treat it as a bonus, not a guarantee.
 |------------|---------|
 | `MODEL_NOT_OPEN` | The operation needs an open model; none is open |
 | `MODEL_OPEN_FAILED` | The model file could not be opened |
+| `MODEL_CLOSE_FAILED` | `model_close` closed a window but the model is still open after three attempts - close the model's open dialogs in ExtendSim and try again |
 | `MODEL_SAVE_FAILED` | The model could not be saved - also returned by `model_close` with `saveFirst` on a model that has never been saved (save it with `model_save` and a file path first) |
 | `MODEL_QUERY_FAILED` | Reading model metadata failed |
 

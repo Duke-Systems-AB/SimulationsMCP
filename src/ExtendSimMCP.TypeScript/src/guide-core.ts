@@ -110,7 +110,16 @@ export function filterBySince(file: GuideFile, serverVersion: string): { file: G
   for (const s of Object.values(out.scenarios)) {
     for (const v of s.variations) if (v.scenario && hidden.has(v.scenario)) v.scenario = null;
   }
-  return { file: out, hiddenCount: hidden.size };
+  let hiddenBlocks = 0;
+  if (out.blocks) {
+    for (const [k, b] of Object.entries(out.blocks)) {
+      if (b.since !== undefined && compareSemver(b.since, serverVersion) > 0) {
+        delete out.blocks[k];
+        hiddenBlocks++;
+      }
+    }
+  }
+  return { file: out, hiddenCount: hidden.size + hiddenBlocks };
 }
 
 export interface GuideView {

@@ -1,6 +1,6 @@
 # Simulations MCP Server — Architecture and Design Document
 
-**Version:** 1.22.8
+**Version:** 1.23.0
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 **Classification:** Technical — for IT security specialists, software architects, and power users
@@ -428,6 +428,7 @@ Model file paths are provided by the AI client (ultimately by the user). The ser
 - **When:** only when `modeling_guide`, `model_advisor` or `MCP_init` is called, at most once per 30 days per user; after a failure, not again for 24 hours. Never at start-up, never in the background.
 - **How:** HTTPS GET, 3 s timeout, no redirects. Nothing identifying is sent beyond what any HTTPS GET carries (no cookies, no query string, no custom headers); an `If-None-Match` ETag is sent for a copy already held.
 - **Validation:** 1 MB cap enforced while downloading; JSON; `schemaVersion` 1; a strict schema that drops unknown fields and caps every string and list. A file that fails is discarded; the server keeps using what it had.
+- **Block guides (1.23.0):** the same file may carry an optional `blocks` section - one guide per block, keyed `<library>/<block>`, validated by its own capped schema. `block_search` reads it from the guides already held (bundled or cached) and never triggers a fetch. A block guide whose `since` is above the server version is hidden, like a scenario. Servers before 1.23.0 drop the section as an unknown field.
 - **Residual risk:** content that is valid but deliberately misleading (for example after a compromise of the web server, DNS or the publishing repo) would reach the AI. Accepted in this version; signing is planned before wide distribution.
 - **Turning it off:** `SIMULATIONSMCP_WEB_LOOKUP=off` in the MCP client configuration or as a system variable, or `policy.json` in the installation folder (default `C:\Program Files\SimulationsMCP`) containing `{ "webLookup": false }`. The policy file needs administrator rights to create, and no user setting can override it. Turning it off stops all fetching and makes the server serve its bundled guides only; a guide file fetched earlier stays in the per-user cache but is not used while the lookup is off.
 

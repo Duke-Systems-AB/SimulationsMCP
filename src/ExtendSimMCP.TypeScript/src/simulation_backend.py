@@ -276,6 +276,7 @@ class ErrorCode:
     MODEL_NOT_OPEN = "MODEL_NOT_OPEN"
     MODEL_OPEN_FAILED = "MODEL_OPEN_FAILED"
     MODEL_SAVE_FAILED = "MODEL_SAVE_FAILED"
+    MODEL_CLOSE_FAILED = "MODEL_CLOSE_FAILED"
 
     # Block errors
     BLOCK_NOT_FOUND = "BLOCK_NOT_FOUND"
@@ -864,11 +865,29 @@ def _model_unsaved_state(app) -> "tuple[bool, Optional[bool]]":
     return True, (None if flag not in (0, 1) else flag == 1)
 
 
+def _active_model_name(app) -> str:
+    """Name of the active model ("" when none is open)."""
+    app.Execute("globalStr0 = GetModelName();")
+    return _read_str0(app)
+
+
+# ExecuteMenuCommand(4) closes the active WINDOW. With one of the model's block dialogs in
+# front, the first close takes the dialog and the model stays open (measured live on 2026,
+# 2026-09-29, after an equation write). So the close is verified by the model name and
+# retried; each attempt closes one more window of the same model.
+_CLOSE_ATTEMPTS = 3
+
+
 def model_close(model_id: Optional[str] = None, save_first: bool = False) -> dict:
     """Closes the model. Without save_first, unsaved changes are discarded - and the result
-    says so (Jonas 2026-09-29: warn, do not refuse)."""
+    says so (Jonas 2026-09-29: warn, do not refuse). The close is verified: if the model is
+    still the active one after _CLOSE_ATTEMPTS closes, MODEL_CLOSE_FAILED."""
     try:
         app = get_extendsim_app()
+        name = _active_model_name(app)
+        if not name:
+            # The active window would be something else (a library) - do not close it.
+            return _error(ErrorCode.MODEL_NOT_OPEN, "no model is open, so there is nothing to close")
         never_saved, dirty = _model_unsaved_state(app)
 
         if save_first:
@@ -881,10 +900,22 @@ def model_close(model_id: Optional[str] = None, save_first: bool = False) -> dic
         else:
             app.Execute("SetDirty(False);")
 
-        # Close active window
-        app.Execute("ExecuteMenuCommand(4)")
+        attempts = 0
+        while True:
+            attempts += 1
+            app.Execute("ExecuteMenuCommand(4)")        # closes the active window
+            if _active_model_name(app) != name:
+                break
+            if attempts == _CLOSE_ATTEMPTS:
+                return _error(ErrorCode.MODEL_CLOSE_FAILED,
+                              f"'{name}' is still open after {attempts} close attempts",
+                              suggestion="close any open dialogs of the model in ExtendSim, then try again")
+            if not save_first:
+                app.Execute("SetDirty(False);")          # still discarding, as on the first close
 
         result = {"success": True, "wasSaved": save_first}
+        if attempts > 1:
+            result["closeAttempts"] = attempts           # a dialog of the model was in front
         if save_first:
             return result
         result["unsavedChanges"] = dirty
@@ -6005,9 +6036,30 @@ def equation_i_set_formula(block_id: int,
                       blockId=block_id, operation="equation_i_set_formula")
 
 
+def queue_matching_set_config(block_id: int, num_queues: Optional[int] = None,
+                              group_type: Optional[str] = None,
+                              match_attribute: Optional[str] = None,
+                              release_options: Optional[str] = None,
+                              model_id: Optional[str] = None) -> dict:
+    """Queue Matching (Item.lbr): delegates to the fail-closed queue_block_config core."""
+    try:
+        import queue_block_config as qbc
+        app = get_extendsim_app()
+        check = _validate_block_type(app, block_id, "Queue Matching")
+        if not check.get("success"):
+            return check
+        config = {k: v for k, v in (("numQueues", num_queues), ("groupType", group_type),
+                                    ("matchAttribute", match_attribute),
+                                    ("releaseOptions", release_options)) if v is not None}
+        return qbc.configure_queue_matching(qbc.Com(sys.modules[__name__], app), block_id, config)
+    except Exception as e:
+        return _com_error(e, "queue_matching_set_config")
+
+
 def queue_equation_set_config(block_id: int,
                                equation: Optional[str] = None,
                                release_rule: Optional[str] = None,
+                               input_attribute: Optional[str] = None,
                                model_id: Optional[str] = None) -> dict:
     """Sets equation and release rule on a Queue Equation block (Item.lbr).
 
@@ -6018,13 +6070,29 @@ def queue_equation_set_config(block_id: int,
         block_id: Queue Equation block ID
         equation: ModL equation using QEQ variables (e.g. "QEQItemRank = DueDate - RemainingTime;")
         release_rule: "highestRank", "lowestRank", "firstTrue", or "allTrue"
+        input_attribute: turn the block's single input row into this attribute (spec 2026-09-30)
+
+    The output-name cells are always filled (CheckData copies names from the dialog tables).
+    The equation compiles at run start; Test is never pressed from here.
     """
     try:
+        import queue_block_config as qbc
         app = get_extendsim_app()
-
         check = _validate_block_type(app, block_id, "Queue Equation")
         if not check.get("success"):
             return check
+        rule_map = {"highestrank": 1, "lowestrank": 2, "firsttrue": 3, "alltrue": 4}
+        rule_code = None
+        if release_rule is not None:
+            rule_code = rule_map.get(str(release_rule).lower())
+            if rule_code is None:
+                return _error(ErrorCode.INVALID_PARAMETER,
+                              f"releaseRule must be one of highestRank, lowestRank, firstTrue, allTrue; "
+                              f"got {release_rule!r}")
+
+        prep = qbc.prepare_queue_equation(qbc.Com(sys.modules[__name__], app), block_id, input_attribute)
+        if not prep.get("success"):
+            return prep
 
         # Real storage is the STAT var EQ_EquationText — Equation_dtxt does not
         # persist (broken dialog handle). Write + fail-closed read-back verify.
@@ -6037,23 +6105,31 @@ def queue_equation_set_config(block_id: int,
             equation_out = write_result["normalized"]
             note = "equation stored; ExtendSim compiles it at the next CheckData/simulation run"
 
-        if release_rule:
-            rule_map = {"highestrank": 1, "lowestrank": 2, "firsttrue": 3, "alltrue": 4}
-            rule_code = rule_map.get(release_rule.lower(), 1)
+        if rule_code is not None:
             _set_var(app, block_id, "ReleaseRule_pop", rule_code)
+            got = _get_var(app, block_id, "ReleaseRule_pop")
+            try:
+                ok = int(parse_float(got)) == rule_code
+            except (TypeError, ValueError):
+                ok = False
+            if not ok:
+                return _error(ErrorCode.SET_VALUE_FAILED,
+                              f"write of ReleaseRule_pop did not take: the block kept {got!r}, not {rule_code}",
+                              blockId=block_id)
 
         result = {
             "success": True,
             "blockId": block_id,
             "equation": equation_out,
-            "releaseRule": release_rule
+            "releaseRule": release_rule,
+            "inputAttribute": prep["inputAttribute"],
+            "outputNamesFilled": prep["outputNamesFilled"],
         }
         if note:
             result["note"] = note
         return result
     except Exception as e:
-        return _error(ErrorCode.SET_VALUE_FAILED, str(e),
-                      blockId=block_id, operation="queue_equation_set_config")
+        return _com_error(e, "queue_equation_set_config")
 
 
 def shift_set_schedule(block_id: int,
@@ -8356,6 +8432,7 @@ BLOCK_TYPE_MAP = {
     "Equation": ["equation_set_formula"],
     "Equation(I)": ["equation_i_set_formula"],
     "Queue Equation": ["queue_equation_set_config"],
+    "Queue Matching": ["queue_matching_set_config"],
     "Shift": ["shift_set_schedule"],
     "Transport": ["transport_set_config"],
     "Convey Item": ["convey_item_set_config"],
@@ -8526,9 +8603,21 @@ BLOCK_PARAMS = {
     },
     "Queue Equation": {
         "params": {
-            "equation": "ModL equation using QEQ variables (e.g. 'QEQItemRank = DueDate - RemainingTime;')",
-            "releaseRule": "highestRank|lowestRank|firstTrue|allTrue"
-        }
+            "equation": "ModL equation using the block's variable names (e.g. 'iRank_0 = dueDate;')",
+            "releaseRule": "highestRank|lowestRank|firstTrue|allTrue",
+            "inputAttribute": "Turn the block's single input row into this item attribute (name used in the equation)"
+        },
+        "note": "Only one input row can be set from COM. The output-name cells are filled automatically. "
+                "Guide: block_search query 'Queue Equation' with detail: true."
+    },
+    "Queue Matching": {
+        "params": {
+            "numQueues": "Number of internal queues (each item input is one queue)",
+            "groupType": "variable (only value supported: a group per attribute value)",
+            "matchAttribute": "Numeric item attribute to match on (sets variable groups first)",
+            "releaseOptions": "matchedOnly|allInGroup"
+        },
+        "note": "Items leave on their own queue's output. Guide: block_search query 'Queue Matching' with detail: true."
     },
     "Shift": {
         "params": {
@@ -11164,7 +11253,13 @@ COMMANDS = {
         p.get("modelId")
     ),
     "queue_equation_set_config": lambda p: queue_equation_set_config(
-        p["blockId"], p.get("equation"), p.get("releaseRule"), p.get("modelId")
+        p["blockId"], equation=p.get("equation"), release_rule=p.get("releaseRule"),
+        input_attribute=p.get("inputAttribute"), model_id=p.get("modelId")
+    ),
+    "queue_matching_set_config": lambda p: queue_matching_set_config(
+        p["blockId"], num_queues=p.get("numQueues"), group_type=p.get("groupType"),
+        match_attribute=p.get("matchAttribute"), release_options=p.get("releaseOptions"),
+        model_id=p.get("modelId")
     ),
     "shift_set_schedule": lambda p: shift_set_schedule(
         p["blockId"], p.get("schedule"),

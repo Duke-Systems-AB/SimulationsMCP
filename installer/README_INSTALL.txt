@@ -1,9 +1,9 @@
 Simulations MCP Server - Installation Guide
 ============================================
 Duke Systems AB
-Version 1.22.8 — 107 tools
+Version 1.23.0 — 107 tools
 Build the installer with installer\build-installer.bat (requires Inno Setup 6 +
-Node + Python) -> output\SimulationsMCP-Setup-1.22.8.exe
+Node + Python) -> output\SimulationsMCP-Setup-1.23.0.exe
 
 PREREQUISITES
 -------------

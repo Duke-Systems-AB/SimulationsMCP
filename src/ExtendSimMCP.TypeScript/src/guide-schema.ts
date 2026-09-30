@@ -17,11 +17,12 @@ export const SCHEMA_VERSION = 1;
  * the fetcher (guide-core/guide-source, later tasks) while streaming, before JSON.parse ever runs.
  */
 export const LIMITS = {
-  string: 2000,        // bundled 1.13.0: longest string 317 characters
+  string: 2000,        // bundled 1.14.0: longest string 401 characters
   list: 50,            // bundled: longest list 9 items
   scenarios: 500,      // bundled: 12
   categories: 100,     // bundled: 6
-  bytes: 1_000_000,    // bundled: ~70 KB
+  bytes: 1_000_000,    // bundled: ~77 KB
+  blockGuides: 200,    // bundled: 3
 } as const;
 
 const str = z.string().max(LIMITS.string);
@@ -52,6 +53,31 @@ export const ScenarioSchema = z.object({
   errorCodes: list(z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/)).optional(),
 });
 
+const esVersion = z.string().regex(/^\d{4}$/);                        // ExtendSim 2024, 2026
+const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const blockKey = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 ._()/-]{0,79}$/);
+
+/** A block guide (spec 2026-09-30 §4.1): what the block is for and what is PROVED about driving
+ *  it with the server's tools. `since`: lowest server version whose tools the guide uses. */
+export const BlockGuideSchema = z.object({
+  library: str,
+  block: str,
+  since: semver.optional(),
+  provedOn: list(esVersion),
+  summary: str,
+  useWhen: list(str),
+  notFor: list(str),
+  howItWorks: str,
+  settings: list(z.object({ name: str, tool: str, meaning: str, proved: z.boolean() })),
+  recipes: list(z.object({ goal: str, steps: list(str), observed: str, provedOn: list(esVersion), date })),
+  notYetProved: list(str),
+  pitfalls: list(str),
+});
+
+export function blockGuideKey(library: string, block: string): string {
+  return `${library}/${block}`;
+}
+
 export const GuideFileSchema = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
   version: semver,
@@ -62,10 +88,15 @@ export const GuideFileSchema = z.object({
   scenarios: z
     .record(key, ScenarioSchema)
     .refine((o) => Object.keys(o).length <= LIMITS.scenarios, "too many scenarios"),
+  blocks: z
+    .record(blockKey, BlockGuideSchema)
+    .refine((o) => Object.keys(o).length <= LIMITS.blockGuides, "too many block guides")
+    .optional(),
 });
 
 export type GuideFile = z.infer<typeof GuideFileSchema>;
 export type Scenario = z.infer<typeof ScenarioSchema>;
+export type BlockGuide = z.infer<typeof BlockGuideSchema>;
 
 /**
  * JSON Schema for the web repo (written to src/guide-schema.json by `npm run schema:emit`).
@@ -89,6 +120,9 @@ export function guideJsonSchema(): unknown {
       }
       if (path.length === 2 && path[0] === "properties" && path[1] === "scenarios") {
         jsonSchema.maxProperties = LIMITS.scenarios;
+      }
+      if (path.length === 2 && path[0] === "properties" && path[1] === "blocks") {
+        jsonSchema.maxProperties = LIMITS.blockGuides;
       }
     },
   });

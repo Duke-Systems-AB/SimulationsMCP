@@ -254,8 +254,9 @@ def _is_startup_reminder(title):
     """ExtendSim's start-up reminders, which block COM until OK is pressed. Measured live
     2026-09-26: 2024 "Maintenance & Support Expired 452 Days Ago" (no "ExtendSim" in it),
     2026 "ExtendSim Subscription Renewal" (while the 2026 main window is "ExtendSim Pro
-    Subscription", so "Subscription" alone is not enough)."""
-    return "Maintenance" in title or "Subscription Renewal" in title
+    Subscription", so "Subscription" alone is not enough). 2026-09-30: after the renewal date
+    2026 starts with "ExtendSim Subscription Expired" (grace-period notice), same OK box."""
+    return "Maintenance" in title or "Subscription Renewal" in title or "Subscription Expired" in title
 
 
 def _find_extendsim_dialog_windows():
