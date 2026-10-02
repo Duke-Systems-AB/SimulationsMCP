@@ -157,6 +157,10 @@ def try_uia_strategy():
     if not _uia_available:
         return []
 
+    known = answer_known_boxes()
+    if known:
+        return known
+
     try:
         uia = _get_uia()
         main_win = _uia_find_main_window(uia)
@@ -205,6 +209,64 @@ def try_uia_strategy():
         return []
 
 
+def _uia_read_and_press(hwnd, answer):
+    """Read a box's texts and buttons through UIA and invoke the button named `answer`.
+    Returns (texts, buttons, pressed), or None when UIA cannot reach the box."""
+    if not _uia_available:
+        return None
+    try:
+        uia = _get_uia()
+        box = uia.ElementFromHandle(hwnd)
+        found = box.FindAll(UIAutomationClient.TreeScope_Descendants, uia.CreateTrueCondition())
+        texts, buttons, target = [], [], None
+        for i in range(found.Length):
+            e = found.GetElement(i)
+            name = e.CurrentName or ""
+            if not name:
+                continue
+            if e.CurrentControlType == 50000:          # button
+                buttons.append(name)
+                if name == answer:
+                    target = e
+            elif e.CurrentControlType == 50020:        # text
+                texts.append(name)
+        if target is None:
+            return texts, buttons, False
+        pat = target.GetCurrentPattern(UIAutomationClient.UIA_InvokePatternId)
+        pat.QueryInterface(UIAutomationClient.IUIAutomationInvokePattern).Invoke()
+        return texts, buttons, True
+    except Exception:
+        return None
+
+
+def answer_known_boxes():
+    """Answer every open KNOWN_BOXES box of ExtendSim with its safe button. Returns the
+    report entries (empty when none is open)."""
+    dialogs, _ = _find_extendsim_dialog_windows()
+    answered = []
+    for d in dialogs:
+        answer = d.get("answer")
+        if not answer:
+            continue
+        read = _uia_read_and_press(d["hwnd"], answer)
+        if read is not None and read[2]:
+            texts, buttons, _ = read
+            method = "UIA"
+        else:
+            texts, buttons = (read[0], read[1]) if read is not None else ([], [])
+            try:
+                win32gui.SetForegroundWindow(d["hwnd"])
+                time.sleep(0.2)
+                _send_escape_key()
+                time.sleep(0.3)
+            except Exception:
+                pass
+            method = "win32gui Escape"
+        answered.append({"title": d["title"], "texts": texts, "buttons": buttons,
+                         "dismissed": True, "answered": answer, "method": method})
+    return answered
+
+
 # ─── Strategy 2: win32gui fallback (for Ghost/hung state) ─────────────────────
 
 # SendInput structures for keyboard simulation
@@ -250,6 +312,28 @@ def _send_enter_key():
                                     ctypes.sizeof(INPUT))
 
 
+VK_ESCAPE = 0x1B
+
+
+def _send_escape_key():
+    """Simulate an Escape key press - a Qt dialog's reject, i.e. its Cancel button."""
+    inputs = (INPUT * 2)()
+    inputs[0].type = INPUT_KEYBOARD
+    inputs[0]._input.ki.wVk = VK_ESCAPE
+    inputs[1].type = INPUT_KEYBOARD
+    inputs[1]._input.ki.wVk = VK_ESCAPE
+    inputs[1]._input.ki.dwFlags = KEYEVENTF_KEYUP
+    ctypes.windll.user32.SendInput(2, ctypes.pointer(inputs[0]), ctypes.sizeof(INPUT))
+
+
+# Boxes whose title does not say "ExtendSim" and whose default button must NOT be pressed,
+# with the one answer that changes nothing. Measured live 2026-10-03 on ExtendSim 2026:
+# opening a library built before 2026.R1 shows "Unsigned Blocks Detected" with "Sign Blocks"
+# (signs and SAVES the library files) and "Cancel" (leaves them unchanged; the blocks still
+# work). Answered through UIA, else with Escape - never Enter.
+KNOWN_BOXES = {"Unsigned Blocks Detected": "Cancel"}
+
+
 def _is_startup_reminder(title):
     """ExtendSim's start-up reminders, which block COM until OK is pressed. Measured live
     2026-09-26: 2024 "Maintenance & Support Expired 452 Days Ago" (no "ExtendSim" in it),
@@ -281,6 +365,9 @@ def _find_extendsim_dialog_windows():
             if _is_startup_reminder(title):
                 unnamed_reminders.append({"hwnd": hwnd, "title": title, "class": cls,
                                           "is_maintenance": True})
+            elif title in KNOWN_BOXES:
+                unnamed_reminders.append({"hwnd": hwnd, "title": title, "class": cls,
+                                          "answer": KNOWN_BOXES[title]})
             return True
 
         # Reminders first - "ExtendSim Maintenance ..." / "ExtendSim Subscription Renewal"
@@ -401,8 +488,14 @@ def try_win32gui_strategy():
                     pass
                 break
 
-    # 2. Handle Qt ExtendSim dialogs (SetForegroundWindow + SendInput Enter)
+    # 2. Boxes with a known safe answer: Cancel, never Enter (see KNOWN_BOXES)
+    if any(d.get("answer") for d in qt_dialogs):
+        dismissed.extend(answer_known_boxes())
+
+    # 3. Handle Qt ExtendSim dialogs (SetForegroundWindow + SendInput Enter)
     for d in qt_dialogs:
+        if d.get("answer"):
+            continue
         if d.get("is_maintenance"):
             # Dismiss maintenance dialog too
             try:

@@ -22,8 +22,11 @@ import {
   combineGuides, draftFromExtract, draftPurpose, prepareForSave, renamedFrom, validateLocalKey, localDate,
   type LocalGuideRename,
 } from "./local-guides-core.js";
-import { defaultLocalGuideDir, loadLocalGuides, saveLocalGuide, deleteLocalGuide, GuideStoreError } from "./local-guides.js";
-import { attachGuides } from "./block-guides.js";
+import {
+  defaultLocalGuideDir, loadLocalGuides, saveLocalGuide, deleteLocalGuide, GuideStoreError,
+  saveLocalBlockGuide, deleteLocalBlockGuide, loadLocalBlockGuides,
+} from "./local-guides.js";
+import { attachGuidesWithLocal, localGuideResults, mergeSearchResults } from "./block-guides.js";
 import { appendFileSync, mkdirSync, existsSync } from "fs";
 
 // Session logging — opt-in via MCP_SESSION_LOG=1 env var OR temp/mcp_session_enable marker file.
@@ -622,8 +625,10 @@ server.tool(
   },
   async ({ query, library, maxResults, detail }) => {
     const startTime = performance.now();
-    const { results, totalMatches, truncated } = searchBlocks(query, library, maxResults);
-    if (results.length === 0) {
+    const { results, totalMatches: officialTotal } = searchBlocks(query, library, maxResults);
+    const localBlocks = loadLocalBlockGuides(localGuideDir);
+    const extraLocal = localGuideResults(query, localBlocks, library);
+    if (results.length === 0 && extraLocal.length === 0) {
       recordToolCall("block_search", startTime, { status: "ok" }, { query });
       return {
         content: [{
@@ -632,16 +637,32 @@ server.tool(
         }]
       };
     }
-    const blocks = guideSource.peek().file?.blocks;
-    const response: Record<string, unknown> = { results: attachGuides(results, blocks, detail ?? false) };
+    const cap = maxResults ?? 10;
+    const { results: combinedResults, totalMatches, truncated } = mergeSearchResults(results, officialTotal, extraLocal, cap);
+    const response: Record<string, unknown> = {
+      results: attachGuidesWithLocal(combinedResults, guideSource.peek().file?.blocks, localBlocks, detail ?? false),
+    };
     if (truncated) {
       response.totalMatches = totalMatches;
       response.truncated = true;
-      response.hint = `Showing ${results.length} of ${totalMatches} matches. Use maxResults to see more.`;
+      response.hint = `Showing ${combinedResults.length} of ${totalMatches} matches. Use maxResults to see more.`;
     }
+    if (localBlocks.errors.length > 0) response.localBlockGuideErrors = localBlocks.errors;
     recordToolCall("block_search", startTime, { status: "ok" }, { query });
     return { content: [{ type: "text" as const, text: JSON.stringify(response, null, 2) }] };
   }
+);
+
+server.tool(
+  "block_profile",
+  "Read a block by asking ExtendSim (ExtendSim must be running): place it in a temporary model of its own, read its dialog items through COM, and look up its installed help. Nothing is changed; the temporary model is closed when done. Without block: the blocks of the standard libraries. With block: its settings, popup options, labels and a summary of its help. Use it for blocks that have no guide in block_search (your own or third-party libraries); then guide_draft with kind 'block' turns it into a guide. library: a library file name such as 'Item.lbr' that ExtendSim can find, or the full path of a library elsewhere (ExtendSim is asked to open it if the block cannot be placed; the response says libraryOpened).",
+  {
+    library: z.string().describe("Library file name (e.g. 'Item.lbr') that ExtendSim can find, or the full path of a library elsewhere (ExtendSim opens it)"),
+    block: z.string().optional().describe("Block name exactly as in the library; omit to list the blocks"),
+    detail: z.boolean().optional().describe("Include every dialog item and the full help text"),
+  },
+  async ({ library, block, detail }) =>
+    safeToolCall("block_profile", () => backend.blockProfile({ library, block, detail }), { library, block, detail })
 );
 
 server.tool(
@@ -874,15 +895,26 @@ server.tool(
   }
 );
 
+const GUIDE_KIND = z.enum(["scenario", "block"]).optional().describe("'block' for a block guide (default 'scenario')");
+
 server.tool(
   "guide_draft",
-  "Draft a modelling guide of the user's own from the open model. Blocks, connections and set parameters come from the model; the fields only a person can write are listed in needsInput - ask the user for them, then call guide_save. Nothing is saved. Drafts the top level of the model, or with hierarchyBlockId the blocks directly inside one hierarchical block (a guide shows a pattern of at most 50 blocks).",
+  "Draft a modelling guide of the user's own from the open model. Blocks, connections and set parameters come from the model; the fields only a person can write are listed in needsInput - ask the user for them, then call guide_save. Nothing is saved. Drafts the top level of the model, or with hierarchyBlockId the blocks directly inside one hierarchical block (a guide shows a pattern of at most 50 blocks). With kind 'block' (library, block): a block guide drafted from block_profile - nothing in it is proved; rewrite it with the user, then guide_save with kind 'block'. kind 'block' needs ExtendSim running (block_profile reads the block through COM).",
   {
     hierarchyBlockId: z.number().int().optional().describe("Draft only the blocks directly inside this hierarchical block (ids from hierarchy_list)"),
     modelId: z.string().optional().describe("Model ID"),
+    kind: GUIDE_KIND,
+    library: z.string().optional().describe("kind 'block' only: library file name (e.g. 'Item.lbr') that ExtendSim can find, or the full path of a library elsewhere (ExtendSim opens it)"),
+    block: z.string().optional().describe("kind 'block' only: block name exactly as in the library"),
   },
-  async ({ hierarchyBlockId, modelId }) => {
+  async ({ hierarchyBlockId, modelId, kind, library, block }) => {
     return safeToolCall("guide_draft", async () => {
+      if (kind === "block") {
+        if (!library || !block) {
+          return { success: false, errorCode: "INVALID_PARAMETER", error: "kind 'block' requires both library and block" };
+        }
+        return backend.blockGuideDraft({ library, block });
+      }
       const extract = await backend.modelExtract({ sections: ["blocks", "connections", "parameters", "hierarchies"], modelId });
       if (!extract || extract.success === false) return extract;
       let ctx: unknown = null;
@@ -893,21 +925,32 @@ server.tool(
       }
       const r = draftFromExtract(extract, draftPurpose(ctx), { hierarchyBlockId });
       return r.ok ? { success: true, ...r.value } : { success: false, errorCode: r.errorCode, error: r.error };
-    }, { hierarchyBlockId, modelId });
+    }, { hierarchyBlockId, modelId, kind, library, block });
   }
 );
 
 server.tool(
   "guide_save",
-  "Save a modelling guide of the user's own - normally a guide_draft completed together with the user - to their personal guide folder, where modeling_guide, model_advisor and MCP_init find it at once. It is checked against the same schema as the official guides and every problem is listed. Set userConfirmedRun only when the user has run the model and confirmed the guide: it marks the guide verified with today's date. To update an own guide, save under the key it was saved as (its savedAs): a guide shown as <key>_local is saved as <key>.",
+  "Save a modelling guide of the user's own - normally a guide_draft completed together with the user - to their personal guide folder, where modeling_guide, model_advisor and MCP_init find it at once. It is checked against the same schema as the official guides and every problem is listed. Set userConfirmedRun only when the user has run the model and confirmed the guide: it marks the guide verified with today's date. To update an own guide, save under the key it was saved as (its savedAs): a guide shown as <key>_local is saved as <key>. With kind 'block': saves a block guide drafted by guide_draft (library/block come from the guide itself, not key).",
   {
-    key: z.string().describe("Guide key and file name: 1-64 characters of a-z, 0-9 and _ (guide_draft suggests one)"),
-    guide: z.record(z.string(), z.unknown()).describe("The complete guide, in the same form as a modeling_guide scenario"),
+    key: z.string().optional().describe("Guide key and file name: 1-64 characters of a-z, 0-9 and _ (guide_draft suggests one); required unless kind is 'block'"),
+    guide: z.record(z.string(), z.unknown()).describe("The complete guide, in the same form as a modeling_guide scenario (or a block guide, with kind 'block')"),
     overwrite: z.boolean().optional().describe("Replace an existing own guide with this key (default false)"),
-    userConfirmedRun: z.boolean().optional().describe("True only if the user ran the model and confirmed the guide (default false)"),
+    userConfirmedRun: z.boolean().optional().describe("True only if the user ran the model and confirmed the guide (default false); ignored with kind 'block'"),
+    kind: GUIDE_KIND,
   },
-  async ({ key, guide, overwrite, userConfirmedRun }) => {
+  async ({ key, guide, overwrite, userConfirmedRun, kind }) => {
     return safeToolCall("guide_save", async () => {
+      if (kind === "block") {
+        try {
+          const saved = saveLocalBlockGuide(localGuideDir, guide, overwrite === true);
+          return { success: true, kind: "block", key: saved.key, path: saved.path, overwritten: saved.overwritten };
+        } catch (e) {
+          if (e instanceof GuideStoreError) return { success: false, errorCode: e.code, error: e.message };
+          throw e;
+        }
+      }
+      if (!key) return { success: false, errorCode: "GUIDE_INVALID_KEY", error: "key is required" };
       const badKey = validateLocalKey(key);
       if (badKey) return { success: false, errorCode: "GUIDE_INVALID_KEY", error: badKey };
       const prepared = prepareForSave(guide, { userConfirmedRun: userConfirmedRun === true, today: localDate() });
@@ -930,25 +973,40 @@ server.tool(
         if (e instanceof GuideStoreError) return { success: false, errorCode: e.code, error: e.message };
         throw e;
       }
-    }, { key, overwrite, userConfirmedRun });
+    }, { key, overwrite, userConfirmedRun, kind });
   }
 );
 
 server.tool(
   "guide_delete",
-  "Delete one of the user's own modelling guides from their personal guide folder. Official guides cannot be deleted. Confirm with the user before calling.",
+  "Delete one of the user's own modelling guides from their personal guide folder. Official guides cannot be deleted. Confirm with the user before calling. With kind 'block': deletes a block guide (library, block required instead of key).",
   {
-    key: z.string().describe("The key the guide was saved under (a guide shown as <key>_local is saved as <key>)"),
+    key: z.string().optional().describe("The key the guide was saved under (a guide shown as <key>_local is saved as <key>); required unless kind is 'block'"),
+    kind: GUIDE_KIND,
+    library: z.string().optional().describe("kind 'block' only: the block guide's library"),
+    block: z.string().optional().describe("kind 'block' only: the block guide's block"),
   },
-  async ({ key }) => {
+  async ({ key, kind, library, block }) => {
     return safeToolCall("guide_delete", async () => {
+      if (kind === "block") {
+        if (!library || !block) {
+          return { success: false, errorCode: "INVALID_PARAMETER", error: "kind 'block' requires both library and block" };
+        }
+        try {
+          return { success: true, kind: "block", library, block, ...deleteLocalBlockGuide(localGuideDir, library, block) };
+        } catch (e) {
+          if (e instanceof GuideStoreError) return { success: false, errorCode: e.code, error: e.message };
+          throw e;
+        }
+      }
+      if (!key) return { success: false, errorCode: "GUIDE_INVALID_KEY", error: "key is required" };
       try {
         return { success: true, key, ...deleteLocalGuide(localGuideDir, key) };
       } catch (e) {
         if (e instanceof GuideStoreError) return { success: false, errorCode: e.code, error: e.message };
         throw e;
       }
-    }, { key });
+    }, { key, kind, library, block });
   }
 );
 
@@ -1452,13 +1510,13 @@ server.tool(
 
 server.tool(
   "block_introspect",
-  "Unified block introspection: live dialog items + internal STAT storage variables (names/types from the .lbr, plus live values for scalars). Read-only.",
+  "Unified block introspection: dialog items via COM. Read-only.",
   {
     modelId: z.string().optional().describe("Model ID"),
     blockId: z.number().optional().describe("Existing block ID in model (use this OR libraryName+blockName)"),
     libraryName: z.string().optional().describe("Library name (e.g. 'Item.lbr') - places temporary block"),
     blockName: z.string().optional().describe("Block type (e.g. 'Activity') - places temporary block"),
-    readScalarValues: z.boolean().optional().default(true).describe("Read live values for scalar STAT variables (default true)")
+    readScalarValues: z.boolean().optional().default(true).describe("No effect: static variables are not readable through ExtendSim's COM interface; kept for compatibility")
   },
   async ({ modelId, blockId, libraryName, blockName, readScalarValues }) => {
     return safeToolCall("block_introspect",

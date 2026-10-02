@@ -3,6 +3,48 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
+## 1.24.0 — 2026-10-02
+
+Blocks your AI has never seen: `block_profile` reads any block - your own, third-party or locked -
+by asking ExtendSim, and `guide_draft` turns the result into a block guide of your own. The server
+no longer reads ExtendSim library files directly. `simulation_run` no longer calls an aborted run
+"completed". 108 tools. Verified live on ExtendSim 2024 and 2026.
+
+### Added
+- **`block_profile`** (new tool, 108 in all): asks ExtendSim about a block (ExtendSim must be
+  running) by placing it in a temporary model of its own and reading its dialog items through
+  COM; nothing on the block or the user's model is changed, and the temporary model is closed
+  when done. Without `block`: the standard libraries' block names (an inventory, not a live
+  read). With `block`: its settings, popup options, labels, and a summary of its help from the
+  installed `.chm` file. Meant for blocks that have no guide - your own libraries and
+  third-party blocks. A library outside ExtendSim's Libraries folder can be given by its full
+  path: when the block cannot be placed, ExtendSim is asked to open the library
+  (`libraryOpened: true`). Some things are not knowable this way - what a setting resets, the order
+  settings must be written in, whether a setting's handler opens a dialog box - and the profile
+  says so rather than guessing.
+- **Your own block guides:** `guide_draft`, `guide_save` and `guide_delete` take `kind: "block"`.
+  A draft comes from `block_profile` with nothing marked as proved; after you and the AI have
+  written it in your words it is saved in your guide folder, and `block_search` shows it
+  (`guideSource: "local"`). An official guide for the same block always wins.
+
+### Changed
+- `block_introspect` no longer lists a block's static variables: ExtendSim does not expose
+  their names through COM, and the server no longer reads library files directly.
+  `stat_variables` is empty with a `stat_warning`.
+
+### Fixed
+- `simulation_run` reported "completed" for a run that ExtendSim had aborted (an error in a
+  block's settings, e.g. an advanced-resource queue with no valid requirement): the error
+  dialog was dismissed and then forgotten. A run stopped at time 0 is now `SIMULATION_RUN_FAILED`;
+  a run that stops before its end time says `status: "stopped early"` with `stoppedAt`, and
+  becomes `SIMULATION_RUN_FAILED` when an error dialog appeared. Any dialog dismissed while a
+  command ran is now reported in `dialogsDuringCommand` instead of being dropped.
+- ExtendSim 2026 asks "Unsigned Blocks Detected" when it opens a library made before 2026.R1
+  (e.g. a third-party library). The box blocked every further command until someone answered
+  it. The server now answers **Cancel**, which leaves the library files unchanged (the blocks
+  still work), and reports the box. It never presses "Sign Blocks", which would rewrite and
+  save the library.
+
 ## 1.23.0 — 2026-09-30
 
 Queue blocks for your AI: it can now build a matching queue and an attribute-ranked queue, and

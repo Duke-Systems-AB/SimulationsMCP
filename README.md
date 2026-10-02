@@ -13,7 +13,7 @@ AI Client (Claude, Gemini, Cursor, ChatGPT)
     │
     │  MCP Protocol (JSON-RPC 2.0)
     ▼
-TypeScript MCP Server (107 tools)
+TypeScript MCP Server (108 tools)
     │
     │  JSON over stdin/stdout
     ▼
@@ -24,7 +24,7 @@ Python COM Backend (pywin32)
 ExtendSim Application
 ```
 
-The server exposes **107 tools** across 18 categories:
+The server exposes **108 tools** across 18 categories:
 
 | Category | Tools |
 |----------|-------|
@@ -39,7 +39,7 @@ The server exposes **107 tools** across 18 categories:
 | Global Arrays | `ga_list`, `ga_create`, `ga_read`, `ga_write` |
 | Hierarchy | `hierarchy_list`, `hierarchy_get_contents` |
 | AI Assistance | `MCP_init`, `modeling_guide`, `pattern_search`, `model_advisor`, `simulation_type_guide`, `guide_draft`, `guide_save`, `guide_delete` |
-| Reference | `modl_search`, `block_search`, `dialog_search`, `template_list`, `block_template` |
+| Reference | `modl_search`, `block_search`, `block_profile`, `dialog_search`, `template_list`, `block_template` |
 | Templates | `text_block_add` |
 | Time/Date | `time_convert` |
 | Context | `context_set`, `context_get`, `context_clear` |
@@ -70,9 +70,9 @@ npm run build
 
 ### Install from Installer
 
-Download `SimulationsMCP-Setup-1.23.0.exe` from the `installer/` directory and run it.
+Download `SimulationsMCP-Setup-1.24.0.exe` from the `installer/` directory and run it.
 
-The prebuilt installer matches the current source: **v1.23.0, 107 tools** (including
+The prebuilt installer matches the current source: **v1.24.0, 108 tools** (including
 `block_introspect`, `table_get`/`table_set`, `detect_attributes`, and the full
 pattern-mining pipeline). See `CHANGELOG.md` for release history.
 
@@ -115,6 +115,7 @@ For other clients (Claude Desktop, Gemini CLI, Cursor, ChatGPT), see the [User M
 - **268 example models** — Search verified patterns via `pattern_search`
 - **12 modeling guides** — Step-by-step guidance for queuing, manufacturing, logistics, resources, flow, and continuous systems
 - **Block guides** — `block_search` with `detail: true` explains a block: what it is for, recipes proved with the server's tools, what is not proved, and pitfalls (first: Queue Matching, Queue Equation, Query Equation (I))
+- **block_profile** — understand any block, including your own libraries, by asking ExtendSim through COM
 - **Model advisor** — Automatic warnings, suggestions, and completions for your model
 - **Auto-dialog-dismisser** — Clicks OK on ExtendSim's own blocking message boxes (never another
   program's), also during long simulations, and passes the message text to the AI; also closes

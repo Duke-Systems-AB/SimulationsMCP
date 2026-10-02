@@ -1,6 +1,6 @@
 # Simulations MCP Server — Architecture and Design Document
 
-**Version:** 1.23.0
+**Version:** 1.24.0
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 **Classification:** Technical — for IT security specialists, software architects, and power users
@@ -26,7 +26,7 @@
 
 ## 1. Executive Summary
 
-The Simulations MCP Server is a Model Context Protocol (MCP) server that bridges AI assistants to the ExtendSim discrete-event simulation platform. It exposes 107 tools across 18 categories, enabling AI-driven model construction, simulation execution, result analysis, and the mining of reusable modelling patterns out of existing models.
+The Simulations MCP Server is a Model Context Protocol (MCP) server that bridges AI assistants to the ExtendSim discrete-event simulation platform. It exposes 108 tools across 18 categories, enabling AI-driven model construction, simulation execution, result analysis, and the mining of reusable modelling patterns out of existing models.
 
 **Key architectural properties:**
 
@@ -58,7 +58,7 @@ The Simulations MCP Server is a Model Context Protocol (MCP) server that bridges
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
 │  │  MCP SDK     │  │  Tool        │  │  Reference Data      │  │
 │  │  Protocol    │  │  Definitions │  │  (JSON files, lazy)  │  │
-│  │  Handler     │  │  (107 tools) │  │                      │  │
+│  │  Handler     │  │  (108 tools) │  │                      │  │
 │  └──────┬───────┘  └──────┬───────┘  └──────────────────────┘  │
 │         │                 │                                     │
 │         │    ┌────────────┴─────────────┐                      │
@@ -131,7 +131,7 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 
 **Responsibilities:**
 - MCP protocol handling via `@modelcontextprotocol/sdk`
-- Tool registration with Zod schema validation (107 tools)
+- Tool registration with Zod schema validation (108 tools)
 - Reference data management (lazy-loaded JSON files)
 - Search engines (ModL functions, blocks, dialog variables)
 - Session logging and telemetry integration
@@ -247,9 +247,9 @@ Capabilities added after v1.19 live in their own modules rather than growing
 **Block-level helpers:** `attribute_config.py` (Set and Get block attributes: registers new ones, writes and reads back the blocks' static arrays),
 `attribute_detect.py` (which attributes an equation block reads/writes),
 `resource_pool_config.py`, `dialog_table.py` (string-table `*_ttbl` cells), and
-`lbr_stat.py` (offline parser for a block's internal STAT storage variables, read
-straight out of the compiled `.lbr` blob — these names are invisible to the COM
-dialog API, which is what `block_introspect` needs them for).
+`block_profile.py` + `block_com_profile.py` + `block_help.py` (what `block_profile` uses:
+`block_profile` asks ExtendSim through COM in a temporary model of its own and reads the
+installed `.chm` help; the product never reads library files).
 
 **Watchdog helper:**
 
@@ -419,6 +419,9 @@ The MCP server reads and writes files in these locations:
 | User-specified paths | Read/Write | Model files (via `model_open`, `model_save`, `db_import`, `db_export`) |
 | `%LOCALAPPDATA%\SimulationsMCP\guides\` | Read/Write | Per-user cache of the fetched guide file and its fetch state (§5.9) |
 | `{app}\policy.json` | Read | Admin policy file that can force the guide check off (§5.9); installation folder, default `C:\Program Files\SimulationsMCP` |
+| `Documents\ExtendSim_<year>_Pro\Help\*.chm` (installed help) | Read-only | `block_profile` decompiles a block's help page (`hh.exe`) and caches the result under `%LOCALAPPDATA%\SimulationsMCP\help-cache\`. No network |
+| `%LOCALAPPDATA%\SimulationsMCP\help-cache\` | Read/Write | Per-user cache of the decompiled help pages `block_profile` reads, one folder per ExtendSim year and help file |
+| `%TEMP%\block_profile_<id>.mox` | Read/Write | Temporary model `block_profile` and `block_guide_draft` place the block in (`<id>` is random per call); closed and deleted when done |
 
 Model file paths are provided by the AI client (ultimately by the user). The server does not restrict which files can be opened — it relies on OS-level file permissions.
 
@@ -441,6 +444,11 @@ Own guides are unrelated to this network check: they are read from
 `%APPDATA%\SimulationsMCP\guides\` on every guide call by `local-guides.ts`, validated by
 the same `ScenarioSchema`, and merged by `combineGuides()` after `filterBySince`, never
 replacing an official key. No network is involved.
+
+Own block guides work the same way, in `%APPDATA%\SimulationsMCP\guides\blocks\`, one file
+per `library`/`block` validated by `BlockGuideSchema`; `guide_save` refuses one that claims
+`provedOn` or `recipes` (only a live run proves a block guide), and `block_search` merges
+them in with the official block guide always winning. No network is involved.
 
 ---
 

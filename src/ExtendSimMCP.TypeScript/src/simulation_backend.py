@@ -12,7 +12,6 @@ import tempfile
 import math
 import win32com.client
 from typing import Any, Optional
-from lbr_stat import read_stat_variables
 from instantiate import instantiate_pattern
 from compose import compose_flow
 from patterns import list_patterns, get_pattern
@@ -277,6 +276,7 @@ class ErrorCode:
     MODEL_OPEN_FAILED = "MODEL_OPEN_FAILED"
     MODEL_SAVE_FAILED = "MODEL_SAVE_FAILED"
     MODEL_CLOSE_FAILED = "MODEL_CLOSE_FAILED"
+    BLOCK_PROFILE_FAILED = "BLOCK_PROFILE_FAILED"
 
     # Block errors
     BLOCK_NOT_FOUND = "BLOCK_NOT_FOUND"
@@ -2498,18 +2498,19 @@ def block_discover_variables(block_id: Optional[int] = None,
         return _com_error(e, "block_discover_variables")
 
 
-def _select_scalar_reads(stat_vars) -> list:
-    """Names of STAT vars whose live value is SAFE to read (scalars only).
-    Reading an array element out-of-range pops a modal that wedges COM."""
-    return [v.name for v in stat_vars if v.is_scalar and v.dim_count == 0]
+_STAT_WARNING = ("static variable names cannot be read through ExtendSim's COM interface; "
+                 "use dialog_items, or block_get_value for a known name")
 
 
 def block_introspect(block_id=None, library_name=None, block_name=None,
                      read_scalar_values: bool = True, model_id=None) -> dict:
-    """Unified read-only introspection: live dialog items + STAT storage variables.
+    """Unified read-only introspection: live dialog items via COM.
 
     Works on an existing block_id, or temp-places library_name+block_name (auto-removed).
-    STAT values are read for SCALARS ONLY (array reads are unsafe - see _select_scalar_reads).
+    ExtendSim's COM interface exposes a block's dialog items, not its internal ModL "static"
+    storage variables (e.g. dsPythonCode, EQ_EquationText): `stat_variables` is always empty,
+    with `stat_warning` saying why. `read_scalar_values` is accepted for backward compatibility
+    but has no effect.
     """
     try:
         app = get_extendsim_app()
@@ -2543,31 +2544,6 @@ def block_introspect(block_id=None, library_name=None, block_name=None,
             app.Execute(f'globalStr0 = GetLibraryPathName({target_block_id}, 2);')
             library_name = _read_str0(app) or ""
             library_path = os.path.join(library_dir, library_name) if library_dir else library_name
-
-            # offline STAT half (graceful degrade)
-            stat_variables = []
-            stat_warning = None
-            try:
-                stat_vars = read_stat_variables(library_path, resolved_block_name)
-                safe_names = set(_select_scalar_reads(stat_vars)) if read_scalar_values else set()
-                for v in stat_vars:
-                    entry = {
-                        "name": v.name, "dataType": v.data_type_label,
-                        "dataTypeCode": v.data_type, "isScalar": v.is_scalar,
-                        "dimCount": v.dim_count, "dimSizes": list(v.dim_sizes),
-                    }
-                    if v.name in safe_names:
-                        try:
-                            app.Execute(
-                                f'globalStr0 = getStaticVariable({target_block_id}, "{v.name}", 0, 0);')
-                            entry["value"] = _read_str0(app)
-                        except Exception:
-                            entry["value"] = None
-                    else:
-                        entry["value_omitted"] = "array" if not v.is_scalar else ("dimensioned" if v.dim_count else "not_requested")
-                    stat_variables.append(entry)
-            except Exception as e:
-                stat_warning = f"STAT introspection unavailable: {e}"
         finally:
             if temp_block:
                 try:
@@ -2580,8 +2556,8 @@ def block_introspect(block_id=None, library_name=None, block_name=None,
             "block": {"blockId": target_block_id, "blockName": resolved_block_name,
                       "library": library_name, "libraryPath": library_path},
             "dialog_items": dialog_items,
-            "stat_variables": stat_variables,
-            "stat_warning": stat_warning,
+            "stat_variables": [],
+            "stat_warning": _STAT_WARNING,
         }
     except Exception as e:
         return _com_error(e, "block_introspect")
@@ -2661,6 +2637,26 @@ def simulation_run(model_id: Optional[str] = None, end_time: Optional[float] = N
             "endTime": actual_end_time,
             "status": "completed"
         }
+        # A run that ends before endTime was stopped - by the model itself (an Exit that stops
+        # the run, for example) or by an ExtendSim error that aborted it (then usually at time 0).
+        # Never call that "completed" (2026-09-30: an aborted run was reported as completed).
+        if actual_end_time > 0 and current_time <= 0:
+            # Stopped before any time passed: the run never started. No model stops itself at
+            # time 0 on purpose - this is an error in the model's settings that ExtendSim reported
+            # in a dialog (measured 2026-09-30: the dialog is not always caught by the server).
+            return _error(ErrorCode.SIMULATION_RUN_FAILED,
+                          f"The run stopped at time 0 of {actual_end_time}: ExtendSim aborted it before it "
+                          "started, which means an error in a block's settings.",
+                          currentTime=current_time, endTime=actual_end_time,
+                          suggestion="Check the blocks for missing or invalid settings (the dialog "
+                                     "ExtendSim showed names the block, see dialogsDuringCommand when "
+                                     "present) and fix them; re-running unchanged fails the same way.")
+        if current_time < actual_end_time - 1e-9 * max(1.0, abs(actual_end_time)):
+            result["status"] = "stopped early"
+            result["stoppedAt"] = current_time
+            result["warning"] = (f"The run stopped at time {current_time}, before its end time "
+                                 f"{actual_end_time}. If the model does not stop itself, an ExtendSim "
+                                 "error aborted it - see dialogsDuringCommand.")
 
         if include_stats:
             stats = simulation_get_results(model_id, block_ids=stats_block_ids)
@@ -11027,6 +11023,12 @@ COMMANDS = {
         query=p.get("query"), block_id=p.get("blockId"),
         model_id=p.get("modelId")
     ),
+    "block_profile": lambda p: __import__("block_profile").block_profile_command(
+        p["library"], p.get("block"), bool(p.get("detail", False))),
+    "block_guide_draft": lambda p: __import__("block_profile").block_guide_draft_command(
+        p["library"], p["block"]),
+    # Both commands above resolve ExtendSim's app and build their own Com lazily
+    # (com=None, app_lookup=None - see block_profile.py's defaults).
     "block_discover": lambda p: block_discover(
         p["libraryName"], p["blockName"], p.get("modelId")
     ),

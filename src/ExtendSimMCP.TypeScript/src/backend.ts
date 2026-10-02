@@ -56,6 +56,10 @@ const COMMAND_TIMEOUTS: Record<string, number> = {
   db_create: 30_000,
   hierarchy_list: 30_000,
   hierarchy_get_contents: 30_000,
+  // 120s - places the block in a temp model and reads it through COM; a large block's
+  // first .chm decompile adds a few seconds on top
+  block_profile: 120_000,
+  block_guide_draft: 120_000,
   // 60s - save/close/reopen cycle
   block_configure: 60_000,
   // 2-10min - long-running operations
@@ -114,6 +118,9 @@ export interface PendingRequest {
   earlyResolved?: boolean;
   // Grace-window timer after a successful dialog dismiss (W2-2).
   graceTimerId?: ReturnType<typeof setTimeout>;
+  // Dialogs dismissed while this request ran, kept so the real response still reports them
+  // (annotateWithDialogs) instead of the dismissal being silently thrown away.
+  dialogsSeen?: DialogInfo[];
   // The watchdog (spec §5.3): a probe check every ~10s while this request runs.
   watchdogTimerId?: ReturnType<typeof setTimeout>;
   // The most recent probe result seen for this request, if any.
@@ -527,11 +534,40 @@ export function processResponse(response: any): void {
     const pending = requestQueue.shift();
     if (pending) {
       isProcessingRequest = false;
-      pending.resolve(response);
+      pending.resolve(annotateWithDialogs(pending.command, response, pending.dialogsSeen ?? []));
       // Process next request if available
       processNextRequest();
     }
   }
+}
+
+// Text ExtendSim shows when an error stopped a run (measured 2026-09-29/30, 2024 and 2026).
+const RUN_ABORT_TEXT = /aborted|missing or bad data/i;
+
+/**
+ * A dialog dismissed while a command ran is never thrown away (2026-09-30). The real response
+ * gets `dialogsDuringCommand`; a `simulation_run` that an ExtendSim error aborted - the dialog
+ * says so, or the run stopped before its end time while a dialog was up - becomes
+ * SIMULATION_RUN_FAILED instead of "completed". Pure: exported for tests.
+ */
+export function annotateWithDialogs(command: string, response: unknown, dialogs: DialogInfo[]): unknown {
+  if (!dialogs.length || response === null || typeof response !== "object") return response;
+  const r = response as Record<string, unknown>;
+  const texts = dialogs.map((d) => d.text ?? "").filter((t) => t);
+  const out = { ...r, dialogsDuringCommand: texts };
+  if (command !== "simulation_run" || r.success === false) return out;
+  const aborted = texts.some((t) => RUN_ABORT_TEXT.test(t));
+  if (!aborted && r.status !== "stopped early") return out;
+  return {
+    success: false,
+    errorCode: "SIMULATION_RUN_FAILED",
+    error: `ExtendSim stopped the run with an error: ${texts.join(" | ")}`,
+    suggestion: "Fix what the dialog names (it usually names the block, e.g. \"[11]Queue\") and run again - " +
+      "re-running unchanged hits the same error.",
+    currentTime: r.currentTime ?? r.stoppedAt,
+    endTime: r.endTime,
+    dialogsDuringCommand: texts,
+  };
 }
 
 /**
@@ -721,6 +757,7 @@ export function handleDialogResult(req: PendingRequest, dialogInfo: DialogInfo, 
 
   if (!requestQueue.includes(req)) return; // already resolved elsewhere
 
+  (req.dialogsSeen ??= []).push(dialogInfo);
   const attempt = req.attempt;
   console.error(
     `Dialog dismissed for '${req.command}' (${source}); waiting up to ${DIALOG_DISMISS_GRACE_MS / 1000}s for the real response before treating this as an error...`,
@@ -1138,6 +1175,14 @@ export async function blockInfo(params: {
   blockId?: number;
 }) {
   return await sendCommand("block_info", params);
+}
+
+export async function blockProfile(params: { library: string; block?: string; detail?: boolean }) {
+  return await sendCommand("block_profile", params);
+}
+
+export async function blockGuideDraft(params: { library: string; block: string }) {
+  return await sendCommand("block_guide_draft", params);
 }
 
 export async function blockDiscover(params: {

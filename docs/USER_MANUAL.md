@@ -1,6 +1,6 @@
 # Simulations MCP Server — User Manual
 
-**Version:** 1.23.0
+**Version:** 1.24.0
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 
@@ -24,7 +24,7 @@
 
 ## 1. Introduction
 
-The Simulations MCP Server is a Model Context Protocol (MCP) server that enables AI assistants to build, configure, run, and analyze ExtendSim simulation models programmatically. It bridges AI clients (Claude Code, Claude Desktop, Gemini CLI, Cursor, ChatGPT) to ExtendSim's full modeling environment through 107 specialized tools.
+The Simulations MCP Server is a Model Context Protocol (MCP) server that enables AI assistants to build, configure, run, and analyze ExtendSim simulation models programmatically. It bridges AI clients (Claude Code, Claude Desktop, Gemini CLI, Cursor, ChatGPT) to ExtendSim's full modeling environment through 108 specialized tools.
 
 ### What is MCP?
 
@@ -74,7 +74,7 @@ ExtendSim registers its COM component during installation. If needed, run Extend
 
 ### Option A: Installer (Recommended)
 
-1. Run `SimulationsMCP-Setup-1.23.0.exe` as administrator (the prebuilt installer matches the current source)
+1. Run `SimulationsMCP-Setup-1.24.0.exe` as administrator (the prebuilt installer matches the current source)
 2. Choose installation directory (default: `C:\Program Files\SimulationsMCP`)
 3. Select whether to install as a Windows Service (only needed for ChatGPT — see Section 4.5)
 4. Complete the installation
@@ -262,6 +262,45 @@ whose key is already used by an official guide is shown as `<key>_local` and rep
 `savedAs`, the key it is saved under: to update a renamed guide, save it with that key
 and `overwrite: true`.
 
+### 4.9 Your own block guides
+
+`block_profile` asks ExtendSim about a block: **ExtendSim must be running**. It places the
+block in a temporary model of its own, reads its dialog items through COM, and closes the
+temporary model when done — nothing on the block or your open model is changed. `library` is
+a file name (e.g. `Item.lbr`) that ExtendSim can find, or the full path of a library outside
+ExtendSim's own Libraries folder (e.g. `C:\Models\Libraries\Mine.lbr`). Given a path,
+`block_profile` first tries to place the block; if ExtendSim does not have the library open, it
+asks ExtendSim to open it and tries again, and the response says `libraryOpened: true`. The
+library stays open in ExtendSim afterwards, as if you had opened it yourself. Without `block`: an inventory of the standard libraries' block names (not a
+live read — only the libraries ExtendSim ships with). With `block`: its settings, popup
+options, labels, and a summary of its help, taken from ExtendSim's own installed `.chm` help
+file for that block (none for a block with no help file, e.g. most third-party blocks).
+
+Some things cannot be known this way, because they live in the block's own compiled code, not
+its dialog items: what a setting resets, the order settings must be written in, and whether a
+setting's handler opens a dialog box. The profile lists these under `unknownWithoutCode`
+rather than guessing. Write settings one at a time and read each back (`block_set_value`
+reports what it wrote) — a dialog box may appear that `block_profile` could not predict.
+
+**Making one.** `guide_draft` with `kind: "block"` (`library`, `block`) drafts a block guide
+from `block_profile` — nothing in it is marked as proved, because nothing has been run.
+Rewrite `useWhen`, `notFor`, and each setting's `meaning` in your own words with the AI, then
+`guide_save` with `kind: "block"` saves it.
+
+**Where they live.** `%APPDATA%\SimulationsMCP\guides\blocks\`, one file per block, named
+`<library>__<block>.json` (library and block slugged to lower case). `guide_delete` with
+`kind: "block"` (`library`, `block`) removes one.
+
+**Cannot claim proof.** A local block guide's `provedOn` and `recipes` must be empty — only a
+live run proves a block guide, and `guide_save` rejects a guide that claims otherwise.
+
+**Search.** `block_search` merges your block guides in: a block with only a local guide gets
+`guideSource: "local"` and is listed first among matches; a block with both a local guide and
+an official one always shows the official guide, with `localGuideIgnored: true` so the
+shadowed one isn't silently lost. A block guide file that fails to load (bad JSON, fails the
+schema, claims proof, or whose `library`/`block` don't match its file name) is reported in
+`localBlockGuideErrors`, never shown as a guide.
+
 ---
 
 ## 5. Getting Started
@@ -321,7 +360,7 @@ These rules prevent common errors that can crash ExtendSim or produce invalid mo
 
 ## 6. Tool Reference
 
-The server provides 107 tools organized into categories. Each tool accepts structured parameters (validated with JSON Schema) and returns structured JSON responses.
+The server provides 108 tools organized into categories. Each tool accepts structured parameters (validated with JSON Schema) and returns structured JSON responses.
 
 ### 6.1 Model Management
 
@@ -361,7 +400,7 @@ example a line into a hierarchical block) under `unresolvedConnectionNodes`.
 | `block_info` | Get detailed information about a specific block |
 | `block_discover` | Discover a block's connectors, variables, and capabilities |
 | `block_discover_variables` | List all dialog variables for a block |
-| `block_introspect` | Unified introspection: live dialog items **plus** the block's internal STAT storage variables (names and types read from the `.lbr`, with live values for scalars). Read-only. Surfaces variables such as `EQ_EquationText` that the dialog API cannot see |
+| `block_introspect` | Unified introspection: dialog items via COM. Read-only. `stat_variables` is always empty with a `stat_warning` — ExtendSim does not expose a block's internal static storage variables (e.g. `EQ_EquationText`) through COM |
 
 ### 6.3 Block Layout
 
@@ -391,7 +430,7 @@ example a line into a hierarchical block) under `unresolvedConnectionNodes`.
 
 | Tool | Description |
 |------|-------------|
-| `simulation_run` | Run the simulation (fire-and-forget by default) |
+| `simulation_run` | Run the simulation (fire-and-forget by default). A blocking run reports `status: "completed"` only when it reached its end time; a run that stopped earlier says `"stopped early"` with `stoppedAt`, and one that ExtendSim aborted before time passed (or with an error dialog) is `SIMULATION_RUN_FAILED`. Dialogs dismissed during any command are listed in `dialogsDuringCommand` |
 | `simulation_stop` | Stop a running simulation |
 | `simulation_pause` | Pause a running simulation |
 | `simulation_resume` | Resume a paused simulation |
@@ -474,9 +513,9 @@ the one that works.
 | `pattern_search` | Search 268 verified example models by keyword or domain |
 | `model_advisor` | Analyze current model: returns warnings, suggestions, and completions |
 | `simulation_type_guide` | Choose the right simulation type for your system |
-| `guide_draft` | Draft a guide of your own from the open model (nothing is saved) |
-| `guide_save` | Check and save a guide of your own to your personal guide folder |
-| `guide_delete` | Delete one of your own guides |
+| `guide_draft` | Draft a guide of your own from the open model (nothing is saved); with `kind: "block"` (`library`, `block`) drafts a block guide from `block_profile` instead |
+| `guide_save` | Check and save a guide of your own to your personal guide folder; with `kind: "block"` saves a block guide drafted by `guide_draft` |
+| `guide_delete` | Delete one of your own guides; with `kind: "block"` (`library`, `block`) deletes a block guide instead |
 
 ### 6.12 Reference Tools
 
@@ -484,6 +523,7 @@ the one that works.
 |------|-------------|
 | `modl_search` | Search ModL function reference (syntax, arguments, return types) |
 | `block_search` | Search block library (connectors, patterns, descriptions). Results for a block with a guide carry `hasGuide: true`; `detail: true` returns that guide - what the block is for, proved recipes, what is not proved, pitfalls |
+| `block_profile` | Ask ExtendSim about a block through COM (ExtendSim must be running), read-only. Params: `library` (file name ExtendSim can find, e.g. `Item.lbr`), `block` (optional - omit to list the standard libraries' block names), `detail` (optional). With `block`: its settings and popup options, labels, and a summary of its help from the installed `.chm` file |
 | `dialog_search` | Search block dialog variables (name, type, dialogId) |
 | `template_list` | List available block templates (26 templates) |
 | `block_template` | Get a pre-configured block template |
@@ -876,6 +916,7 @@ recovery hint — treat it as a bonus, not a guarantee.
 | `NOT_AN_HBLOCK` | The target is not a hierarchy block |
 | `BLOCK_ADD_FAILED` / `BLOCK_REMOVE_FAILED` | Placing or deleting the block failed |
 | `BLOCK_QUERY_FAILED` | Reading the block's properties failed |
+| `BLOCK_PROFILE_FAILED` | `block_profile` placed the block but reading its dialog items through COM failed |
 | `CONNECTION_FAILED` | Failed to establish or use a block connection. This also covers a connector that does not exist on the block — the error message names the connector, but the code does not distinguish the two cases |
 
 **Values, tables and databases**
@@ -892,7 +933,7 @@ recovery hint — treat it as a bonus, not a guarantee.
 
 | Error Code | Meaning |
 |------------|---------|
-| `SIMULATION_RUN_FAILED` | The run could not be started or completed |
+| `SIMULATION_RUN_FAILED` | The run could not be started or completed - also when ExtendSim aborted it (it stopped at time 0, or an error dialog appeared during the run; the dialog text is in `dialogsDuringCommand`) |
 | `SIMULATION_TIMEOUT` | The run exceeded its timeout |
 | `MULTI_RUN_FAILED` | A multi-run or scenario sweep failed |
 | `OPTIMIZER_FAILED` / `OPTIMIZER_TIMEOUT` | The Optimizer failed or exceeded its timeout |
@@ -938,7 +979,7 @@ Timeouts are compiled into `backend.ts` and cannot be changed without rebuilding
 | 10 s (default) | Everything not listed below |
 | 30 s | `model_open`, `model_save`, `model_close`, `model_new`, `model_validate`, `detect_license`, `block_template`, `block_add_batch`, `block_discover`, `block_discover_variables`, `block_introspect`, `simulation_get_block_stats`, `db_get_records`, `db_import`, `db_export`, `db_create`, `hierarchy_list`, `hierarchy_get_contents`, `scenario_manager_status`, `scenario_manager_get_results` |
 | 60 s | `block_configure` (save/close/reopen cycle), `simulation_get_results` |
-| 2 min | `extendsim_start`, `block_list`, `model_extract` |
+| 2 min | `extendsim_start`, `block_list`, `model_extract`, `block_profile`, `block_guide_draft` |
 | 5 min | `simulation_run` (blocking mode only) |
 | 10 min | `simulation_run_multi`, `simulation_run_scenarios`, `scenario_manager_run`, `optimizer_run` — the last two only with `waitForCompletion=true` |
 
