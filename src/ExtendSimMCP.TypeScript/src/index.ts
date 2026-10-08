@@ -550,11 +550,11 @@ server.tool(
         dialog_search: "Search dialog variables (name, type, dialogId)"
       },
       fire_and_forget: {
-        description: "Long-running operations (simulation, scenario manager, optimizer) default to non-blocking mode. They start and return immediately.",
+        description: "simulation_run defaults to non-blocking mode: it starts the run and returns immediately. scenario_manager_run and optimizer_run are different: ExtendSim finishes the whole run before they return, so use waitForCompletion=true with them to have the outcome checked.",
         simulation_run: "Set waitForCompletion=false (or omit) to start in background. Poll with simulation_status, collect results with simulation_get_results.",
-        scenario_manager_run: "Returns immediately by default. Auto-selects all scenarios. Poll with scenario_manager_status, collect with scenario_manager_get_results.",
-        optimizer_run: "Returns immediately by default. Poll with simulation_status, collect with optimizer_get_results.",
-        blocking_mode: "Set waitForCompletion=true on any of these to wait for completion (legacy behavior)."
+        scenario_manager_run: "ExtendSim runs all scenarios before the call returns. Use waitForCompletion=true to have the outcome checked (every selected scenario needs every response; previous results of the selected scenarios are cleared first). Selects all scenarios only when none are selected. Collect with scenario_manager_get_results.",
+        optimizer_run: "ExtendSim runs the whole optimization before the call returns. Use waitForCompletion=true to have the outcome checked (at least one generation). Collect with optimizer_get_results.",
+        blocking_mode: "Set waitForCompletion=true to wait for simulation_run, and to have scenario_manager_run / optimizer_run check their outcome."
       },
       guides: null as unknown,
       license: null as unknown
@@ -663,6 +663,89 @@ server.tool(
   },
   async ({ library, block, detail }) =>
     safeToolCall("block_profile", () => backend.blockProfile({ library, block, detail }), { library, block, detail })
+);
+
+const armWhere = z.object({
+  property: z.string().describe("Resource property to filter on: Pool, Shift, or a custom property from classes"),
+  op: z.enum(["=", ">", ">=", "<", "<=", "!=", "In", "BitAND"]),
+  value: z.union([z.string(), z.number()]),
+});
+
+server.tool(
+  "resources_configure",
+  "Set up Advanced Resource Management (the Resource Manager block) in the open model in one call: resource classes (pool, how many, custom properties such as Skill, a shift by its Shift block's name), resource requirements (a quantity plus filters, or anyOf = OR of other requirements), the Queue blocks that wait for a requirement and the Resource Pool Release blocks that give resources back. The server writes ExtendSim's Resource Classes and Resource Requirement Expressions tables (replacing what is there), generates the resources and requirements, sets the queues and releases, and verifies everything it generated - success only when every filter, queue and release reads back. Place the Resource Manager yourself or let the server place one; Shift blocks named in classes must exist (block_configure Shift). Remember Activity maxItems: with the default of 1 only one resource is ever used at a time. Guide: block_search 'Resource Manager' detail: true.",
+  {
+    resourceManagerBlockId: z.number().optional().describe("The model's Resource Manager; omit to use the only one or place a new one"),
+    classes: z.array(z.object({
+      name: z.string(), pool: z.string(), count: z.number().int().positive().describe("Number of resources in this class (a whole number, 1 or more)"),
+      maxQuantity: z.number().optional(), minAllocation: z.number().optional(),
+      shift: z.string().optional().describe("ShiftName of a Shift block in the model"),
+      properties: z.record(z.string(), z.union([z.string(), z.number()])).optional().describe("Custom properties, e.g. {\"Skill\": 3}"),
+    })),
+    requirements: z.array(z.object({
+      name: z.string(),
+      quantity: z.number().optional().describe("Resources needed; give quantity or anyOf"),
+      where: z.array(armWhere).optional().describe("Filters, all must hold (AND)"),
+      anyOf: z.array(z.string()).optional().describe("Names of other requirements in this call: any one will do (OR). Not combined with where - put filters on the member requirements"),
+    })),
+    queues: z.array(z.object({ blockId: z.number(), requirement: z.string() })).optional(),
+    releases: z.array(z.number()).optional().describe("Resource Pool Release block ids"),
+  },
+  async (params) => safeToolCall("resources_configure", () => backend.resourcesConfigure(params), params)
+);
+
+const analysisRef = {
+  blockId: z.number().describe("Block whose dialog variable is meant"),
+  variable: z.string().describe("Dialog variable name, e.g. D_prm (Activity delay), TotalExited_prm (Exit count); see dialog_search"),
+  name: z.string().describe("Name shown in the analysis block"),
+  row: z.number().int().min(0).optional(),
+  column: z.number().int().min(0).optional(),
+};
+
+server.tool(
+  "scenario_manager_configure",
+  "Set up a Scenario Manager (Analysis library) in one call: factors (inputs to vary), responses (results to record) and the scenarios - 'fullFactorial' from each factor's min/max/step, or a list of named scenarios with a value per factor. The server adds them the way ExtendSim's Shift-click does, answers ExtendSim's name prompts, and reads every row back. Then run with scenario_manager_run waitForCompletion=true. Limits per call: at most 20 factors and responses together, at most 50 named scenarios, a full factorial up to 1000 scenarios. Works on a Scenario Manager without factors or responses (one is placed if the model has none). Guide: block_search 'Scenario Manager' detail: true.",
+  {
+    factors: z.array(z.object({ ...analysisRef, min: z.number().optional(), max: z.number().optional(), step: z.number().optional() })),
+    responses: z.array(z.object(analysisRef)),
+    scenarios: z.union([z.literal("fullFactorial"), z.array(z.object({ name: z.string(), values: z.record(z.string(), z.number()) }))]),
+    runsPerScenario: z.number().int().positive().optional(),
+    endTime: z.number().positive().optional(),
+    scenarioManagerBlockId: z.number().optional(),
+  },
+  async (params) => safeToolCall("scenario_manager_configure", () => backend.scenarioManagerConfigure(params), params)
+);
+
+server.tool(
+  "optimizer_configure",
+  "Set up an Optimizer (Analysis library) in one call: variables it may change (with min/max), outputs used in the objective, and the objective, e.g. 'MaxProfit = Exited*10 - Cap*200' or 'MinCost = ...' using only those names. The server adds them the way ExtendSim's Shift-click does, answers ExtendSim's name prompts, applies the Quicker/Better defaults and reads everything back. Then run with optimizer_run waitForCompletion=true. Limit per call: at most 20 variables and outputs together. Works on an Optimizer without variables (one is placed if the model has none). Guide: block_search 'Optimizer' detail: true.",
+  {
+    variables: z.array(z.object({ ...analysisRef, min: z.number(), max: z.number() })),
+    outputs: z.array(z.object(analysisRef)),
+    objective: z.string(),
+    randomModel: z.boolean().optional().describe("Model uses random numbers (default true)"),
+    quality: z.enum(["quick", "better"]).optional(),
+    maxCases: z.number().int().positive().optional(),
+    optimizerBlockId: z.number().optional(),
+  },
+  async (params) => safeToolCall("optimizer_configure", () => backend.optimizerConfigure(params), params)
+);
+
+server.tool(
+  "analysis_manager_configure",
+  "Set up an Analysis Manager (Analysis library): responses whose value is recorded for every replication. Run the model with simulation_run and numberOfRuns = the replications you want, then read them with analysis_manager_get_results. At most 20 responses per call. Works on an Analysis Manager without responses (one is placed if the model has none); a model whose Analysis database already holds responses is refused.",
+  {
+    responses: z.array(z.object({ blockId: analysisRef.blockId, variable: analysisRef.variable, name: analysisRef.name })),
+    analysisManagerBlockId: z.number().optional(),
+  },
+  async (params) => safeToolCall("analysis_manager_configure", () => backend.analysisManagerConfigure(params), params)
+);
+
+server.tool(
+  "analysis_manager_get_results",
+  "Read the Analysis Manager's results: each replication of an experiment (default the latest) with its response values and whether ExtendSim aborted it.",
+  { experiment: z.number().int().positive().optional() },
+  async (params) => safeToolCall("analysis_manager_get_results", () => backend.analysisManagerGetResults(params), params)
 );
 
 server.tool(
@@ -1598,7 +1681,7 @@ server.tool(
       "Equation(I): equation, showInputNames, showInputValues, showOutputNames, showOutputValues, outputInitValue, includeEnabled, expandRecords\n" +
       "Queue Equation: equation, releaseRule, inputAttribute\n" +
       "Queue Matching: numQueues, groupType, matchAttribute, releaseOptions\n" +
-      "Shift: schedule [{startTime, endTime, capacity}], statusType, shiftName, repeat, repeatTime, repeatUnit, timeUnit, timeFormat\n" +
+      "Shift: schedule [{startTime, endTime, capacity}] (periods; the server writes the block's change rows and reads them back; capacity 0/1 for an on/off shift, any number with statusType 2 = numbers shift), statusType, shiftName, repeat, repeatTime, repeatUnit, timeUnit, timeFormat\n" +
       "Transport: defaultDistance, defaultSpeed\n" +
       "Convey Item: conveyorLength, defaultSpeed, accumulating\n" +
       "Shutdown: tbfDistribution, tbfArg1, tbfArg2, ttrDistribution, ttrArg1, ttrArg2\n" +
@@ -2139,7 +2222,7 @@ server.tool(
 
 server.tool(
   "optimizer_run",
-  "Run the ExtendSim optimizer. Returns immediately by default (fire-and-forget) — poll simulation_status and use optimizer_get_results. Set waitForCompletion=true to block until done.",
+  "Run the ExtendSim optimizer. ExtendSim runs the whole optimization before this call returns. With waitForCompletion=true the outcome is checked: success only when at least one generation completed (best value, generations, convergence); an optimization ExtendSim stopped is OPTIMIZER_FAILED, with ExtendSim's own messages in dialogs. Without it the call answers status 'started' and optimizer_get_results reads the outcome.",
   {
     modelId: z.string().optional().describe("Model ID"),
     timeout: z.number().optional().describe("Max seconds to wait when waitForCompletion=true (default 600)"),
@@ -2164,7 +2247,7 @@ server.tool(
 
 server.tool(
   "scenario_manager_run",
-  "Run the Scenario Manager. Returns immediately by default (fire-and-forget) — poll scenario_manager_status and use scenario_manager_get_results. Validates config and auto-selects all scenarios if none are selected. Set waitForCompletion=true to block until done.",
+  "Run the Scenario Manager. ExtendSim runs all scenarios before this call returns. With waitForCompletion=true the previous results of the selected scenarios are cleared first, so only results from this run count, and the outcome is checked (this needs at least one block response): success only when every selected scenario has every response; otherwise OPTIMIZER_FAILED lists the scenarios without results, with ExtendSim's own messages in dialogs. Validates config and selects all scenarios only when none are selected; a selection you made is kept.",
   {
     modelId: z.string().optional().describe("Model ID"),
     timeout: z.number().optional().describe("Max seconds to wait when waitForCompletion=true (default 600)"),

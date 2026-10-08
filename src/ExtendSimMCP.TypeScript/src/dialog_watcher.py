@@ -33,6 +33,18 @@ import win32gui
 import win32con
 import win32process
 
+import dialog_report
+
+
+def _progress(payload):
+    """One progress line on stderr, at once (see dialog_report): if the caller kills this pass
+    before it prints its JSON, these still say which boxes ExtendSim showed and what they said."""
+    try:
+        sys.stderr.write(dialog_report.progress_line(payload) + "\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
 # ─── Strategy 1: UI Automation (for responsive ExtendSim) ─────────────────────
 
 _uia_available = False
@@ -149,64 +161,168 @@ def _uia_dismiss_box(box):
     return False
 
 
+# Rounds of "answer/dismiss, wait, look again" in one pass. ExtendSim chains boxes - e.g. the
+# unused-pools prompt, then two confirmation boxes (measured live 2026-10-05) - and once a box has
+# been dismissed the TypeScript layer only waits for the command's answer; it does not look for
+# further boxes. So one pass keeps going while each round still finds something.
+CHAINED_ROUNDS = 5
+
+
+def _uia_round(uia, main_win):
+    """Dismiss every QMessageBox open right now. Returns the report entries."""
+    dismissed = []
+    for b in _uia_find_message_boxes(uia, main_win):
+        # Start-up reminders are clicked but never reported: the 2026 renewal box carries
+        # the activation key in its text, which must not reach the AI.
+        if _is_startup_reminder(b["title"] or ""):
+            _uia_dismiss_box(b)
+            continue
+        _progress({"dialog": {"title": b["title"], "texts": b["texts"],
+                              "buttons": [btn["name"] for btn in b["buttons"]]}})
+        ok = _uia_dismiss_box(b)
+        dismissed.append({
+            "title": b["title"],
+            "texts": b["texts"],
+            "buttons": [btn["name"] for btn in b["buttons"]],
+            "dismissed": ok,
+            "method": "UIA"
+        })
+    return dismissed
+
+
+def _plain_box_buttons(hwnd):
+    """(texts, buttons) for a plain box, read-only - QLabel text and the box's own QPushButton
+    names. Deliberately narrower than _uia_read_and_press's scan: a QMessageBox exposes the
+    title bar's own system Close button as another ControlType=Button element alongside its real
+    QDialogButtonBox buttons (measured live 2026-10-08 on the Optimizer's "Optimization converged"
+    box: buttons by _uia_read_and_press's scan were ["Stäng", "OK"], "Stäng" being that system
+    button, class ""); counting it as a real button would stop "exactly one OK button" ever
+    matching and this would never run. Only class "QPushButton" counts here."""
+    if not _uia_available:
+        return None
+    try:
+        uia = _get_uia()
+        box = uia.ElementFromHandle(hwnd)
+        found = box.FindAll(UIAutomationClient.TreeScope_Descendants, uia.CreateTrueCondition())
+        texts, buttons = [], []
+        for i in range(found.Length):
+            e = found.GetElement(i)
+            try:
+                name = e.CurrentName or ""
+                if not name:
+                    continue
+                if e.CurrentControlType == 50000 and e.CurrentClassName == "QPushButton":
+                    buttons.append(name)
+                elif e.CurrentControlType == 50020:
+                    texts.append(name)
+            except Exception:
+                pass
+        return texts, buttons
+    except Exception:
+        return None
+
+
+def _dismiss_plain_boxes():
+    """Plain QMessageBox-style boxes - win32-titled exactly "ExtendSim", no known answer or
+    prompt (KNOWN_BOXES/KNOWN_PROMPTS) and not a startup reminder - dismissed directly by hwnd via
+    UIA, the same method _uia_read_and_press already uses for KNOWN_PROMPTS. Only boxes belonging
+    to the SAME process as the main window are touched - with no main window found at all, or
+    with its pid unreadable (so no process can be confirmed either way), nothing is touched - and
+    only when the box's own buttons are exactly ["OK"]; any other shape
+    (OK/Cancel, Yes/No, no OK at all) is reported, never pressed - this function only knows one
+    safe answer, and pressing the wrong button on an unexpected box could be destructive.
+
+    _uia_round (below) can only find a box that is a UIA *descendant* of the element
+    _uia_find_main_window returns, and that lookup matches the main window by its UIA
+    CurrentName containing "[" or "Pro". Bug found live 2026-10-08: an Optimizer run's own
+    "Optimization converged to X%." box (exactly this box shape) was never dismissed - over an
+    hour, needing a person - because the running main window's UIA CurrentName was plain
+    "ExtendSim" (no "[" or "Pro", unlike its win32 window TEXT), so _uia_find_main_window
+    returned None and _uia_round was never even reached. _find_extendsim_dialog_windows already
+    finds this box correctly (by win32 title/class, independent of the main window's UIA name);
+    this dismisses it straight from that hwnd, not through the main-window search.
+    """
+    dialogs, main_hwnd = _find_extendsim_dialog_windows()
+    if main_hwnd is None:
+        return []
+    main_pid = _window_pid(main_hwnd)
+    if main_pid is None:
+        return []  # the main window's own pid couldn't be read - no process can be confirmed
+    out = []
+    for d in dialogs:
+        if d.get("answer") or d.get("prompts") or d.get("is_maintenance"):
+            continue
+        if _window_pid(d["hwnd"]) != main_pid:
+            continue
+        read = _plain_box_buttons(d["hwnd"])
+        if read is None:
+            continue
+        texts, buttons = read
+        # Written before pressing: the press is what can run long (a UIA Invoke on such a box
+        # took ~2 s to return, measured live 2026-10-08), and a pass killed then loses its JSON.
+        _progress({"dialog": {"title": d["title"], "texts": texts, "buttons": buttons}})
+        if buttons != ["OK"]:
+            out.append({"title": d["title"], "texts": texts, "buttons": buttons,
+                        "dismissed": False, "method": "UIA"})
+            continue
+        pressed = _uia_read_and_press(d["hwnd"], "OK")
+        out.append({"title": d["title"], "texts": texts, "buttons": buttons,
+                    "dismissed": bool(pressed and pressed[2]), "method": "UIA"})
+    return out
+
+
 def try_uia_strategy():
     """
     Strategy 1: Use UI Automation to find and dismiss dialogs.
     Returns list of dismissed dialogs, or empty list if UIA can't find anything.
+
+    Known boxes (KNOWN_BOXES / KNOWN_PROMPTS) are answered first, then plain "ExtendSim"
+    QMessageBox-style boxes get OK directly by hwnd (_dismiss_plain_boxes - only in ExtendSim's
+    own process, only when its buttons are exactly ["OK"]), then any remaining message boxes
+    found as descendants of the main window get OK; chained boxes are followed for up to
+    CHAINED_ROUNDS rounds. A box that could not be answered ends the pass at once - it needs a
+    person, and nothing behind it can appear. With no main window found at all, the
+    descendant-search step is skipped (nothing to search from) but known/plain boxes are still
+    followed for the same CHAINED_ROUNDS - this is how the live bug's box was actually dismissed.
     """
     if not _uia_available:
         return []
 
-    known = answer_known_boxes()
-    if known:
-        return known
-
+    dismissed = []
+    uia = main_win = None
+    main_window_missing = False   # _uia_round needs main_win; without it, skip just that step
+    final = False      # set after a round of ordinary boxes: one more look, then report
     try:
-        uia = _get_uia()
-        main_win = _uia_find_main_window(uia)
-        if not main_win:
-            return []
-
-        boxes = _uia_find_message_boxes(uia, main_win)
-        if not boxes:
-            return []
-
-        dismissed = []
-        for b in boxes:
-            # Start-up reminders are clicked but never reported: the 2026 renewal box
-            # carries the activation key in its text, which must not reach the AI.
-            is_maintenance = _is_startup_reminder(b["title"] or "")
-            if is_maintenance:
-                _uia_dismiss_box(b)
-                continue
-
-            ok = _uia_dismiss_box(b)
-            dismissed.append({
-                "title": b["title"],
-                "texts": b["texts"],
-                "buttons": [btn["name"] for btn in b["buttons"]],
-                "dismissed": ok,
-                "method": "UIA"
-            })
-
-        # Check for chained dialogs
-        if dismissed:
+        for _ in range(CHAINED_ROUNDS):
+            known = answer_known_boxes()
+            dismissed.extend(known)
+            if any(not d.get("dismissed") for d in known):
+                return dismissed
+            plain = _dismiss_plain_boxes()
+            dismissed.extend(plain)
+            if any(not d.get("dismissed") for d in plain):
+                return dismissed
+            boxes = []
+            if not main_window_missing:
+                if uia is None:
+                    uia = _get_uia()
+                    main_win = _uia_find_main_window(uia)
+                    main_window_missing = not main_win
+                if not main_window_missing:
+                    boxes = _uia_round(uia, main_win)
+                    dismissed.extend(boxes)
+                    if any(not d.get("dismissed") for d in boxes):
+                        return dismissed
+            if not known and not plain and (final or not boxes):
+                # Report as soon as the chain is over: the command's own answer usually follows
+                # within a fraction of a second, and a result printed after it is dropped by the
+                # TypeScript layer (the dialog would be missing from dialogsDuringCommand).
+                break
+            final = not known and not plain
             time.sleep(0.5)
-            boxes2 = _uia_find_message_boxes(uia, main_win)
-            for b2 in boxes2:
-                if not _is_startup_reminder(b2["title"] or ""):
-                    ok = _uia_dismiss_box(b2)
-                    dismissed.append({
-                        "title": b2["title"],
-                        "texts": b2["texts"],
-                        "buttons": [btn["name"] for btn in b2["buttons"]],
-                        "dismissed": ok,
-                        "method": "UIA"
-                    })
-
-        return dismissed
     except Exception:
-        return []
+        return dismissed
+    return dismissed
 
 
 def _uia_read_and_press(hwnd, answer):
@@ -239,12 +355,28 @@ def _uia_read_and_press(hwnd, answer):
         return None
 
 
+def _answer_prompt(d):
+    """A KNOWN_PROMPTS box: read its text, press the answer its text calls for, else nothing."""
+    read = _uia_read_and_press(d["hwnd"], None)          # read only: no button is named None
+    texts, buttons = (read[0], read[1]) if read is not None else ([], [])
+    _progress({"dialog": {"title": d["title"], "texts": texts, "buttons": buttons}})
+    answer = next((a for prefix, a in d["prompts"].items() if any(t.startswith(prefix) for t in texts)), None)
+    if answer is None:
+        return {"title": d["title"], "texts": texts, "buttons": buttons, "dismissed": False, "method": "UIA"}
+    pressed = _uia_read_and_press(d["hwnd"], answer)
+    return {"title": d["title"], "texts": texts, "buttons": buttons,
+            "dismissed": bool(pressed and pressed[2]), "answered": answer, "method": "UIA"}
+
+
 def answer_known_boxes():
     """Answer every open KNOWN_BOXES box of ExtendSim with its safe button. Returns the
     report entries (empty when none is open)."""
     dialogs, _ = _find_extendsim_dialog_windows()
     answered = []
     for d in dialogs:
+        if d.get("prompts"):
+            answered.append(_answer_prompt(d))
+            continue
         answer = d.get("answer")
         if not answer:
             continue
@@ -262,6 +394,7 @@ def answer_known_boxes():
             except Exception:
                 pass
             method = "win32gui Escape"
+        _progress({"dialog": {"title": d["title"], "texts": texts, "buttons": buttons}})
         answered.append({"title": d["title"], "texts": texts, "buttons": buttons,
                          "dismissed": True, "answered": answer, "method": method})
     return answered
@@ -333,6 +466,16 @@ def _send_escape_key():
 # work). Answered through UIA, else with Escape - never Enter.
 KNOWN_BOXES = {"Unsigned Blocks Detected": "Cancel"}
 
+# Yes/No prompts whose title does not say "ExtendSim", answered only when their TEXT starts
+# with a known prefix; any other prompt with that title is reported, never clicked (and never
+# Enter/Escape, whose meaning on a Yes/No box is unknown). Measured live 2026-10-05 on ExtendSim
+# 2024: resources_configure on a model whose resource pools changed makes the Resource Manager
+# ask whether to delete the now unused pools. "No" deletes nothing; the new resources and
+# requirements are generated either way, the old empty pools stay listed.
+KNOWN_PROMPTS = {
+    "User Prompt": {"The model has unused resource pools": "No"},
+}
+
 
 def _is_startup_reminder(title):
     """ExtendSim's start-up reminders, which block COM until OK is pressed. Measured live
@@ -368,6 +511,9 @@ def _find_extendsim_dialog_windows():
             elif title in KNOWN_BOXES:
                 unnamed_reminders.append({"hwnd": hwnd, "title": title, "class": cls,
                                           "answer": KNOWN_BOXES[title]})
+            elif title in KNOWN_PROMPTS:
+                unnamed_reminders.append({"hwnd": hwnd, "title": title, "class": cls,
+                                          "prompts": KNOWN_PROMPTS[title]})
             return True
 
         # Reminders first - "ExtendSim Maintenance ..." / "ExtendSim Subscription Renewal"
@@ -474,6 +620,7 @@ def try_win32gui_strategy():
     for d in win32_dialogs:
         for btn in d["buttons"]:
             if btn["text"] in ("OK", "Ok", "ok"):
+                _progress({"dialog": {"title": d["title"], "texts": d["texts"]}})
                 try:
                     win32gui.SendMessage(
                         btn["hwnd"], win32con.BM_CLICK, 0, 0
@@ -488,13 +635,13 @@ def try_win32gui_strategy():
                     pass
                 break
 
-    # 2. Boxes with a known safe answer: Cancel, never Enter (see KNOWN_BOXES)
-    if any(d.get("answer") for d in qt_dialogs):
+    # 2. Boxes with a known safe answer: Cancel, never Enter (see KNOWN_BOXES / KNOWN_PROMPTS)
+    if any(d.get("answer") or d.get("prompts") for d in qt_dialogs):
         dismissed.extend(answer_known_boxes())
 
     # 3. Handle Qt ExtendSim dialogs (SetForegroundWindow + SendInput Enter)
     for d in qt_dialogs:
-        if d.get("answer"):
+        if d.get("answer") or d.get("prompts"):
             continue
         if d.get("is_maintenance"):
             # Dismiss maintenance dialog too
@@ -507,6 +654,11 @@ def try_win32gui_strategy():
                 pass
             continue
 
+        # Read the text first if UIA still can; only a box that cannot be read gets the
+        # placeholder, which the dismisser reports as dialog_report.UNREADABLE_BOX.
+        read = _plain_box_buttons(d["hwnd"])
+        texts = [t for t in (read[0] if read else []) if t] or [dialog_report.GHOST_PLACEHOLDER]
+        _progress({"dialog": {"title": d["title"], "texts": texts}})
         try:
             # Bring the dialog to foreground and press Enter
             win32gui.SetForegroundWindow(d["hwnd"])
@@ -514,7 +666,7 @@ def try_win32gui_strategy():
             _send_enter_key()
             dismissed.append({
                 "title": d["title"],
-                "texts": ["(text not readable in Ghost state)"],
+                "texts": texts,
                 "dismissed": True,
                 "method": "win32gui SendInput"
             })
@@ -543,6 +695,10 @@ def main():
         win32_error_dialogs = _find_win32_error_dialogs(pid) if pid is not None else []
 
         if qt_dialogs or win32_error_dialogs:
+            if win32_error_dialogs or any(not d.get("is_maintenance") for d in qt_dialogs):
+                # Before any UIA call, which blocks while ExtendSim is busy: a pass killed
+                # from here on still tells the caller that ExtendSim showed a box.
+                _progress({"seen": True})
             # Strategy 1: UI Automation (best - can read dialog text)
             uia_results = try_uia_strategy()
             if uia_results:

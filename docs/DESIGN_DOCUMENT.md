@@ -1,6 +1,6 @@
 # Simulations MCP Server — Architecture and Design Document
 
-**Version:** 1.24.0
+**Version:** 1.25.0
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 **Classification:** Technical — for IT security specialists, software architects, and power users
@@ -26,7 +26,7 @@
 
 ## 1. Executive Summary
 
-The Simulations MCP Server is a Model Context Protocol (MCP) server that bridges AI assistants to the ExtendSim discrete-event simulation platform. It exposes 108 tools across 18 categories, enabling AI-driven model construction, simulation execution, result analysis, and the mining of reusable modelling patterns out of existing models.
+The Simulations MCP Server is a Model Context Protocol (MCP) server that bridges AI assistants to the ExtendSim discrete-event simulation platform. It exposes 113 tools across 18 categories, enabling AI-driven model construction, simulation execution, result analysis, and the mining of reusable modelling patterns out of existing models.
 
 **Key architectural properties:**
 
@@ -58,7 +58,7 @@ The Simulations MCP Server is a Model Context Protocol (MCP) server that bridges
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
 │  │  MCP SDK     │  │  Tool        │  │  Reference Data      │  │
 │  │  Protocol    │  │  Definitions │  │  (JSON files, lazy)  │  │
-│  │  Handler     │  │  (108 tools) │  │                      │  │
+│  │  Handler     │  │  (113 tools) │  │                      │  │
 │  └──────┬───────┘  └──────┬───────┘  └──────────────────────┘  │
 │         │                 │                                     │
 │         │    ┌────────────┴─────────────┐                      │
@@ -127,11 +127,11 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 
 ## 3. Component Design
 
-### 3.1 MCP Server (index.ts, ~2632 lines)
+### 3.1 MCP Server (index.ts, ~2785 lines)
 
 **Responsibilities:**
 - MCP protocol handling via `@modelcontextprotocol/sdk`
-- Tool registration with Zod schema validation (108 tools)
+- Tool registration with Zod schema validation (113 tools)
 - Reference data management (lazy-loaded JSON files)
 - Search engines (ModL functions, blocks, dialog variables)
 - Session logging and telemetry integration
@@ -144,7 +144,7 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - Server version is read dynamically from `package.json`, not hardcoded
 - One error contract at one boundary: the Python backend's standard failure shape is `{success: false, errorCode, error}`, and `toolResponse()`/`recordToolCall()` treat `success === false` exactly like `status === "error"`. Without that normalization, backend failures reach the client flagged as successes and telemetry counts only timeouts as errors
 
-### 3.2 Backend Bridge (backend.ts, ~1540 lines)
+### 3.2 Backend Bridge (backend.ts, ~1928 lines)
 
 **Responsibilities:**
 - Python subprocess lifecycle management
@@ -164,11 +164,11 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - A dismissed dialog does not immediately fail the command: after a successful auto-dismiss the bridge holds a 5-second grace window (`DIALOG_DISMISS_GRACE_MS`) for the real response to arrive, so a benign informational popup cannot fail an otherwise-successful command
 - A retried command (after a backend restart) is re-armed with a fresh timeout rather than inheriting the dying request's remaining countdown
 
-### 3.3 Python COM Backend (simulation_backend.py, ~11440 lines)
+### 3.3 Python COM Backend (simulation_backend.py, ~11698 lines)
 
 **Responsibilities:**
 - COM communication with ExtendSim via `win32com.client.GetActiveObject`
-- 138 command handlers mapped via the `COMMANDS` dispatch table (more entries than MCP tools: several tools share a handler, and some handlers serve internal sub-commands)
+- 146 command handlers mapped via the `COMMANDS` dispatch table (more entries than MCP tools: several tools share a handler, and some handlers serve internal sub-commands)
 - Input validation and parameter type coercion
 - ModL command construction and execution
 - Fire-and-forget threading for `simulation_run`

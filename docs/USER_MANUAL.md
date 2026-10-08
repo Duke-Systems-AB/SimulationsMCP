@@ -1,6 +1,6 @@
 # Simulations MCP Server — User Manual
 
-**Version:** 1.24.0
+**Version:** 1.25.0
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 
@@ -24,7 +24,7 @@
 
 ## 1. Introduction
 
-The Simulations MCP Server is a Model Context Protocol (MCP) server that enables AI assistants to build, configure, run, and analyze ExtendSim simulation models programmatically. It bridges AI clients (Claude Code, Claude Desktop, Gemini CLI, Cursor, ChatGPT) to ExtendSim's full modeling environment through 108 specialized tools.
+The Simulations MCP Server is a Model Context Protocol (MCP) server that enables AI assistants to build, configure, run, and analyze ExtendSim simulation models programmatically. It bridges AI clients (Claude Code, Claude Desktop, Gemini CLI, Cursor, ChatGPT) to ExtendSim's full modeling environment through 113 specialized tools.
 
 ### What is MCP?
 
@@ -49,7 +49,7 @@ The Model Context Protocol is an open standard that allows AI assistants to inte
 | **Operating System** | Windows 10/11 (64-bit) |
 | **Node.js** | Version 18 or higher |
 | **Python** | Version 3.9+ (tested on 3.13), with the packages in `requirements.txt` |
-| **ExtendSim** | Installed with COM component registered |
+| **ExtendSim** | Installed with COM component registered. Run **one** ExtendSim at a time (see 5.3) |
 | **AI Client** | Any MCP-compatible client (see Section 4) |
 
 ### Install Python Dependencies
@@ -74,7 +74,7 @@ ExtendSim registers its COM component during installation. If needed, run Extend
 
 ### Option A: Installer (Recommended)
 
-1. Run `SimulationsMCP-Setup-1.24.0.exe` as administrator (the prebuilt installer matches the current source)
+1. Run `SimulationsMCP-Setup-1.25.0.exe` as administrator (the prebuilt installer matches the current source)
 2. Choose installation directory (default: `C:\Program Files\SimulationsMCP`)
 3. Select whether to install as a Windows Service (only needed for ChatGPT — see Section 4.5)
 4. Complete the installation
@@ -301,6 +301,84 @@ shadowed one isn't silently lost. A block guide file that fails to load (bad JSO
 schema, claims proof, or whose `library`/`block` don't match its file name) is reported in
 `localBlockGuideErrors`, never shown as a guide.
 
+### 4.10 Advanced resources (Resource Manager)
+
+`resources_configure` sets up Advanced Resource Management in one call: resource **classes**
+(a name, a pool, how many, and optional custom properties such as `Skill`, plus a shift by
+name) and resource **requirements** that pick resources by those properties — a quantity with
+`where` filters that must all hold (AND), or `anyOf` naming other requirements in the same call
+so any one of them will do (OR). Queue blocks are pointed at a requirement; Resource Pool
+Release blocks give the resources back.
+
+A shift named on a class must be the `shiftName` of a Shift block that already exists in the
+model (`block_configure` on a Shift block) — `resources_configure` does not create shifts
+itself.
+
+**Each call replaces the whole configuration.** `resources_configure` rewrites ExtendSim's
+Resource Classes and Resource Requirement Expressions tables from what you send, not a diff —
+always send every class and requirement you want to keep, not just the one you are changing.
+ExtendSim then regenerates all resources and requirements from those tables; nothing from the
+previous call is kept. Two details: when a pool from the previous call is no longer used,
+ExtendSim asks whether to delete it and the server answers No, so the empty pool stays listed
+(it has no resources and is never allocated); and the numbers after a resource's name are not
+restarted on a regeneration (`Junior_2` can be the first Junior) — use the names in the result.
+
+The server generates the resources and requirements in ExtendSim and then verifies them: every
+filter, every queue and every release is read back, and the call only reports success when all
+of it matches what was asked for. A block guide for the Resource Manager ships with the server
+(`block_search "Resource Manager" detail: true`) with a proved recipe and pitfalls.
+
+**Activity capacity pitfall.** An Activity block's `maxItems` defaults to 1. With a pool of
+several resources but `maxItems` still 1, only one resource is ever busy at a time, however
+many the pool has — set `maxItems` (via `block_configure`) to the number of resources that
+should be able to work in parallel.
+
+### 4.11 Setting up analysis blocks (Scenario Manager, Optimizer, Analysis Manager)
+
+Three tools set up the Analysis library's blocks in one call each, the same way a person would
+in ExtendSim's own dialog — a Shift-click to add a factor/response/variable/output, which pops
+up a "User Parameter" box asking for a name. The server answers that box itself, then reads
+every row it wrote back, so a call only reports success once ExtendSim has genuinely taken it.
+
+- **`scenario_manager_configure`** — factors (inputs to vary) and responses (results to
+  record), plus the scenarios: `"fullFactorial"` (computed from each factor's min/max/step) or
+  a list of named scenarios with one value per factor. Run with `scenario_manager_run` and
+  `waitForCompletion: true`, then `scenario_manager_get_results`.
+- **`optimizer_configure`** — variables the search may change (with min/max), outputs the
+  objective may use, and the objective itself, e.g. `"MaxProfit = Exited*10 - Cap*200;"` —
+  only the call's own variable/output names, numbers, and `+ - * /` are accepted. The server
+  also presses one of ExtendSim's own Quicker/Better default search-strategy buttons. Run with
+  `optimizer_run` and `waitForCompletion: true`, then `optimizer_get_results`.
+- **`analysis_manager_configure`** — responses whose value is recorded for every replication.
+  Run the model with `simulation_setup_set` (`numberOfRuns` = the replications wanted) and then
+  one `simulation_run`; ExtendSim's own "Number of runs" batch runs all of them in that single
+  call. Read them back with `analysis_manager_get_results`.
+
+**V1 limits.** None of the three configure tools can change a block that already has factors,
+responses, variables or outputs — build a new Scenario Manager, Optimizer or Analysis Manager
+for a different spec rather than trying to edit one already set up. Each call takes at most 20
+items — factors and responses together, variables and outputs together, or responses — because
+every factor, response, variable and output costs ExtendSim a "User Parameter" prompt of about
+4 seconds and a configure call has 3 minutes in total. A list of named scenarios is capped at 50
+(every cell is written and read back); a full factorial is capped at 1000 scenarios. A call over
+a limit is refused with `INVALID_PARAMETER` before anything is changed. The Analysis Manager's
+responses table belongs to the whole model, so a model that already holds responses is refused
+before any block is placed. The objective given to `optimizer_configure` may only reference that same
+call's own variable and output names.
+
+**Pitfalls carried over from Advanced Resources.** The same two rules apply here: every
+Activity needs a Queue in front of it (`Create → Queue → Activity → Exit`), and an Activity's
+`maxItems` defaults to 1. `scenario_manager_run`/`optimizer_run` are fire-and-forget by default
+(see §8) — always call them with `waitForCompletion: true` when setting up or reading results,
+otherwise nothing about the run is actually checked. Re-running a Scenario Manager with
+`waitForCompletion: true` reruns every scenario from scratch and clears the previous results of
+the selected scenarios first.
+
+A run ExtendSim itself aborts (an out-of-range reference, a missing resource, …) comes back as
+an error with ExtendSim's own message box text in `dialogs`; a box whose text could not be read
+is reported as "ExtendSim showed a message box whose text could not be read" rather than left
+silent.
+
 ---
 
 ## 5. Getting Started
@@ -354,13 +432,15 @@ These rules prevent common errors that can crash ExtendSim or produce invalid mo
 
 5. **Use `block_configure` for block settings** — Do not try to set Activity delay or other block parameters via `block_set_value` directly. Use `block_configure` which auto-detects the block type and applies the correct internal API.
 
-6. **Save frequently** — ExtendSim may crash on invalid commands. Save your model often with `model_save`.
+6. **One ExtendSim at a time** — Do not keep two ExtendSim instances open, for example 2024 and 2026 side by side. The server cannot tell which one ExtendSim's prompts and messages appear in, so while two run it refuses every command that needs ExtendSim with `MULTIPLE_EXTENDSIM_INSTANCES` and lists them; close all but one. `extendsim_status` still answers and shows the same warning.
+
+7. **Save frequently** — ExtendSim may crash on invalid commands. Save your model often with `model_save`.
 
 ---
 
 ## 6. Tool Reference
 
-The server provides 108 tools organized into categories. Each tool accepts structured parameters (validated with JSON Schema) and returns structured JSON responses.
+The server provides 113 tools organized into categories. Each tool accepts structured parameters (validated with JSON Schema) and returns structured JSON responses.
 
 ### 6.1 Model Management
 
@@ -425,6 +505,7 @@ example a line into a hierarchical block) under `unresolvedConnectionNodes`.
 | `table_get` | Read a string-table cell (`*_ttbl` dialog tables such as `IVars_ttbl`/`OVars_ttbl`). Use this where `block_get_value` cannot — it is numeric and returns `ERR` on string cells |
 | `table_set` | Write a string-table cell. Read-back verified: fails closed with `TABLE_WRITE_REJECTED` if the cell does not hold the written value (block-controlled cells reject writes silently) |
 | `detect_attributes` | Detect which item attributes a block reads and writes (equation blocks: from their in/out variable tables). Returns `{ reads, writes, confidence }` |
+| `resources_configure` | Set up Advanced Resource Management (the Resource Manager block) in one call: resource classes, resource requirements, and the Queue/Resource Pool Release blocks that use them. Replaces the whole configuration each call and verifies everything it generated. See 4.10 |
 
 ### 6.5 Simulation Control
 
@@ -455,11 +536,15 @@ example a line into a hierarchical block) under `unresolvedConnectionNodes`.
 |------|-------------|
 | `simulation_run_multi` | Run the simulation multiple times with different seeds |
 | `simulation_run_scenarios` | Run predefined scenarios |
-| `scenario_manager_run` | Run the Scenario Manager (fire-and-forget by default) |
+| `scenario_manager_configure` | Set up a Scenario Manager in one call: factors, responses, and the scenarios (full factorial or a named list). See 4.11 |
+| `scenario_manager_run` | Run the Scenario Manager; with `waitForCompletion: true` the outcome is checked (every selected scenario needs every response) |
 | `scenario_manager_status` | Check Scenario Manager progress |
 | `scenario_manager_get_results` | Collect Scenario Manager results |
-| `optimizer_run` | Run the Optimizer (fire-and-forget by default) |
+| `optimizer_configure` | Set up an Optimizer in one call: variables (with min/max), outputs, and the objective equation. See 4.11 |
+| `optimizer_run` | Run the Optimizer; with `waitForCompletion: true` the outcome is checked (at least one generation) |
 | `optimizer_get_results` | Collect Optimizer results |
+| `analysis_manager_configure` | Set up an Analysis Manager: responses recorded for every replication of a run. See 4.11 |
+| `analysis_manager_get_results` | Read the Analysis Manager's results: each replication of an experiment with its response values and whether ExtendSim aborted it |
 
 ### 6.8 Database Operations
 
@@ -641,9 +726,8 @@ Each mining step can run offline from the previous step's saved JSON (`psgPath`,
 ### 7.4 Scenario Manager Workflow
 
 ```
-1. scenario_manager_run()                → Start (non-blocking)
-2. scenario_manager_status()             → Poll until complete
-3. scenario_manager_get_results()        → Collect all scenario results
+1. scenario_manager_run(waitForCompletion: true)  → Run and check every scenario has its results
+2. scenario_manager_get_results()                 → Collect all scenario results
 ```
 
 ### 7.5 Using block_configure
@@ -695,7 +779,7 @@ query `"Queue Equation"` with `detail: true`.
 
 ## 8. Fire-and-Forget Operations
 
-Three long-running tools default to non-blocking (fire-and-forget) mode. They start the operation and return immediately, allowing you to poll for completion.
+Three long-running tools default to non-blocking (fire-and-forget) mode. `simulation_run` starts the run and returns immediately, so you poll for completion. `scenario_manager_run` and `optimizer_run` are different: ExtendSim finishes the whole run before the call returns, so use `waitForCompletion: true` with them to have the outcome checked.
 
 ### 8.1 simulation_run
 
@@ -710,20 +794,21 @@ Set `waitForCompletion: true` to block until the simulation finishes (legacy beh
 ### 8.2 scenario_manager_run
 
 ```
-scenario_manager_run()          → Starts all scenarios, returns immediately
-scenario_manager_status()       → Poll: { running, currentScenario, totalScenarios }
+scenario_manager_run()          → Runs all scenarios (ExtendSim finishes before the call returns)
+scenario_manager_status()       → { running, currentScenario, totalScenarios }
 scenario_manager_get_results()  → Collect full results matrix
 ```
 
-The server automatically selects all scenarios before running. An auto-dialog-dismisser runs in the background to handle COM error dialogs that may appear on large models.
+The server selects all scenarios only when none are selected; a selection you made is kept. With `waitForCompletion: true` it clears the previous results of the selected scenarios first, so only results from this run count, and the run succeeds only when every selected scenario has every response (this needs at least one block response); otherwise `OPTIMIZER_FAILED` lists the scenarios without results (`scenariosWithoutResults`) and ExtendSim's own messages (`dialogs`). An auto-dialog-dismisser runs in the background to handle error dialogs and reports their texts.
 
 ### 8.3 optimizer_run
 
 ```
-optimizer_run()                 → Starts optimizer, returns immediately
-simulation_status()             → Poll for completion
+optimizer_run()                 → Runs the optimization (ExtendSim finishes before the call returns)
 optimizer_get_results()         → Collect optimization results
 ```
+
+With `waitForCompletion: true` the run succeeds only when at least one generation completed, and reports the best value, generations and convergence; an optimization that ExtendSim stopped is `OPTIMIZER_FAILED`, with ExtendSim's own messages in `dialogs`.
 
 ---
 
@@ -894,6 +979,7 @@ recovery hint — treat it as a bonus, not a guarantee.
 | `COM_ERROR` | COM communication failure with ExtendSim, including a connection dropped mid-operation |
 | `EXTENDSIM_NOT_RUNNING` | ExtendSim is not running — start it and retry |
 | `EXTENDSIM_START_FAILED` | Failed to start ExtendSim |
+| `MULTIPLE_EXTENDSIM_INSTANCES` | More than one ExtendSim is running; `instances` lists them — close all but one and retry |
 | `LICENSE_DETECTION_FAILED` | Could not read the ExtendSim license or library set |
 
 **Model**
@@ -938,6 +1024,19 @@ recovery hint — treat it as a bonus, not a guarantee.
 | `MULTI_RUN_FAILED` | A multi-run or scenario sweep failed |
 | `OPTIMIZER_FAILED` / `OPTIMIZER_TIMEOUT` | The Optimizer failed or exceeded its timeout |
 
+**Advanced resources**
+
+| Error Code | Meaning |
+|------------|---------|
+| `ARM_GENERATION_FAILED` | ExtendSim did not generate the resources or requirements that were described - its own message is in `dialogsDuringCommand` - or a call to ExtendSim failed after generation had started (pressing Auto-Generate, or setting the queues and releases). `steps` shows how far the call got; call `resources_configure` again once the cause is fixed |
+| `ARM_VERIFY_FAILED` | Something ExtendSim generated or a queue/release setting did not read back as written |
+
+**Analysis blocks (Scenario Manager, Optimizer, Analysis Manager)**
+
+| Error Code | Meaning |
+|------------|---------|
+| `ANALYSIS_CONFIG_FAILED` | Something ExtendSim generated did not read back, or a prompt was not answered; `steps` says how far it got |
+
 **Request validation**
 
 | Error Code | Meaning |
@@ -979,7 +1078,8 @@ Timeouts are compiled into `backend.ts` and cannot be changed without rebuilding
 | 10 s (default) | Everything not listed below |
 | 30 s | `model_open`, `model_save`, `model_close`, `model_new`, `model_validate`, `detect_license`, `block_template`, `block_add_batch`, `block_discover`, `block_discover_variables`, `block_introspect`, `simulation_get_block_stats`, `db_get_records`, `db_import`, `db_export`, `db_create`, `hierarchy_list`, `hierarchy_get_contents`, `scenario_manager_status`, `scenario_manager_get_results` |
 | 60 s | `block_configure` (save/close/reopen cycle), `simulation_get_results` |
-| 2 min | `extendsim_start`, `block_list`, `model_extract`, `block_profile`, `block_guide_draft` |
+| 2 min | `extendsim_start`, `block_list`, `model_extract`, `block_profile`, `block_guide_draft`, `resources_configure`, `analysis_manager_get_results` |
+| 3 min | `scenario_manager_configure`, `optimizer_configure`, `analysis_manager_configure` |
 | 5 min | `simulation_run` (blocking mode only) |
 | 10 min | `simulation_run_multi`, `simulation_run_scenarios`, `scenario_manager_run`, `optimizer_run` — the last two only with `waitForCompletion=true` |
 

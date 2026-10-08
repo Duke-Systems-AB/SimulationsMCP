@@ -13,7 +13,7 @@ AI Client (Claude, Gemini, Cursor, ChatGPT)
     │
     │  MCP Protocol (JSON-RPC 2.0)
     ▼
-TypeScript MCP Server (108 tools)
+TypeScript MCP Server (113 tools)
     │
     │  JSON over stdin/stdout
     ▼
@@ -24,17 +24,17 @@ Python COM Backend (pywin32)
 ExtendSim Application
 ```
 
-The server exposes **108 tools** across 18 categories:
+The server exposes **113 tools** across 18 categories:
 
 | Category | Tools |
 |----------|-------|
 | Model Management | `model_open`, `model_save`, `model_new`, `model_close`, `model_info`, `model_validate`, `model_extract`, `model_overview`, `model_snapshot`, `model_list` |
 | Block Operations | `block_add`, `block_add_batch`, `block_connect`, `block_disconnect`, `connect_chain`, `connect_graph`, `block_remove`, `block_list`, `connection_list`, `block_info`, `block_discover`, `block_discover_variables`, `block_introspect` |
 | Block Layout | `block_move`, `block_get_position`, `block_align`, `block_duplicate`, `block_find` |
-| Configuration | `block_configure`, `block_set_value`, `block_get_value`, `execute_command`, `attribute_set`, `attribute_get`, `table_get`, `table_set`, `detect_attributes` |
+| Configuration | `block_configure`, `block_set_value`, `block_get_value`, `execute_command`, `attribute_set`, `attribute_get`, `table_get`, `table_set`, `detect_attributes`, `resources_configure` |
 | Simulation | `simulation_run`, `simulation_stop`, `simulation_pause`, `simulation_resume`, `simulation_status`, `simulation_get_results`, `simulation_setup_get`, `simulation_setup_set`, `simulation_step`, `simulation_get_state` |
 | Statistics | `block_get_stats`, `simulation_get_block_stats`, `resource_pool_get_stats` |
-| Multi-Run | `simulation_run_multi`, `simulation_run_scenarios`, `scenario_manager_run`, `scenario_manager_status`, `scenario_manager_get_results`, `optimizer_run`, `optimizer_get_results` |
+| Multi-Run | `simulation_run_multi`, `simulation_run_scenarios`, `scenario_manager_configure`, `scenario_manager_run`, `scenario_manager_status`, `scenario_manager_get_results`, `optimizer_configure`, `optimizer_run`, `optimizer_get_results`, `analysis_manager_configure`, `analysis_manager_get_results` |
 | Database | `db_list`, `db_table_info`, `db_get_value`, `db_set_value`, `db_get_records`, `db_add_records`, `db_delete_records`, `db_create`, `db_import`, `db_export`, `db_find_record`, `db_sort`, `db_relations_list`, `db_relation_create` |
 | Global Arrays | `ga_list`, `ga_create`, `ga_read`, `ga_write` |
 | Hierarchy | `hierarchy_list`, `hierarchy_get_contents` |
@@ -70,9 +70,9 @@ npm run build
 
 ### Install from Installer
 
-Download `SimulationsMCP-Setup-1.24.0.exe` from the `installer/` directory and run it.
+Download `SimulationsMCP-Setup-1.25.0.exe` from the `installer/` directory and run it.
 
-The prebuilt installer matches the current source: **v1.24.0, 108 tools** (including
+The prebuilt installer matches the current source: **v1.25.0, 113 tools** (including
 `block_introspect`, `table_get`/`table_set`, `detect_attributes`, and the full
 pattern-mining pipeline). See `CHANGELOG.md` for release history.
 
@@ -111,7 +111,7 @@ For other clients (Claude Desktop, Gemini CLI, Cursor, ChatGPT), see the [User M
 ## Key Features
 
 - **block_configure** — Single tool that auto-detects block type and configures Activity, Queue, Create, Exit, Select Item, Gate, Tank, Valve, and 25+ more block types
-- **Fire-and-forget** — `simulation_run`, `scenario_manager_run`, and `optimizer_run` start non-blocking by default; poll with status tools
+- **Fire-and-forget** — `simulation_run` starts non-blocking by default; poll with status tools. `scenario_manager_run` and `optimizer_run` check their outcome with `waitForCompletion: true`
 - **268 example models** — Search verified patterns via `pattern_search`
 - **12 modeling guides** — Step-by-step guidance for queuing, manufacturing, logistics, resources, flow, and continuous systems
 - **Block guides** — `block_search` with `detail: true` explains a block: what it is for, recipes proved with the server's tools, what is not proved, and pitfalls (first: Queue Matching, Queue Equation, Query Equation (I))

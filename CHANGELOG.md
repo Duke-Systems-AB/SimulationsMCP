@@ -3,6 +3,68 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
+## 1.25.0 — 2026-10-08
+
+Advanced blocks your AI can set up itself: the Resource Manager (`resources_configure`) and the
+analysis blocks - Scenario Manager, Optimizer and Analysis Manager - each in one call, verified
+against what ExtendSim actually took. Optimizer and Scenario Manager runs now report their real
+outcome, and the server works with one ExtendSim at a time. 113 tools. Verified live on
+ExtendSim 2024 and 2026.
+
+### Added
+- **`resources_configure`** (new tool, 109 in all): sets up Advanced Resource Management in one call -
+  resource classes (pool, count, custom properties such as Skill, a shift), requirements (a quantity
+  with filters, or any one of other requirements), and the queues and releases that use them. The
+  server generates the resources and requirements in ExtendSim and verifies them: it reports success
+  only when every filter, queue and release reads back. A block guide for the Resource Manager comes
+  with it (`block_search`).
+- **`scenario_manager_configure`, `optimizer_configure`, `analysis_manager_configure` and
+  `analysis_manager_get_results`** (new tools, 113 in all): set up a Scenario Manager, an Optimizer
+  or an Analysis Manager in one call, the same way a person would in ExtendSim's own dialog. The
+  server adds every factor, response, variable, output or objective itself - including answering
+  the "User Parameter" name prompt ExtendSim pops up for each one - and reads everything back, so
+  success is only reported once ExtendSim has genuinely taken it. `scenario_manager_configure` takes
+  factors and responses plus a full factorial or a named list of scenarios; `optimizer_configure`
+  takes variables, outputs and an objective such as `"MaxProfit = Exited*10 - Cap*200;"`;
+  `analysis_manager_configure` takes the responses recorded on every replication of a run, read
+  back afterwards with `analysis_manager_get_results`. Block guides for all three ship with the
+  server (`block_search`).
+
+### Fixed
+- **One ExtendSim at a time.** With two ExtendSim instances open (for example 2024 and 2026),
+  ExtendSim's prompts and messages could appear in the instance the server is not connected to, and
+  a call could hang. The server now refuses every ExtendSim command while more than one runs
+  (`MULTIPLE_EXTENDSIM_INSTANCES`, listing them); `extendsim_status` shows the same warning.
+- **A timed-out command no longer loses the message ExtendSim showed.** When the check for blocking
+  boxes ran out of time after closing a box, the server answered "no dialog"; it now reports the box
+  and its text (or that its text could not be read).
+- **Analysis set-up keeps within its time limit on large models.** The time for answering
+  ExtendSim's name prompts now counts from the start of the call, so a slow model gives a clear
+  `ANALYSIS_CONFIG_FAILED` instead of a timeout.
+- Running a Scenario Manager or an Optimizer with `waitForCompletion: true` no longer loses the text
+  of ExtendSim's own message boxes that were closed automatically while the run was still in
+  progress (including the "Optimization converged to X%." box) - that text now always reaches
+  `dialogs`, even when the box is dismissed right as the run finishes.
+- `optimizer_run` and `scenario_manager_run` (with `wait_for_completion`) now report the run's real
+  outcome. The optimizer reported "did not start within 30 seconds" for an optimization that had
+  finished, and the Scenario Manager reported "completed" for a run ExtendSim had aborted. Both now
+  look at what the run left behind: the optimizer succeeds only after at least one generation (and
+  reports the best value, generations and convergence); the Scenario Manager succeeds only when every
+  selected scenario has every response, and otherwise lists the scenarios without results. With
+  `wait_for_completion` the previous results of the selected scenarios are cleared before the run, so a
+  rerun that ExtendSim aborts can no longer show the last run's results as its own (a Scenario Manager
+  without block responses cannot be checked and is refused in that mode). `scenario_manager_run` now
+  selects all scenarios only when none are selected, as documented; a selection you made is kept. ExtendSim's own messages about an aborted run are returned in `dialogs`. An aborted Scenario
+  Manager run no longer waits for the full timeout, and all scenarios are collected (only the first was
+  when scenarios had just been created). A Scenario Manager with an empty scenario table is refused
+  ("no scenarios") instead of selecting rows that do not exist, which raised ExtendSim error boxes.
+- Shift blocks configured through `block_configure` (`schedule`) never followed their schedule: the
+  periods were written into the wrong columns of the block's table. The server now writes the block's
+  own change rows (time and On/Off, or the number for a numbers shift, `statusType` 2) and reads
+  them back. Refused now instead of written wrong: a schedule with more changes than the block's
+  table holds, a period without `endTime` (it used to be taken as 8), and a capacity other than
+  0 or 1 on an on/off shift (it used to become "On" silently - use `statusType` 2 for numbers).
+
 ## 1.24.0 — 2026-10-02
 
 Blocks your AI has never seen: `block_profile` reads any block - your own, third-party or locked -

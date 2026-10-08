@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.14.0",
+  "version": "1.16.0",
   "description": "Modeling guides for common ExtendSim simulation scenarios. Each guide describes when to use the pattern, which blocks and connections to use, key parameters, and common mistakes.",
   "categories": {
     "queuing": { "label": "Queuing Systems", "scenarios": ["simple_queue", "multi_server", "priority_queue"] },
@@ -559,10 +559,10 @@
         "template": "shift_schedule"
       },
       "keyParameters": [
-        { "block": "Shift", "parameter": "schedule", "typical": "[{startTime: 0, endTime: 8, capacity: 1}, {startTime: 8, endTime: 16, capacity: 3}, {startTime: 16, endTime: 24, capacity: 2}]", "description": "Defines capacity at each time period. Times are in simulation time units. Capacity=0 means off-shift. Multiple rows define multiple shift periods in one 24-hour cycle." },
+        { "block": "Shift", "parameter": "statusType + schedule", "typical": "statusType: 2, schedule: [{startTime: 0, endTime: 8, capacity: 1}, {startTime: 8, endTime: 16, capacity: 3}, {startTime: 16, endTime: 24, capacity: 2}]", "description": "Defines capacity at each time period. Times are in simulation time units. Capacity=0 means off-shift. Multiple rows define multiple shift periods in one 24-hour cycle. Capacities above 1 need statusType 2 (a numbers shift); the default on/off shift (statusType 1) only takes capacity 0 or 1 and refuses anything else." },
         { "block": "Activity", "parameter": "distribution / arg1", "typical": "Triangular(3, 5, 8) min", "description": "Processing time per item during active shift. Items in the Activity when a shift ends continue processing; items in Queue wait until next shift starts." },
         { "block": "Create", "parameter": "distribution / arg1", "typical": "Exponential, mean matching peak capacity utilization target", "description": "Arrival rate should be set so that total daily arrivals match expected daily throughput; if arrivals exceed daily capacity, backlog grows without bound." },
-        { "block": "Shift", "parameter": "schedule capacity values", "typical": "Integer values (1, 2, 3) representing number of simultaneous servers", "description": "Shift capacity values set the maximum concurrent items being processed by the linked Activity. Ensure Activity can handle the specified parallel capacity." }
+        { "block": "Shift", "parameter": "schedule capacity values", "typical": "Integer values (1, 2, 3) representing number of simultaneous servers, with statusType 2", "description": "Shift capacity values set the maximum concurrent items being processed by the linked Activity. Ensure Activity can handle the specified parallel capacity." }
       ],
       "keyMetrics": [
         "Queue length at shift start (backlog carryover from previous off-period)",
@@ -798,6 +798,181 @@
         "Never press its Test Equation button from the server - it asks for a record index in a modal prompt that blocks the connection.",
         "The database and table popups reset the index settings - choose the table first.",
         "Never write Rotation_prm or Scale_prm from COM."
+      ]
+    },
+    "Item.lbr/Resource Manager": {
+      "library": "Item.lbr", "block": "Resource Manager", "since": "1.25.0", "provedOn": ["2026", "2024"],
+      "summary": "The centre of Advanced Resource Management: resources with properties (pool, skill, shift ...), and resource requirements that pick resources by those properties. Queues wait for a requirement; Resource Pool Release blocks give the resources back.",
+      "useWhen": [
+        "Items need a resource chosen by a property - a skill level, a location, a certificate - not just any free one.",
+        "One step may take a resource from either of two pools (OR).",
+        "Resources work shifts and should only be allocated while on shift."
+      ],
+      "notFor": [
+        "A single pool of identical resources - a Resource Pool block is simpler.",
+        "Resources that travel with the item as items themselves - use Resource Item."
+      ],
+      "howItWorks": "ExtendSim keeps the resources and requirements in the Advanced Resources database. resources_configure writes the two definition tables (Resource Classes, Resource Requirement Expressions), has the Resource Manager generate resources and requirements from them, and switches the named Queue blocks to wait for a requirement and the Release blocks to advanced resources.",
+      "settings": [
+        {"name": "classes", "tool": "resources_configure", "meaning": "Resource classes: name, pool, count, optional maxQuantity/minAllocation, shift (a Shift block's name), custom properties.", "proved": true},
+        {"name": "requirements", "tool": "resources_configure", "meaning": "A quantity plus filters (where, all must hold), or anyOf: any one of other requirements.", "proved": true},
+        {"name": "queues / releases", "tool": "resources_configure", "meaning": "Queue blocks that wait for a requirement; Resource Pool Release blocks that release.", "proved": true}
+      ],
+      "recipes": [
+        {
+          "goal": "Only workers from one pool serve the queue",
+          "steps": [
+            "block_add Item.lbr: Create, Queue, Activity, Resource Pool Release, Exit; connect them in that order",
+            "block_configure Activity {\"delayType\": \"fixed\", \"value\": 2, \"maxItems\": 4}",
+            "resources_configure {classes: [{name: Worker, pool: Workers, count: 2}, {name: Helper, pool: Helpers, count: 2}], requirements: [{name: RR_Workers, quantity: 1, where: [{property: Pool, op: '=', value: Workers}]}], queues: [{blockId: <Queue>, requirement: RR_Workers}], releases: [<Release>]}",
+            "simulation_run; db_get_records Advanced Resources / Resources shows each resource's Total Quantity Allocated"
+          ],
+          "observed": "Total Quantity Allocated over a 100-time-unit run: 2026 Worker_1=48, Worker_2=48, Helper_1=0, Helper_2=0; 2024 Worker_1=51, Worker_2=50, Helper_1=0, Helper_2=0. Only the Workers pool was ever used on either version.",
+          "provedOn": ["2026", "2024"],
+          "date": "2026-10-04"
+        }
+      ],
+      "notYetProved": [
+        "Filters on item attributes (dynamic filters), sorting by rank, resource groups, choosing the requirement through a connector, nested OR."
+      ],
+      "pitfalls": [
+        "Activity maxItems defaults to 1: then only one resource is ever busy, however many the pool has.",
+        "resources_configure replaces the whole configuration each time: send every class and requirement, not just the change. ExtendSim regenerates everything; a pool no longer used stays listed empty (the server answers No when ExtendSim asks to delete it), and instance numbers are not restarted (Junior_2 can be the first Junior) - use the names in the result.",
+        "A shift named in a class must be the shiftName of a Shift block that already exists.",
+        "Running the model alone does not create the resources: the queues reject their requirement before the run would generate it. Use resources_configure first.",
+        "A lightly loaded model can leave a shift worker idle at times during its shift (the queue runs dry), so it will not show a full shift's worth of allocated time - that is normal queueing behaviour, not a sign the shift or the resource configuration is wrong."
+      ]
+    },
+    "Analysis.lbr/Scenario Manager": {
+      "library": "Analysis.lbr", "block": "Scenario Manager", "since": "1.25.0", "provedOn": ["2026", "2024"],
+      "summary": "Runs a model once per scenario and records a response for each: factors are the inputs scenarios vary, responses the outputs recorded. Scenarios come either from a full factorial over each factor's min/max/step, or a list of named scenarios with one value per factor.",
+      "useWhen": [
+        "A handful of named what-ifs (Fast/Slow, Lean/Rich) should be compared side by side.",
+        "One or more factors should be swept over a range and every response read at every combination (full factorial)."
+      ],
+      "notFor": [
+        "Finding the single best setting - that is the Optimizer.",
+        "Independent replications of the same scenario for a confidence interval - that is the Analysis Manager's Number of runs."
+      ],
+      "howItWorks": "scenario_manager_configure adds every factor and response the documented Shift-click way - it writes the block's DialogVarName/RowColumnDialogVar statics, then the hidden AddFactor_prm/AddResponse_prm; ExtendSim asks for a name in a 'User Parameter' box, which the server answers itself - and reads every row of FactorVariable_tbl/ResponseVariable_tbl back. For scenarios: \"fullFactorial\" writes each factor's min/max/step into the same table and presses Create DOE; a list of named scenarios sets manual mode, answers ExtendSim's 'how many scenarios' prompt and fills Scenarios_tbl by hand. Run with scenario_manager_run(waitForCompletion: true); scenario_manager_get_results collects the matrix afterwards.",
+      "settings": [
+        {"name": "factors", "tool": "scenario_manager_configure", "meaning": "Inputs to vary: blockId/variable (and optional row/column) of the dialog item, a name shown in the Scenario Manager, and - for a full factorial - min/max/step.", "proved": true},
+        {"name": "responses", "tool": "scenario_manager_configure", "meaning": "Outputs to record: blockId/variable (and optional row/column) and a name.", "proved": true},
+        {"name": "scenarios", "tool": "scenario_manager_configure", "meaning": "\"fullFactorial\" (computed from each factor's min/max/step, capped at 1000 scenarios) or a list of at most 50 named scenarios each giving one value per factor.", "proved": true},
+        {"name": "runsPerScenario / endTime", "tool": "scenario_manager_configure", "meaning": "Optional RunsPerScenario_prm / SimEnd_prm, written and read back if given.", "proved": true}
+      ],
+      "recipes": [
+        {
+          "goal": "Full factorial over one factor, one response",
+          "steps": [
+            "block_add Item.lbr: Create, Queue, Activity, Exit; connect them in that order",
+            "block_configure Activity {\"delayType\": \"fixed\", \"value\": 1}",
+            "scenario_manager_configure {factors: [{name: Delay, blockId: <Activity>, variable: D_prm, min: 0.5, max: 1.5, step: 0.5}], responses: [{name: Exited, blockId: <Exit>, variable: TotalExited_prm}], scenarios: \"fullFactorial\"}",
+            "scenario_manager_run {waitForCompletion: true}; scenario_manager_get_results"
+          ],
+          "observed": "3 scenarios created every time (0.5, 1.0, 1.5), every scenario reporting Exited. Exited values differ run to run (the model is stochastic, no seed fixed): 2026 one capture 94/84/89, MCP-path run 89/98/100; 2024 one capture 93/99/91. The scenario count and that every scenario has every response are what is proved - no single Exited number is.",
+          "provedOn": ["2026", "2024"],
+          "date": "2026-10-08"
+        }
+      ],
+      "notYetProved": [
+        "Database-table factors or responses, ranking or sorting scenarios, factor correlation, a scenario selection other than the server's own \"select all when none is selected\"."
+      ],
+      "pitfalls": [
+        "Use scenario_manager_run with waitForCompletion: true - fire-and-forget checks nothing, so a run that is still going or that ExtendSim aborted looks identical to a finished one.",
+        "Queue before every Activity: Create -> Queue -> Activity -> Exit. An Activity with no Queue in front aborts the run.",
+        "Activity maxItems defaults to 1 - size it for the load each scenario should see.",
+        "A Scenario Manager that already has factors or responses is refused (\"use a new Scenario Manager\") - this version does not support reconfiguring one.",
+        "At most 20 factors and responses together per call (each costs ExtendSim a name prompt of about 4 s, and the call has a 3-minute limit), and at most 50 named scenarios; a full factorial may give up to 1000. More is refused with INVALID_PARAMETER before anything is changed.",
+        "scenario_manager_run(waitForCompletion: true) reruns every scenario from scratch and clears the previous results of the selected scenarios first - it does not add replications to what is already there."
+      ]
+    },
+    "Analysis.lbr/Optimizer": {
+      "library": "Analysis.lbr", "block": "Optimizer", "since": "1.25.0", "provedOn": ["2026", "2024"],
+      "summary": "Searches for the variable values that maximise or minimise an objective built from an equation over named outputs. optimizer_configure adds the variables (with min/max) and outputs the documented Shift-click way, applies one of ExtendSim's Quicker/Better default search strategies, and writes the objective into the block's own equation.",
+      "useWhen": [
+        "One best setting is wanted, not a side-by-side comparison of a few what-ifs - use Scenario Manager for that.",
+        "The objective is a simple expression over a handful of named variables/outputs that can be written as \"MaxX = ...;\" or \"MinX = ...;\"."
+      ],
+      "notFor": [
+        "Several competing objectives at once - this call takes exactly one objective, no Pareto front.",
+        "An objective that needs anything beyond +, -, *, / and this call's own variable/output names."
+      ],
+      "howItWorks": "optimizer_configure adds every variable and output the Shift-click way (answers ExtendSim's 'User Parameter' name prompt itself) and reads VariablesTableItem back row by row, including each variable's min/max. One of DefaultsRandom / DefaultsNonRandom / DefaultsStrictRandom / DefaultsStrictNonRandom is pressed (quality quick/better times randomModel true/false) to give the search sensible defaults - a button press, so this step is never reported as read-back verified. The objective is normalized to \"Name = expr;\" and written to the block's equationArray static, then read back verbatim. optimizer_run(waitForCompletion: true) runs the search; ExtendSim's own \"Optimization converged to X%.\" box is dismissed automatically and its text is returned in dialogs.",
+      "settings": [
+        {"name": "variables", "tool": "optimizer_configure", "meaning": "Inputs the search may change: blockId/variable (and optional row/column), a name, and min/max.", "proved": true},
+        {"name": "outputs", "tool": "optimizer_configure", "meaning": "Outputs the objective may use: blockId/variable (and optional row/column) and a name.", "proved": true},
+        {"name": "objective", "tool": "optimizer_configure", "meaning": "e.g. \"MaxProfit = Exited*10 - Cap*200\", using only this call's variable/output names, numbers, + - * / and parentheses.", "proved": true},
+        {"name": "quality / randomModel", "tool": "optimizer_configure", "meaning": "quick/better times random/non-random selects which Defaults... button is pressed.", "proved": true},
+        {"name": "maxCases", "tool": "optimizer_configure", "meaning": "Optional TermGenerations - caps how many generations the search runs.", "proved": true}
+      ],
+      "recipes": [
+        {
+          "goal": "Maximise a simple profit objective over one capacity variable",
+          "steps": [
+            "block_add Item.lbr: Create, Queue, Activity, Exit; connect them in that order",
+            "block_configure Activity {\"delayType\": \"fixed\", \"value\": 1, \"maxItems\": 1}",
+            "optimizer_configure {variables: [{name: Cap, blockId: <Activity>, variable: MaxLength_prm, min: 1, max: 5}], outputs: [{name: Exited, blockId: <Exit>, variable: TotalExited_prm}], objective: \"MaxProfit = Exited*10 - Cap*200;\", maxCases: 20}",
+            "optimizer_run {waitForCompletion: true}; optimizer_get_results"
+          ],
+          "observed": "generations: 20 on both versions every time (maxCases honoured). best 768.0-782.5 (2026 across two captures), 768.0-772.5 (2024 across two captures) - stochastic, varies run to run. The convergence box text (e.g. \"Optimization converged to 93,2009%.\") was correctly returned in dialogs and dismissed automatically every time, nobody touching ExtendSim.",
+          "provedOn": ["2026", "2024"],
+          "date": "2026-10-08"
+        }
+      ],
+      "notYetProved": [
+        "Multiple objectives, a constraint beyond a variable's own min/max, any search-strategy setting other than the four Defaults... buttons."
+      ],
+      "pitfalls": [
+        "Use optimizer_run with waitForCompletion: true - fire-and-forget checks nothing, including whether even one generation completed.",
+        "Queue before every Activity: Create -> Queue -> Activity -> Exit.",
+        "Activity maxItems defaults to 1.",
+        "An Optimizer that already has variables is refused (\"use a new Optimizer\") - this version does not support reconfiguring one.",
+        "At most 20 variables and outputs together per call (each costs ExtendSim a name prompt of about 4 s, and the call has a 3-minute limit); more is refused with INVALID_PARAMETER before anything is changed. The Optimizer's own table holds 100 rows.",
+        "The objective may only use the names given in this call's variables and outputs, plus numbers and + - * / () - anything else is refused before anything is written.",
+        "A run ExtendSim aborts is reported as an error with ExtendSim's own box texts in dialogs, not a silently shorter optimization."
+      ]
+    },
+    "Analysis.lbr/Analysis Manager": {
+      "library": "Analysis.lbr", "block": "Analysis Manager", "since": "1.25.0", "provedOn": ["2026", "2024"],
+      "summary": "Records one value per response for every replication of a simulation_run batch - ExtendSim's own 'Number of runs' facility, not a run of its own. analysis_manager_configure adds the responses to record; analysis_manager_get_results reads them back from the Analysis database afterwards.",
+      "useWhen": [
+        "Independent replications of the SAME model/scenario are wanted, for a confidence interval rather than a what-if comparison.",
+        "A response's value should be recorded automatically for every replication, instead of read by hand after each run."
+      ],
+      "notFor": [
+        "Comparing different factor settings - use the Scenario Manager.",
+        "Searching for a best setting - use the Optimizer."
+      ],
+      "howItWorks": "analysis_manager_configure writes one row per response into the model-wide _Rsp_Block_Responses table (the response's name, its block and variable) and reads every row back; it reuses existing blank rows before adding new ones, so a stale or stray row never survives the call. Run with simulation_setup_set(numberOfRuns: N) and then one simulation_run - ExtendSim's own 'Number of runs' batch runs all N replications inside that single call, each with its own Run_Number; no looping on the TypeScript/Python side is involved. analysis_manager_get_results then reads _Rslt_Replication_History / _Rslt_Block_Responses for an experiment (default the latest) and returns each replication's responses and whether ExtendSim aborted it.",
+      "settings": [
+        {"name": "responses", "tool": "analysis_manager_configure", "meaning": "blockId/variable and a name for each value recorded on every replication.", "proved": true}
+      ],
+      "recipes": [
+        {
+          "goal": "Record one response over 3 replications",
+          "steps": [
+            "block_add Item.lbr: Create, Queue, Activity, Exit; connect them in that order",
+            "analysis_manager_configure {responses: [{name: Exited, blockId: <Exit>, variable: TotalExited_prm}]}",
+            "simulation_setup_set {numberOfRuns: 3}",
+            "simulation_run {waitForCompletion: true}",
+            "analysis_manager_get_results"
+          ],
+          "observed": "3 replications recorded by one simulation_run call every time, none aborted. Exited values: 2026 one capture 96/87/90, MCP-path run 91/94/95; 2024 one capture 99/100/88, MCP-path run 98/93/100 - all distinct Run_Numbers, all greater than zero, stochastic as expected.",
+          "provedOn": ["2026", "2024"],
+          "date": "2026-10-08"
+        }
+      ],
+      "notYetProved": [
+        "Database-table responses; Multicore Analysis (parallel replications across ExtendSim instances); reading an experiment other than the latest by anything but giving its number directly."
+      ],
+      "pitfalls": [
+        "Use simulation_run with waitForCompletion: true (or poll simulation_status) before reading results - a fire-and-forget run has not finished the batch yet.",
+        "Queue before every Activity: Create -> Queue -> Activity -> Exit.",
+        "Activity maxItems defaults to 1.",
+        "An Analysis Manager that already has responses is refused (\"use a new Analysis Manager\") - this version does not support reconfiguring one. The responses table belongs to the whole model, so a model that already has responses is refused before any block is placed.",
+        "At most 20 responses per call; more is refused with INVALID_PARAMETER before anything is changed.",
+        "numberOfRuns is a simulation_setup_set parameter, not a simulation_run one - set it first, then call simulation_run once; it is ExtendSim's own batch, not a loop the server runs."
       ]
     }
   }

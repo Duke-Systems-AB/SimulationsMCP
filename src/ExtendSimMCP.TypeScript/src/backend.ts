@@ -60,6 +60,16 @@ const COMMAND_TIMEOUTS: Record<string, number> = {
   // first .chm decompile adds a few seconds on top
   block_profile: 120_000,
   block_guide_draft: 120_000,
+  resources_configure: 120_000,
+  // 180s - analysis configure: each factor/response/variable/output costs a "User Parameter" prompt,
+  // measured about 4 s (ExtendSim 2024); 20 items per call (the Python cap) is about 85 s, the Python
+  // prompt deadline is 150 s, and the read-back and scenario cells finish inside the remaining 30 s.
+  scenario_manager_configure: 180_000,
+  optimizer_configure: 180_000,
+  analysis_manager_configure: 180_000,
+  // Reads the Analysis database's result tables through COM, one cell per call; they grow with every
+  // experiment ever recorded in the model (only the wanted experiment's rows are read in full).
+  analysis_manager_get_results: 120_000,
   // 60s - save/close/reopen cycle
   block_configure: 60_000,
   // 2-10min - long-running operations
@@ -93,6 +103,23 @@ const MAX_RETRIES = 2;
  * we fall back to a synthetic EXTENDSIM_ERROR_DIALOG error (W2-2). A benign popup (e.g. an
  * informational message) shouldn't fail an otherwise-successful command. */
 export const DIALOG_DISMISS_GRACE_MS = 5_000;
+
+/** Per-command grace overrides (ms), for commands whose expected confirmation boxes come
+ * BEFORE a further stretch of COM work. resources_configure: ExtendSim confirms the
+ * Auto-Generate press with boxes, then the server still reads the generated tables back and
+ * sets and verifies the queues and releases. Measured live 2026-10-05 (ExtendSim 2024): 0.3 s
+ * with 4 resources and 0.7 s with 40 now that only the needed fields are read - 2.0 s and 8.8 s
+ * when every field was read, so 40 resources outlasted the 5 s default and came back as
+ * EXTENDSIM_ERROR_DIALOG although the configuration succeeded. The override keeps a much
+ * larger model from hitting the same wall. */
+const COMMAND_DIALOG_GRACE_MS: Record<string, number> = {
+  resources_configure: 60_000,
+};
+
+/** The grace window for a command (DIALOG_DISMISS_GRACE_MS unless overridden). */
+export function getDialogGrace(command: string): number {
+  return COMMAND_DIALOG_GRACE_MS[command] ?? DIALOG_DISMISS_GRACE_MS;
+}
 
 // ============================================================================
 // PROCESS STATE
@@ -296,6 +323,8 @@ interface DialogWatcherResult {
   found: boolean;
   dialogText?: string;
   dialogs?: any[];
+  /** True when the watcher was killed and these boxes come from its progress lines: pressed or not is unknown. */
+  salvaged?: boolean;
 }
 
 /**
@@ -315,6 +344,44 @@ function parseDialogWatcherOutput(stdout: string): DialogWatcherResult | null {
   }
 }
 
+/** dialog_report.py's progress-line prefix and its text for a box that could not be read. */
+const PROGRESS_PREFIX = "DIALOG_PROGRESS ";
+export const UNREADABLE_BOX = "ExtendSim showed a message box whose text could not be read";
+const GHOST_PLACEHOLDER = "(text not readable in Ghost state)";
+
+/**
+ * The boxes a killed dialog_watcher.py pass saw, from its stderr progress lines (dialog_report.py).
+ * The watcher prints its JSON only when it ends, so when execFile's timeout kills it - measured on
+ * ExtendSim 2024: each UI Automation press takes about 2 s, so two boxes can outlast the timeout -
+ * these lines are all that says which boxes ExtendSim showed. Each line is written before the box is
+ * pressed, so a salvaged box is never reported as dismissed. A box that was seen but not read is
+ * reported as UNREADABLE_BOX: the AI must always learn that ExtendSim showed a box.
+ */
+export function dialogsFromProgress(stderr: string): { title?: string; texts: string[]; dismissed: false }[] {
+  const out: { title?: string; texts: string[]; dismissed: false }[] = [];
+  let seen = false;
+  for (const line of (stderr || "").split(/\r?\n/)) {
+    if (!line.startsWith(PROGRESS_PREFIX)) continue;
+    let payload: { seen?: unknown; dialog?: { title?: string; texts?: unknown } } | null;
+    try {
+      payload = JSON.parse(line.slice(PROGRESS_PREFIX.length));
+    } catch {
+      continue;
+    }
+    if (!payload || typeof payload !== "object") continue;
+    if (payload.seen) seen = true;
+    const entry = payload.dialog;
+    if (entry && typeof entry === "object") {
+      const texts = (Array.isArray(entry.texts) ? entry.texts : []).filter(
+        (t: unknown): t is string => typeof t === "string" && t.trim() !== "" && t !== GHOST_PLACEHOLDER,
+      );
+      out.push({ title: entry.title, texts: texts.length ? texts : [UNREADABLE_BOX], dismissed: false });
+    }
+  }
+  if (seen && out.length === 0) out.push({ texts: [UNREADABLE_BOX], dismissed: false });
+  return out;
+}
+
 /**
  * Spawns a separate Python process to detect and dismiss blocking ExtendSim dialogs.
  * Uses Windows UI Automation to find QMessageBox popups, read their text, and click OK.
@@ -324,15 +391,17 @@ function parseDialogWatcherOutput(stdout: string): DialogWatcherResult | null {
  */
 export async function dismissExtendSimDialog(timeoutSec: number = 5): Promise<DialogWatcherResult> {
   return new Promise((resolve) => {
+    // Safety net only, in case execFile never calls back: it must fire after execFile's own timeout
+    // (timeoutSec + 3), or it would answer "no dialog" before a late or killed pass has reported.
     const timer = setTimeout(() => {
       resolve({ found: false });
-    }, (timeoutSec + 2) * 1000);
+    }, (timeoutSec + 6) * 1000);
 
     execFile(
       "python",
       ["-u", DIALOG_WATCHER_SCRIPT, String(timeoutSec), "0.5"],
       { timeout: (timeoutSec + 3) * 1000 },
-      (error, stdout, _stderr) => {
+      (error, stdout, stderr) => {
         clearTimeout(timer);
         // execFile reports an error for dialog_watcher.py's own exit code 1, which it
         // uses for the normal "no dialog found" case (see dialog_watcher.py). If stdout
@@ -340,6 +409,13 @@ export async function dismissExtendSimDialog(timeoutSec: number = 5): Promise<Di
         // logging an error on every routine "no dialog" check.
         const result = parseDialogWatcherOutput(stdout);
         if (!result) {
+          const salvaged = error?.killed ? dialogsFromProgress(String(stderr ?? "")) : [];
+          if (salvaged.length > 0) {
+            const texts = salvaged.flatMap((d) => d.texts).join("; ");
+            console.error(`Dialog watcher stopped after ${timeoutSec} s; it had seen: ${texts}`);
+            resolve({ found: true, dialogText: texts, dialogs: salvaged, salvaged: true });
+            return;
+          }
           if (error?.killed) {
             // execFile's timeout stopped the watcher before it could print anything.
             // Measured live 2026-09-25: this happens because ExtendSim was busy (a long
@@ -759,8 +835,9 @@ export function handleDialogResult(req: PendingRequest, dialogInfo: DialogInfo, 
 
   (req.dialogsSeen ??= []).push(dialogInfo);
   const attempt = req.attempt;
+  const grace = getDialogGrace(req.command);
   console.error(
-    `Dialog dismissed for '${req.command}' (${source}); waiting up to ${DIALOG_DISMISS_GRACE_MS / 1000}s for the real response before treating this as an error...`,
+    `Dialog dismissed for '${req.command}' (${source}); waiting up to ${grace / 1000}s for the real response before treating this as an error...`,
   );
   req.graceTimerId = setTimeout(() => {
     req.graceTimerId = undefined;
@@ -768,7 +845,7 @@ export function handleDialogResult(req: PendingRequest, dialogInfo: DialogInfo, 
     if (!requestQueue.includes(req) || req.attempt !== attempt) return;
     console.error(`Grace window lapsed for '${req.command}' with no response; falling back to synthetic dialog error`);
     resolveWithDialogError(req, dialogInfo, source);
-  }, DIALOG_DISMISS_GRACE_MS);
+  }, grace);
 }
 
 /**
@@ -841,7 +918,15 @@ export function armRequestTimers(req: PendingRequest): void {
           // Skip if request completed, or was superseded, while we were checking
           if (!requestQueue.includes(req) || req.attempt !== attempt) return;
 
-          if (dialogResult.found && dialogResult.dialogs?.length) {
+          if (dialogResult.found && dialogResult.dialogs?.length && dialogResult.salvaged) {
+            // The watcher was stopped mid-pass (slow UI Automation presses), so whether it pressed the
+            // box is unknown - most likely it did. Do not fail the command over it: keep the text so
+            // the real response carries it (dialogsDuringCommand), and leave the main timeout armed in
+            // case the box is in fact still open.
+            const allTexts = dialogResult.dialogText || "";
+            console.error(`Early dialog check was stopped after seeing: ${allTexts}; waiting for the response`);
+            (req.dialogsSeen ??= []).push({ found: true, text: allTexts, dismissed: false, details: dialogResult.dialogs });
+          } else if (dialogResult.found && dialogResult.dialogs?.length) {
             const allTexts = dialogResult.dialogText || "";
             const allDismissed = dialogResult.dialogs.every((d: any) => d.dismissed);
             console.error(`Early dialog check found dialog: ${allTexts} (dismissed: ${allDismissed})`);
@@ -1183,6 +1268,26 @@ export async function blockProfile(params: { library: string; block?: string; de
 
 export async function blockGuideDraft(params: { library: string; block: string }) {
   return await sendCommand("block_guide_draft", params);
+}
+
+export async function resourcesConfigure(params: Record<string, unknown>) {
+  return await sendCommand("resources_configure", params);
+}
+
+export async function scenarioManagerConfigure(params: Record<string, unknown>) {
+  return await sendCommand("scenario_manager_configure", params);
+}
+
+export async function optimizerConfigure(params: Record<string, unknown>) {
+  return await sendCommand("optimizer_configure", params);
+}
+
+export async function analysisManagerConfigure(params: Record<string, unknown>) {
+  return await sendCommand("analysis_manager_configure", params);
+}
+
+export async function analysisManagerGetResults(params: Record<string, unknown>) {
+  return await sendCommand("analysis_manager_get_results", params);
 }
 
 export async function blockDiscover(params: {

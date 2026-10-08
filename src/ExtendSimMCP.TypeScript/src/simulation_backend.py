@@ -269,6 +269,7 @@ class ErrorCode:
     COM_CONNECTION_LOST = "COM_CONNECTION_LOST"
     EXTENDSIM_NOT_RUNNING = "EXTENDSIM_NOT_RUNNING"
     EXTENDSIM_START_FAILED = "EXTENDSIM_START_FAILED"
+    MULTIPLE_EXTENDSIM_INSTANCES = "MULTIPLE_EXTENDSIM_INSTANCES"   # see instance_guard.py
 
     # Model errors
     MODEL_NOT_FOUND = "MODEL_NOT_FOUND"
@@ -331,6 +332,13 @@ class ErrorCode:
 
     # License errors
     LICENSE_DETECTION_FAILED = "LICENSE_DETECTION_FAILED"
+
+    # Advanced Resource Management errors
+    ARM_GENERATION_FAILED = "ARM_GENERATION_FAILED"
+    ARM_VERIFY_FAILED = "ARM_VERIFY_FAILED"
+
+    # Analysis tools errors (Scenario Manager, Optimizer, Analysis Manager)
+    ANALYSIS_CONFIG_FAILED = "ANALYSIS_CONFIG_FAILED"
 
 
 def _error(code: str, message: str, **extra) -> dict:
@@ -581,6 +589,12 @@ def extendsim_status() -> dict:
         except Exception:
             result["modelOpen"] = False
             result["modelName"] = ""
+
+        # One ExtendSim at a time: every other command is refused while two or more run.
+        blocked = _instance_guard().check("block_list")
+        if blocked is not None:
+            result["warning"] = blocked["error"]
+            result["instances"] = blocked["instances"]
 
         return result
 
@@ -6146,30 +6160,43 @@ def shift_set_schedule(block_id: int,
         schedule: List of period dicts with keys:
             - startTime: Period start time
             - endTime: Period end time
-            - capacity: Capacity level (0=off, 1=on, or fractional)
+            - capacity: 0 = off, 1 = on; any other number only with status_type 2 (numbers shift)
     """
     try:
         app = get_extendsim_app()
 
-        num_periods = 0
+        import shift_schedule
 
-        # Set schedule entries if provided
-        if schedule and len(schedule) > 0:
-            # Set schedule entries in ShiftTable (stringtable with row/col indexing)
-            # Columns: 0=Start Time, 1=End Time, 2=Shift Status/Capacity
-            num_periods = len(schedule)
-            for i, period in enumerate(schedule):
-                start_time = period.get("startTime", 0)
-                end_time = period.get("endTime", 8)
-                capacity = period.get("capacity", 1)
-
-                _set_var(app, block_id, "ShiftTable", start_time, i, 0)
-                _set_var(app, block_id, "ShiftTable", end_time, i, 1)
-                _set_var(app, block_id, "ShiftTable", capacity, i, 2)
-
-        # v1.17.4.4 — status type, name, repeat, time units
         if status_type is not None:
             _set_var(app, block_id, "ShiftStatusTypePop", status_type)
+        num_periods, rows = 0, []
+        if schedule:
+            app.Execute("global0 = -1;")
+            app.Execute(f'global0 = GetDialogItemInfo({block_id}, "ShiftTable", 5);')
+            n_rows = int(parse_float(app.Request("System", "global0+:0:0:0")))
+            current_type = int(parse_float(_get_var(app, block_id, "ShiftStatusTypePop")))
+
+            class _Cells:
+                def row_count(self):
+                    return n_rows
+
+                def set(self, row, col, text):
+                    _set_dialog_var(app, block_id, "ShiftTable", text, row, col)
+
+                def get(self, row, col):
+                    app.Execute(f'globalStr0 = GetDialogVariable({block_id}, "ShiftTable", {row}, {col});')
+                    return _read_str0(app)
+
+            try:
+                rows = shift_schedule.change_rows(schedule, current_type)
+                shift_schedule.write(_Cells(), rows)
+            except ValueError as e:
+                return _error(ErrorCode.INVALID_PARAMETER, str(e), blockId=block_id)
+            except RuntimeError as e:
+                return _error(ErrorCode.SET_VALUE_FAILED, str(e), blockId=block_id)
+            num_periods = len(schedule)
+
+        # v1.17.4.4 — status type, name, repeat, time units
         if shift_name is not None:
             _set_var_string(app, block_id, "ShiftName", shift_name)
         if repeat is not None:
@@ -6187,6 +6214,7 @@ def shift_set_schedule(block_id: int,
             "success": True,
             "blockId": block_id,
             "periods": num_periods,
+            "rows": [list(r) for r in rows],
             "schedule": schedule,
             "statusType": status_type,
             "shiftName": shift_name,
@@ -7639,13 +7667,18 @@ def optimizer_set_config(block_id: int,
                       blockId=block_id, operation="optimizer_set_config")
 
 
+def _simulation_phase(app) -> int:
+    app.Execute("globalInt0 = GetSimulationPhase();")
+    return int(parse_float(app.Request("System", "globalInt0+:0:0:0")) or 0)
+
+
 def optimizer_run(model_id: Optional[str] = None,
                   timeout: int = 600,
                   wait_for_completion: bool = False) -> dict:
     """Runs optimization via ExtendSim's built-in optimizer.
 
-    Uses ExecuteMenuCommand(6002) which triggers the Optimizer block.
-    COM call returns immediately.
+    Uses ExecuteMenuCommand(6002) which triggers the Optimizer block; ExtendSim runs the whole
+    optimization before that call returns (measured 2026-10-05).
 
     Args:
         timeout: Max seconds to wait when wait_for_completion=True (default 600 = 10 minutes)
@@ -7657,54 +7690,60 @@ def optimizer_run(model_id: Optional[str] = None,
     try:
         app = get_extendsim_app()
 
-        # Start background dialog auto-dismisser for COM error dialogs
-        _start_dialog_auto_dismisser(duration_sec=timeout, poll_sec=3.0)
+        # Start background dialog auto-dismisser for COM error dialogs. Covers the blocking
+        # Execute() below, not the caller's `timeout` (see _start_dialog_auto_dismisser). The
+        # watcher must be stopped no matter how this function leaves - including an exception
+        # from any of the calls AFTER Execute() (wait_until_idle, _enumerate_blocks_by_name,
+        # optimizer_get_results) - or it keeps polling and dismissing boxes, including the
+        # user's own, for up to _DISMISSER_SAFETY_CAP_SEC (bug found in review: the old code only
+        # stopped it on paths it wrote out by hand, missing exactly this one).
+        watcher = _start_dialog_auto_dismisser(duration_sec=_DISMISSER_SAFETY_CAP_SEC, poll_sec=3.0)
+        try:
+            app.Execute("ExecuteMenuCommand(6002)")
 
-        # Trigger optimization/scenario run
-        app.Execute("ExecuteMenuCommand(6002)")
+            # Without wait_for_completion the outcome is not checked. ExtendSim has run the
+            # optimization by the time ExecuteMenuCommand returns (measured), so the dismisser is
+            # no longer needed.
+            if not wait_for_completion:
+                return {
+                    "success": True,
+                    "status": "started",
+                    "dialogs": _dismisser_texts(watcher),
+                    "message": "Optimizer run. The outcome was not checked: use optimizer_get_results, or "
+                               "waitForCompletion=true to have it checked."
+                }
 
-        # Fire-and-forget mode: return immediately
-        if not wait_for_completion:
+            # Blocking mode. ExecuteMenuCommand(6002) returns with the run already finished
+            # (measured 2026-10-05), so the outcome comes from the Optimizer's own counters, not
+            # from watching phases.
+            import analysis_run
+            start_time = time.time()
+            if not analysis_run.wait_until_idle(lambda: _simulation_phase(app), time.sleep, time.time,
+                                                timeout, poll=2):
+                return _error(ErrorCode.OPTIMIZER_TIMEOUT, f"Optimization timed out after {timeout}s",
+                              elapsedSeconds=round(time.time() - start_time, 1))
+            optimizers = _enumerate_blocks_by_name(app, {"Optimizer"})
+            if not optimizers:
+                return _error(ErrorCode.BLOCK_NOT_FOUND, "No Optimizer block found in the model.")
+            readings = optimizer_get_results(optimizers[0][0]).get("results") or {}
+            outcome = analysis_run.optimizer_outcome(readings)
+            elapsed = round(time.time() - start_time, 1)
+            if not outcome["ok"]:
+                return _error(ErrorCode.OPTIMIZER_FAILED, outcome["message"], elapsedSeconds=elapsed,
+                              blockId=optimizers[0][0], results=readings, dialogs=_dismisser_texts(watcher))
             return {
                 "success": True,
-                "status": "started",
-                "message": "Optimizer started. Use simulation_status to check if running, "
-                           "then optimizer_get_results to collect results."
+                "status": "completed",
+                "elapsedSeconds": elapsed,
+                "blockId": optimizers[0][0],
+                "generations": outcome["generations"],
+                "best": outcome["best"],
+                "convergence": outcome["convergence"],
+                "results": readings,
+                "dialogs": _dismisser_texts(watcher),
             }
-
-        # Legacy blocking mode: poll until simulation phase returns to idle (0)
-        start_time = time.time()
-        started = False
-        while True:
-            elapsed = time.time() - start_time
-            if elapsed > timeout:
-                return _error(ErrorCode.OPTIMIZER_TIMEOUT,
-                             f"Optimization timed out after {timeout}s",
-                             elapsedSeconds=elapsed)
-
-            time.sleep(2)  # Poll every 2 seconds
-            try:
-                app.Execute("globalInt0 = GetSimulationPhase();")
-                phase = int(parse_float(app.Request("System", "globalInt0+:0:0:0")) or 0)
-                if phase > 0:
-                    started = True  # Optimizer is running
-                if started and phase == 0:
-                    break  # Optimizer finished (went from running -> idle)
-                if not started and elapsed > 30:
-                    # Optimizer never started after 30s — likely failed
-                    return _error(ErrorCode.OPTIMIZER_FAILED,
-                                 "Optimizer did not start within 30 seconds. "
-                                 "Check that an Optimizer block exists with configured factors.",
-                                 elapsedSeconds=elapsed)
-            except Exception:
-                # COM might be briefly unresponsive during optimization
-                continue
-
-        return {
-            "success": True,
-            "status": "completed",
-            "elapsedSeconds": round(time.time() - start_time, 1)
-        }
+        finally:
+            watcher.stop.set()
     except Exception as e:
         return _error(ErrorCode.OPTIMIZER_FAILED, str(e),
                       operation="optimizer_run")
@@ -7807,6 +7846,23 @@ def scenario_manager_set_config(block_id: int,
                       blockId=block_id, operation="scenario_manager_set_config")
 
 
+def _sm_layout(app, sm_id: int):
+    """(input columns, response columns) of Scenarios_tbl: block factors + DB factors, responses.
+    None when a count cannot be read - the run check must not guess the layout (fail closed)."""
+    counts = []
+    for var in ("NumFactorVariables", "NumDBFactorVariables", "NumResponseVariables"):
+        try:
+            app.Execute("global0 = -1;")      # a failed read must not leave the previous count
+            app.Execute(f'global0 = GetVariableNumeric({sm_id}, "{var}", 0, 0);')
+            n = parse_float_nullable(app.Request("System", "global0+:0:0:0"))
+        except Exception:
+            return None
+        if n is None or n < 0 or n != int(n):
+            return None
+        counts.append(int(n))
+    return counts[0] + counts[1], counts[2]
+
+
 def _collect_sm_results(app, sm_id: int, total_scenarios: int):
     """Collect results from Scenarios_tbl after SM run completes.
 
@@ -7828,29 +7884,8 @@ def _collect_sm_results(app, sm_id: int, total_scenarios: int):
     # Scenarios_tbl layout: [Select][Name][Factor1..N][Response1..M]
     # Total cols = 2 + NumFactorVariables + NumDBFactorVariables + NumResponseVariables
     # We read these from the SM block to calculate total columns.
-    num_cols = 2  # Minimum: col 0 (Select) + col 1 (Name)
-    try:
-        # Read NumFactorVariables, NumDBFactorVariables, NumResponseVariables from SM block
-        num_factor = 0
-        num_db_factor = 0
-        num_response = 0
-        try:
-            num_factor = int(_get_var(app, sm_id, "NumFactorVariables"))
-        except Exception:
-            pass
-        try:
-            num_db_factor = int(_get_var(app, sm_id, "NumDBFactorVariables"))
-        except Exception:
-            pass
-        try:
-            num_response = int(_get_var(app, sm_id, "NumResponseVariables"))
-        except Exception:
-            pass
-        calculated = 2 + num_factor + num_db_factor + num_response
-        if calculated > 2:
-            num_cols = calculated
-    except Exception:
-        pass
+    n_inputs, n_responses = _sm_layout(app, sm_id) or (0, 0)
+    num_cols = 2 + n_inputs + n_responses  # [Select][Name][Factor1..N][DB factors][Response1..M]
 
     # Read all scenario data (skip col 0 = checkbox)
     scenarios = []
@@ -7885,12 +7920,39 @@ def _collect_sm_results(app, sm_id: int, total_scenarios: int):
     return scenarios
 
 
+# A dead-man's switch for _start_dialog_auto_dismisser when it covers a blocking
+# ExecuteMenuCommand() call: see that function's docstring (bug found live 2026-10-08).
+_DISMISSER_SAFETY_CAP_SEC = 24 * 3600
+
+# Upper bound on ONE dialog_watcher.py pass inside that dismisser. Measured live on ExtendSim 2024
+# (2026-10-08): a pass that reads and presses an aborted run's two chained boxes takes 7-8 s
+# (Python start-up, ~2 s for each UIA press to return, one more look); the old 8 s bound killed
+# such a pass now and then after both boxes were closed, and its texts were lost. 20 s lets a
+# chain finish; a pass that still runs over is killed and reported from its progress lines.
+_DISMISSER_PASS_TIMEOUT_SEC = 20
+
+
 def _start_dialog_auto_dismisser(duration_sec: int = 600, poll_sec: float = 2.0):
     """Start a background thread that auto-dismisses ExtendSim error dialogs.
 
-    Runs for up to duration_sec, polling every poll_sec seconds.
+    Runs for up to duration_sec (or until thread.stop is set), polling every poll_sec seconds.
     Uses the dialog_watcher.py subprocess for reliable UIA-based dismissal.
-    Returns the thread (daemon, will die with process).
+    Returns the thread (daemon, will die with process); thread.texts collects the texts of the
+    boxes it dismissed, so callers can report why ExtendSim stopped a run.
+
+    duration_sec is a dead-man's switch, not an expected run length: a caller that blocks on a
+    synchronous ExecuteMenuCommand() call (which has no bound of its own) must keep this watcher
+    alive for as long as that call might run, however long that turns out to be, and always calls
+    `thread.stop.set()` itself (in a finally) right after the call returns. Passing a
+    caller-chosen "how long am I willing to wait" value here (as both optimizer_run and
+    scenario_manager_run used to) lets the watcher expire while the blocking call is still
+    running, long before any dialog it needs to catch - e.g. the Optimizer's own "Optimization
+    converged to X%." box - appears. Measured live 2026-10-08: an Optimizer run's
+    ExecuteMenuCommand(6002) call took 8267.91s to return against duration_sec=300 - not because
+    the optimization itself was slow, but because that convergence box sat open, unanswered, for
+    the rest of that time (the watcher had already given up at the 300s mark). Whatever the
+    reason a call runs longer than a caller's own `timeout`, this watcher must still be covering
+    it; callers should pass _DISMISSER_SAFETY_CAP_SEC, not `timeout`.
     """
     import threading
     import subprocess
@@ -7900,29 +7962,60 @@ def _start_dialog_auto_dismisser(duration_sec: int = 600, poll_sec: float = 2.0)
 
     def _dismiss_loop():
         import time as _time
+        import dialog_report
         deadline = _time.time() + duration_sec
-        while _time.time() < deadline:
+        while _time.time() < deadline and not thread.stop.is_set():
             try:
-                # Quick check: spawn dialog_watcher with short timeout
-                result = subprocess.run(
-                    ["python", "-u", watcher_script, "3", "0.5"],
-                    capture_output=True, text=True, timeout=8
-                )
-                if result.returncode == 0:
-                    try:
-                        data = json.loads(result.stdout.strip())
-                        if data.get("found"):
-                            # Dialog dismissed — check for chained dialogs immediately
-                            continue
-                    except Exception:
-                        pass
+                # One dialog_watcher pass: looks for 3 s, then follows any chain of boxes.
+                # A pass killed by the timeout prints no JSON, but its stderr progress lines
+                # still say which boxes it saw and read (dialog_report; bug found live on 2024,
+                # see _DISMISSER_PASS_TIMEOUT_SEC) - and a box whose text cannot be read is
+                # reported as dialog_report.UNREADABLE_BOX, never dropped.
+                try:
+                    result = subprocess.run(
+                        ["python", "-u", watcher_script, "3", "0.5"],
+                        capture_output=True, text=True, timeout=_DISMISSER_PASS_TIMEOUT_SEC
+                    )
+                    stdout, stderr, finished = result.stdout, result.stderr, True
+                except subprocess.TimeoutExpired as killed:
+                    stdout, stderr, finished = killed.stdout, killed.stderr, False
+                if isinstance(stdout, bytes):
+                    stdout = stdout.decode("utf-8", "replace")
+                if isinstance(stderr, bytes):
+                    stderr = stderr.decode("utf-8", "replace")
+                thread.texts.extend(dialog_report.texts_from_pass(stdout, stderr, finished))
+                if finished and dialog_report.pass_found(stdout):
+                    # Dialog dismissed - check for chained dialogs immediately
+                    continue
             except Exception:
                 pass
             _time.sleep(poll_sec)
 
     thread = threading.Thread(target=_dismiss_loop, daemon=True)
+    thread.texts = []
+    thread.stop = threading.Event()
     thread.start()
     return thread
+
+
+def _dismisser_texts(watcher, join_timeout=_DISMISSER_PASS_TIMEOUT_SEC + 5):
+    """Stops the dismisser and waits for its current pass to finish before reading its texts.
+
+    Race found in review: a box that was just dismissed - which is exactly what let the blocking
+    Execute() return - can have its text appended to watcher.texts by the dismiss loop's CURRENT
+    iteration (one dialog_watcher.py subprocess call, at most _DISMISSER_PASS_TIMEOUT_SEC)
+    slightly AFTER this read would otherwise copy the list, because setting `stop` only tells the
+    loop not to start another iteration - it does not wait for the one already running. (The
+    live `dialogs: []` on ExtendSim 2024 turned out to have a different cause - a pass killed by
+    its timeout; see _DISMISSER_PASS_TIMEOUT_SEC and dialog_report.)
+
+    join_timeout bounds the wait (one pass is at most _DISMISSER_PASS_TIMEOUT_SEC, plus headroom)
+    so a thread that somehow never exits cannot hang the caller - whatever texts are there after
+    the join (or the timeout) are returned regardless.
+    """
+    watcher.stop.set()
+    watcher.join(timeout=join_timeout)
+    return list(watcher.texts)
 
 
 def _detect_blocking_dialog():
@@ -8025,6 +8118,21 @@ def _read_sm_config(app, auto_select_all: bool = True):
     except Exception:
         config["totalScenarios"] = None
 
+    # The block's own Scenarios_tbl is what a run executes, and the selection below reads and writes
+    # its rows - so its row count decides, also when it is 0. Measured 2026-10-05: right after "Create
+    # Scenarios" the table held 3 rows while "All Scenarios" in the _Scenario DB had 1 record; and with
+    # an empty table but 3 DB records, selecting by the DB count wrote past the table and ExtendSim
+    # raised modal "Array reference out of range" boxes. When the table cannot be read, the count is
+    # unknown (None): nothing is selected or run.
+    table_rows = -1
+    try:
+        app.Execute("global0 = -1;")
+        app.Execute(f'global0 = GetDialogItemInfo({sm_id}, "Scenarios_tbl", 5);')
+        table_rows = int(parse_float(app.Request("System", "global0+:0:0:0")))
+    except Exception:
+        pass
+    config["totalScenarios"] = table_rows if table_rows >= 0 else None
+
     # Read scenario selection state from Scenarios_tbl column 0 (Select checkbox)
     # Must use GetDialogVariable directly — _get_var routes _tbl suffix wrong
     SCENARIO_SELECTCOL = 0
@@ -8100,10 +8208,11 @@ def scenario_manager_run(model_id: Optional[str] = None,
                          smConfig=sm_config,
                          suggestion="Select scenarios on the Scenarios tab or set auto_select_all=True.")
 
-        # If not all scenarios are selected, select all before running
+        # Select all only when nothing is selected (the documented behaviour); a selection the user
+        # made stands, so their other scenarios - and those scenarios' results - are left alone.
         total = sm_config.get("totalScenarios") or 0
         selected = sm_config.get("selectedScenarios") or 0
-        if selected < total and total > 0:
+        if selected == 0 and total > 0:
             sm_id = sm_config["smBlockId"]
             SCENARIO_SELECTCOL = 0
             try:
@@ -8115,107 +8224,107 @@ def scenario_manager_run(model_id: Optional[str] = None,
             except Exception:
                 pass  # Continue with whatever was selected
 
+        # Only results written by THIS run may count: when the outcome is checked (wait_for_completion),
+        # empty the selected scenarios' response cells first and read them back (measured 2026-10-05:
+        # an aborted rerun left the previous run's results in place, and they were reported as a
+        # completed run). Without wait_for_completion nothing is checked, so nothing is changed.
+        import analysis_run
+        sm_id = sm_config["smBlockId"]
+        selected_rows = sm_config.get("selectedIndices") or []
+        layout = None
+        if wait_for_completion:
+            layout = _sm_layout(app, sm_id)
+            if layout is None:
+                return _error(ErrorCode.OPTIMIZER_FAILED,
+                              "Could not read the Scenario Manager's factor and response counts, so the "
+                              "run's results could not be checked; nothing was run.", smConfig=sm_config,
+                              suggestion="Run with waitForCompletion=false to run without the check.")
+            if layout[1] == 0:
+                return _error(ErrorCode.OPTIMIZER_FAILED,
+                              "The Scenario Manager has no block responses, so whether the scenarios ran "
+                              "could not be checked; nothing was run.", smConfig=sm_config,
+                              suggestion="Add a block response, or run with waitForCompletion=false to "
+                                         "run without the check.")
+            app.Execute("global0 = -1;")
+            app.Execute(f'global0 = GetDialogItemInfo({sm_id}, "Scenarios_tbl", 5);')
+            table_rows = int(parse_float(app.Request("System", "global0+:0:0:0")))
+            if any(r < 0 or r >= table_rows for r in selected_rows):
+                return _error(ErrorCode.OPTIMIZER_FAILED,
+                              "The selected scenarios do not match the Scenarios table "
+                              f"({table_rows} rows), so the results could not be checked; nothing was run.",
+                              smConfig=sm_config)
+            cells = analysis_run.response_cells(selected_rows, layout[0], layout[1])
+            for row, col in cells:
+                app.Execute(f'SetDialogVariable({sm_id}, "Scenarios_tbl", "", {row}, {col});')
+            for row, col in cells:
+                app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "Scenarios_tbl", {row}, {col});')
+                if (_read_str0(app) or "").strip():
+                    return _error(ErrorCode.SET_VALUE_FAILED,
+                                  "Could not clear the previous results before the run; nothing was run.",
+                                  smConfig=sm_config, row=row, column=col)
+
         # Start background dialog auto-dismisser to handle COM error dialogs
         # (sCode: 80004003) that appear during SM scenario transitions on large models.
         # These are internal ExtendSim errors that don't prevent SM from completing.
-        _start_dialog_auto_dismisser(duration_sec=timeout, poll_sec=3.0)
+        # Covers the blocking Execute() below, not the caller's `timeout` (see
+        # _start_dialog_auto_dismisser). Must be stopped no matter how this leaves - including an
+        # exception from any of the calls AFTER Execute() (wait_until_idle, the
+        # CurrentScenarioNumber_txt read, _collect_sm_results) - or it keeps polling and
+        # dismissing boxes, including the user's own, for up to _DISMISSER_SAFETY_CAP_SEC (bug
+        # found in review: the old code only stopped it on paths it wrote out by hand, missing
+        # exactly this one).
+        watcher = _start_dialog_auto_dismisser(duration_sec=_DISMISSER_SAFETY_CAP_SEC, poll_sec=3.0)
+        try:
+            app.Execute("ExecuteMenuCommand(6002)")
 
-        app.Execute("ExecuteMenuCommand(6002)")
+            # Without wait_for_completion the outcome is not checked. ExtendSim has run the
+            # scenarios by the time ExecuteMenuCommand returns (measured), so the dismisser is no
+            # longer needed.
+            if not wait_for_completion:
+                return {
+                    "success": True,
+                    "status": "started",
+                    "smConfig": sm_config,
+                    "dialogs": _dismisser_texts(watcher),
+                    "message": "Scenario Manager run. The outcome was not checked: use "
+                               "scenario_manager_get_results to collect the results, or waitForCompletion=true "
+                               "to have every selected scenario's results checked."
+                }
 
-        # Fire-and-forget mode: return immediately
-        if not wait_for_completion:
+            # Blocking mode. ExecuteMenuCommand(6002) returns with the run already finished
+            # (measured 2026-10-05), and the scenario counter cannot tell an aborted last scenario
+            # from a finished one - so the outcome comes from the results: every selected scenario
+            # needs every response.
+            start_time = time.time()
+            if not analysis_run.wait_until_idle(lambda: _simulation_phase(app), time.sleep, time.time,
+                                                timeout, poll=3):
+                return _error(ErrorCode.OPTIMIZER_TIMEOUT, f"Scenario run timed out after {timeout}s",
+                              elapsedSeconds=round(time.time() - start_time, 1), smConfig=sm_config)
+            app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "CurrentScenarioNumber_txt", 0, 0);')
+            last_scenario = _read_str0(app) or ""
+            results = _collect_sm_results(app, sm_id, sm_config.get("totalScenarios") or 0)
+            selected = selected_rows or list(range(len(results)))
+            missing = analysis_run.scenarios_without_results(results, selected, layout[0], layout[1])
+            elapsed = round(time.time() - start_time, 1)
+            if missing:
+                return _error(ErrorCode.OPTIMIZER_FAILED,
+                              f"{len(missing)} of {len(selected)} scenarios have no results - ExtendSim stopped "
+                              f"the run (scenario counter {last_scenario or 'unknown'}); ExtendSim's own "
+                              "messages are in dialogs",
+                              scenariosWithoutResults=missing, lastScenario=last_scenario,
+                              elapsedSeconds=elapsed, smConfig=sm_config, results=results,
+                              dialogs=_dismisser_texts(watcher))
             return {
                 "success": True,
-                "status": "started",
+                "status": "completed",
+                "elapsedSeconds": elapsed,
+                "lastScenario": last_scenario,
                 "smConfig": sm_config,
-                "message": "Scenario Manager started. Use scenario_manager_status to poll progress, "
-                           "then scenario_manager_get_results to collect results."
+                "results": results,
+                "dialogs": _dismisser_texts(watcher),
             }
-
-        # Legacy blocking mode: poll using CurrentScenarioNumber_txt
-        # instead of GetSimulationPhase() which triggers COM errors (sCode: 80004003)
-        # during scenario transitions on large models.
-        sm_id = sm_config["smBlockId"]
-        start_time = time.time()
-        started = False
-        last_scenario = ""
-        consecutive_failures = 0
-        while True:
-            elapsed = time.time() - start_time
-            if elapsed > timeout:
-                return _error(ErrorCode.OPTIMIZER_TIMEOUT,
-                             f"Scenario run timed out after {timeout}s",
-                             elapsedSeconds=elapsed,
-                             lastScenario=last_scenario,
-                             smConfig=sm_config)
-
-            time.sleep(3)
-            try:
-                # Read current scenario progress — lighter than GetSimulationPhase
-                app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "CurrentScenarioNumber_txt", 0, 0);')
-                scenario_txt = _read_str0(app) or ""
-                consecutive_failures = 0  # Reset on success
-
-                if scenario_txt and scenario_txt != last_scenario:
-                    last_scenario = scenario_txt
-                    started = True
-
-                # Check if SM is done: scenario text shows "X/Y" where X == Y
-                # and simulation phase is idle
-                if started and scenario_txt:
-                    try:
-                        parts = scenario_txt.split("/")
-                        if len(parts) == 2:
-                            current = int(parts[0])
-                            total = int(parts[1])
-                            if current >= total:
-                                # Final scenario reached — check if simulation is idle
-                                time.sleep(3)
-                                app.Execute("globalInt0 = GetSimulationPhase();")
-                                phase = int(parse_float(app.Request("System", "globalInt0+:0:0:0")) or 0)
-                                if phase == 0:
-                                    break  # SM finished
-                    except (ValueError, IndexError):
-                        pass
-
-                if not started and elapsed > 120:
-                    return _error(ErrorCode.OPTIMIZER_FAILED,
-                                 "Scenario Manager did not start within 120 seconds. "
-                                 "Check that scenarios are enabled on the Scenarios tab.",
-                                 elapsedSeconds=elapsed,
-                                 smConfig=sm_config)
-            except Exception:
-                consecutive_failures += 1
-                # During SM run, COM can be temporarily unstable — tolerate up to 10 failures
-                if not started and consecutive_failures >= 3:
-                    dialog_text = _detect_blocking_dialog()
-                    if dialog_text:
-                        return _error(ErrorCode.OPTIMIZER_FAILED,
-                                     f"Scenario Manager blocked by dialog: {dialog_text}",
-                                     elapsedSeconds=round(time.time() - start_time, 1),
-                                     smConfig=sm_config,
-                                     suggestion="Check scenario selection on the Scenarios tab.")
-                if consecutive_failures >= 10:
-                    return _error(ErrorCode.OPTIMIZER_FAILED,
-                                 "Lost COM connection during Scenario Manager run after "
-                                 f"{consecutive_failures} consecutive failures.",
-                                 elapsedSeconds=round(time.time() - start_time, 1),
-                                 lastScenario=last_scenario,
-                                 smConfig=sm_config)
-                continue
-
-        # Collect results from Scenarios_tbl
-        results = _collect_sm_results(app, sm_config["smBlockId"],
-                                      sm_config.get("totalScenarios") or 0)
-
-        return {
-            "success": True,
-            "status": "completed",
-            "elapsedSeconds": round(time.time() - start_time, 1),
-            "lastScenario": last_scenario,
-            "smConfig": sm_config,
-            "results": results
-        }
+        finally:
+            watcher.stop.set()
     except Exception as e:
         return _error(ErrorCode.OPTIMIZER_FAILED, str(e),
                       operation="scenario_manager_run")
@@ -8617,8 +8726,8 @@ BLOCK_PARAMS = {
     },
     "Shift": {
         "params": {
-            "schedule": "[{startTime, endTime, capacity}, ...] - array of schedule periods",
-            "statusType": "Popup index for shift status type: on/off vs numeric (ShiftStatusTypePop)",
+            "schedule": "[{startTime, endTime, capacity}, ...] - periods; written as the block's change rows (Time; On/Off or number). capacity 0 = off; an on/off shift takes only 0 or 1, other numbers need statusType 2",
+            "statusType": "1 = on/off (default), 2 = numbers (ShiftStatusTypePop)",
             "shiftName": "Shift name string (for reference by other blocks)",
             "repeat": "true|false — repeat shift schedule",
             "repeatTime": "Repeat interval value",
@@ -11029,6 +11138,12 @@ COMMANDS = {
         p["library"], p["block"]),
     # Both commands above resolve ExtendSim's app and build their own Com lazily
     # (com=None, app_lookup=None - see block_profile.py's defaults).
+    "resources_configure": lambda p: __import__("arm_config").resources_configure_command(
+        {k: v for k, v in p.items() if k != "modelId"}),
+    "scenario_manager_configure": lambda p: __import__("analysis_config").scenario_manager_configure_command(p),
+    "optimizer_configure": lambda p: __import__("analysis_config").optimizer_configure_command(p),
+    "analysis_manager_configure": lambda p: __import__("analysis_config").analysis_manager_configure_command(p),
+    "analysis_manager_get_results": lambda p: __import__("analysis_config").analysis_manager_results_command(p),
     "block_discover": lambda p: block_discover(
         p["libraryName"], p["blockName"], p.get("modelId")
     ),
@@ -11545,6 +11660,18 @@ COMMANDS = {
 }
 
 
+_INSTANCE_GUARD = None
+
+
+def _instance_guard():
+    """One ExtendSim at a time: every ExtendSim command is refused while two or more run."""
+    global _INSTANCE_GUARD
+    if _INSTANCE_GUARD is None:
+        import instance_guard
+        _INSTANCE_GUARD = instance_guard.InstanceGuard()
+    return _INSTANCE_GUARD
+
+
 def main():
     """Main loop - reads JSON commands from stdin."""
     for line in sys.stdin:
@@ -11557,7 +11684,10 @@ def main():
             command = request.get("command")
             params = request.get("params", {})
 
-            if command in COMMANDS:
+            blocked = _instance_guard().check(command, params) if command in COMMANDS else None
+            if blocked is not None:
+                result = blocked
+            elif command in COMMANDS:
                 result = COMMANDS[command](params)
             else:
                 result = _error(ErrorCode.UNKNOWN_COMMAND,
