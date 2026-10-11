@@ -23,7 +23,7 @@ PROGRESS_PREFIX = "DIALOG_PROGRESS "
 # What the AI is told about a box ExtendSim showed but whose text could not be read.
 UNREADABLE_BOX = "ExtendSim showed a message box whose text could not be read"
 
-# dialog_watcher's Strategy 2 (SetForegroundWindow + Enter) placeholder for a box it pressed
+# dialog_watcher's Strategy 2 (a key posted to the box itself) placeholder for a box it pressed
 # without being able to read it.
 GHOST_PLACEHOLDER = "(text not readable in Ghost state)"
 

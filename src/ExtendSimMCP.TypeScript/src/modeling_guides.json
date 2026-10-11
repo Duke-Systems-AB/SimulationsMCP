@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.16.0",
+  "version": "1.18.0",
   "description": "Modeling guides for common ExtendSim simulation scenarios. Each guide describes when to use the pattern, which blocks and connections to use, key parameters, and common mistakes.",
   "categories": {
     "queuing": { "label": "Queuing Systems", "scenarios": ["simple_queue", "multi_server", "priority_queue"] },
@@ -973,6 +973,72 @@
         "An Analysis Manager that already has responses is refused (\"use a new Analysis Manager\") - this version does not support reconfiguring one. The responses table belongs to the whole model, so a model that already has responses is refused before any block is placed.",
         "At most 20 responses per call; more is refused with INVALID_PARAMETER before anything is changed.",
         "numberOfRuns is a simulation_setup_set parameter, not a simulation_run one - set it first, then call simulation_run once; it is ExtendSim's own batch, not a loop the server runs."
+      ]
+    },
+    "Value.lbr/Data Import Export": {
+      "library": "Value.lbr", "block": "Data Import Export", "since": "1.26.0", "provedOn": ["2026", "2024"],
+      "summary": "Reads an external file into a database table or writes one out - Excel spreadsheet, ODBC/ADO database, FTP, text or XML - through one stored file path (Dlg_FileName_txt). This guide covers seeing and repointing that path (model_files_list, model_files_repoint), setting up direction/file type/database/table for Excel and text (model_files_configure), the run guard against a missing or silently retargeted file, and the run tools saving Excel exports to disk afterwards. FTP, XML and ODBC/ADO file types, and the text delimiter, are not covered.",
+      "useWhen": [
+        "A model was copied to another folder or machine and its Data Import Export blocks still point at the old paths.",
+        "Before running a model, you need to see which files it reads or writes and whether they exist on this machine.",
+        "Setting up a new Data Import Export block, or reconfiguring an existing one, to import from or export to an Excel workbook or a text file into or out of a named database table."
+      ],
+      "notFor": [
+        "FTP, XML or ODBC/ADO destinations, or picking a database/table by name in ExtendSim's own popup - model_files_configure only sets up Excel and text, and writes the database/table by index, never XD_DatabaseName_pop or XD_TableName_pop.",
+        "Changing the text delimiter - these tools leave TextFtpDelimiter_pop as the block already has it (tab by default); its option list has not been measured.",
+        "Triggering an export by hand, or an import outside of verifyImport - ImportExport_btn is pressed only when verifyImport asks for it, and only on an import entry."
+      ],
+      "howItWorks": "model_files_list reads Dlg_FileName_txt, direction, file type, sheet and database/table from every Data Import Export block (also inside H-blocks); existence is checked with os.path.isfile, never by opening the file. model_files_repoint validates a new absolute path (import file must exist, export folder must exist), writes Dlg_FileName_txt, reads it back. model_files_configure sets up to 20 blocks: ImportExport_pop, ExternalDataType_pop, DLG_AutoImportExport_chk, Dlg_FileName_txt, the Excel sheet, then the database/table index via SetDialogVariableNoMsg - file type before path, or the path clears. Every write reads back; the intended database/table is also stored in the model's AI context, because the block keys on the table's INDEX and retargets silently once that table is deleted and recreated. The run tools refuse DATA_FILE_MISSING, DATA_FILE_TARGET_CHANGED or DATA_FILE_EXCEL_CLOSE_CONFLICT before starting, then save any Excel export to disk and close workbooks they opened.",
+      "settings": [
+        {"name": "files", "tool": "model_files_list", "meaning": "Every Data Import Export block: direction, file type, stored and resolved path, whether the file exists, sheet, database, table, and whether it imports/exports automatically.", "proved": true},
+        {"name": "changes / fromFolder+toFolder", "tool": "model_files_repoint", "meaning": "Point named blocks, or every block whose file is under one folder, at new absolute paths; verified by reading each one back.", "proved": true},
+        {"name": "blocks", "tool": "model_files_configure", "meaning": "Set up to 20 blocks (existing or newly placed): direction, file type (Excel/text), file path, Excel sheet, database/table by name, auto import/export, and an optional verifyImport that presses Import now and reports the record count. Verified by read-back; the intended database/table is stored in the model's AI context for the run guard.", "proved": true}
+      ],
+      "recipes": [
+        {
+          "goal": "See a copied model's missing file, repoint it, and run",
+          "steps": [
+            "block_add Item.lbr: Create, Queue, Activity, Exit; connect them in that order (Queue before every Activity)",
+            "a Value.lbr Data Import Export block set to import into a database table, auto import on, pointed at a workbook that is not on this machine",
+            "model_files_list - the block shows exists: false",
+            "simulation_run - refused with DATA_FILE_MISSING (missingFiles names the block and its path); no ExtendSim box appears and Dlg_FileName_txt is unchanged",
+            "model_files_repoint {changes: [{blockId: <block>, path: <absolute path to the real workbook>}]} - read back, verified",
+            "simulation_run; db_get_records on the target table"
+          ],
+          "observed": "On both versions: the first list showed exists: false for the missing block; the refused run carried missingFiles with the block's id and path and showed no box to the dialog watcher, with Dlg_FileName_txt unchanged; after repointing, the run imported exactly 5 records with (X, Y) = (1,10)..(5,50) from a sheet \"Data\" with no header row.",
+          "provedOn": ["2026", "2024"],
+          "date": "2026-10-10"
+        },
+        {
+          "goal": "Configure a new import block against a database table, verify it, and run",
+          "steps": [
+            "block_add Item.lbr: Create, Queue, Activity, Exit; connect them in that order (Queue before every Activity)",
+            "db_create a database with a table that has the columns the import expects",
+            "model_files_configure {blocks: [{place: {x, y}, direction: 'import', fileType: 'excel', filePath: <absolute path to a workbook>, sheet: <sheet name>, database: <db name>, table: <table name>, auto: true, verifyImport: true}]} - written, read back, Import pressed once to verify, importedRecords reported, the workbook it opened closed again",
+            "simulation_run - the run guard passes (stored intent matches the resolved table); db_get_records on the target table",
+            "savedExports/closedWorkbooks in the run's response: savedExports is empty without an Excel export; closedWorkbooks lists the import workbook, which the run's auto import opened again and the run tool then closed"
+          ],
+          "observed": "On 2024, with the workbook in a temp folder away from the model (absolute path, a newly placed top-level block): every written value read back; verifyImport reported importedRecords 5 (the workbook's 5 rows) and closedWorkbooks named the workbook it had opened, with nothing of the test left open in Excel; the run afterwards imported the same 5 records with no box, savedExports was [] and closedWorkbooks again named the import workbook. With the workbook in the model's own folder, 2024 rewrote the stored path to the bare file name after the import, and verifyImport still accepted it (importedRecords 5).",
+          "provedOn": ["2024"],
+          "date": "2026-10-10"
+        }
+      ],
+      "notYetProved": [
+        "FTP, XML or ODBC/ADO file types, or changing the text delimiter.",
+        "Pressing ImportExport_btn directly to trigger an export, or an import outside verifyImport.",
+        "verifyImport on ExtendSim 2026 - the configure-import-verify-run recipe has only been run on 2024.",
+        "A block inside a hierarchical block with a relative missing path and Import pressed - measured to crash ExtendSim (2026); these tools cannot reach that case, but a manual Import press still can."
+      ],
+      "pitfalls": [
+        "Set the file type before the file path, not after - writing ExternalDataType_pop clears Dlg_FileName_txt even back to its current value.",
+        "Opening the database or table selector popup (XD_DatabaseName_pop) blocks COM with a modal 'Database Selector' box; these tools never write it - database and table names come only from the index properties, and are null when the index does not resolve.",
+        "The block keys on the table's INDEX, not its name: deleting a table and creating another re-uses the index, so a block can silently start importing or exporting a different table than the one it was set up with. model_files_configure stores the intended database/table in the model's AI context so model_files_list and the run guard can tell; a run with a changed target is refused with DATA_FILE_TARGET_CHANGED.",
+        "Excel files need Excel installed - ExtendSim starts it in the background and keeps a used workbook open and locked, even after ExtendSim closes, until something else quits Excel; verifyImport and the run tools close only the workbooks they themselves opened.",
+        "A text export keeps the block's own delimiter (tab by default), but the decimal separator for numbers follows the Windows regional settings, not the model or the tool call - measured as a comma on this machine.",
+        "Turning on \"close worksheet after use\" (XL_CloseWorksheetAfterUse_chk) on an auto Excel import while the model also has an Excel export hangs ExtendSim on Excel's own save prompt at run start; these tools never turn it on, and the run guard refuses the combination with DATA_FILE_EXCEL_CLOSE_CONFLICT instead of letting the run hang.",
+        "ExtendSim does not find a relative stored path with a folder (sub/x.xlsx) even when the file sits under the model folder; model_files_list warns on it, the run tools refuse to start while an auto-import block holds one, and model_files_repoint only accepts absolute paths. A bare file name next to the saved model is found (2024 rewrites paths into the model folder to bare names after an import/export, and dirties the model).",
+        "After ExtendSim shows the missing-file box, the block empties its own stored path - do not save the model before repointing it.",
+        "Queue before every Activity: Create -> Queue -> Activity -> Exit."
       ]
     }
   }

@@ -3,6 +3,106 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
+## 1.26.0 — 2026-10-11
+
+A model's data files, end to end: the AI can see which Excel and text files a model reads and
+writes, repoint them after a copy, set up imports and exports, and Excel exports now reach the
+file on disk after every run (ExtendSim never saves them itself). Runs no longer start into a
+missing or retargeted file. Model handling is safe by default: closing a changed model is an
+error unless the AI says save or discard, and the server never presses Save on ExtendSim's or
+Excel's save prompt. 116 tools. Verified live on ExtendSim 2024 and 2026.
+
+### Changed
+- **Closing a model with unsaved changes is now an error, not a silent discard.** `model_close`
+  called with no `saveFirst`, `discard` or (for a model that has never been saved) `filePath`
+  returns `MODEL_HAS_UNSAVED_CHANGES` and leaves the model open and exactly as it was - nothing is
+  lost. Pass `saveFirst: true` to save then close, `discard: true` to close without saving, or
+  `filePath` to save a never-saved model there first. `saveFirst` and `discard` together is
+  `INVALID_PARAMETER`. Verified live on ExtendSim 2024 and 2026. `filePath` must name a new
+  file - an existing one is refused with `INVALID_PARAMETER`, never overwritten - and a save that
+  does not take (closing still asks to save) returns `MODEL_SAVE_FAILED` with the model left open.
+- **`model_open` checks that the file really opened.** When ExtendSim does not open it (a path
+  that does not exist, say) the answer is `MODEL_OPEN_FAILED` naming the model that is still
+  active, instead of reporting that model as opened. `extract_psg` (and the mining tools built on
+  it) with a `filePath` therefore never reads - or closes - the model you had open.
+- **`model_list` has a 30 s timeout**, and its open-window read is bounded at 5 s: during a
+  running simulation it falls back to the active model with a warning instead of timing out.
+
+### Added
+- **`model_list` lists every open model**, not only the active one: name, which one is active, and
+  the active model's folder. Falls back to the active model alone, with a warning, if the window
+  list cannot be read.
+- **`model_open` refuses to switch to a model that is open but not active**, instead of silently
+  activating it (`MODEL_OPEN_FAILED`, `alreadyOpen`, `activeModel`, with a suggestion to bring it
+  to the front in ExtendSim or close the active model first). Measured live: activating it through
+  ExtendSim's own "Already Open" box couples the two models together - closing one closes both,
+  and if the hidden one had changes its save prompt could not be answered Cancel.
+- **`model_new` refuses a `savePath` that names a model already open** (`INVALID_PARAMETER`)
+  instead of letting ExtendSim collide two models with the same name.
+- **`model_files_list` and `model_files_repoint`** (new tools, 115 in all): see which files a
+  model reads and writes through its Data Import Export blocks (Value.lbr) - direction, file
+  type, stored and resolved path, whether the file exists on disk, sheet, database/table, and
+  whether it imports/exports automatically - and point blocks at other files, either one by one
+  or by moving everything under one folder to another. Every new path is validated (absolute, at
+  most 255 characters, no `"`; an import file must exist, an export file's folder must exist)
+  before anything is written, and read back afterwards - a path that does not read back exactly
+  returns `MODEL_FILES_REPOINT_FAILED` instead of a cheerful success. File existence is always
+  checked on disk, never by asking ExtendSim to open the file.
+- **Run guard against missing data files.** `simulation_run`, `simulation_run_multi`,
+  `simulation_run_scenarios`, `optimizer_run` and `scenario_manager_run` now refuse with
+  `DATA_FILE_MISSING` (nothing starts) when a file the model would auto-import at run start is
+  missing, instead of letting ExtendSim show its own "does not exist or is not in the current
+  folder" box - which, for a block inside a hierarchical block with a relative path, could crash
+  ExtendSim. If the box appears anyway (a file removed mid-run), it is still dismissed
+  automatically and the run's response carries a readable `dataFileNotes` entry. A block guide
+  for Data Import Export ships with the server (`block_search`). Verified live on ExtendSim 2024
+  and 2026.
+- **`model_files_configure`** (new tool, 116 in all): sets up Data Import Export blocks for Excel
+  or text import/export in one call - up to 20 entries, each naming an existing top-level block or
+  a place to put a new one, direction, file type, file path, database/table by name, and whether
+  it imports/exports automatically. Everything is validated before anything is written
+  (`INVALID_PARAMETER`, nothing changed) and every value is read back; a value that does not take
+  returns `MODEL_FILES_CONFIGURE_FAILED` with truthful `steps`. An optional `verifyImport` presses
+  Import now and reports the record count. The intended database/table is stored in the model's AI
+  context (merged, never replacing other context) so a later silent table retarget can be
+  detected. Verified live on ExtendSim 2024 and 2026.
+- **Run tools now save Excel exports to disk and release the workbooks they opened.**
+  `simulation_run`, `simulation_run_multi`, `simulation_run_scenarios`, `optimizer_run` and
+  `scenario_manager_run` save every Excel export workbook the model points at after a finished run
+  - ExtendSim itself never writes it to disk, measured on both versions - and close workbooks the
+  run opened that have no unsaved changes; the response carries `savedExports` and
+  `closedWorkbooks` (`saveExports: false` skips this). The work runs in a worker process with a
+  20 s deadline and never starts Excel, so a stuck Excel cannot hang the server.
+  `dialog_watcher` answers Excel's own "Save your changes to this file?" prompt with Cancel -
+  only in the background Excel that ExtendSim's block uses (started with `/automation`), never
+  in an Excel you opened yourself.
+- **Run guard against a retargeted table or an Excel close conflict.** The run tools above also
+  refuse with `DATA_FILE_TARGET_CHANGED` when a block configured with `model_files_configure` now
+  points at a different table than the one it was set up for, and with
+  `DATA_FILE_EXCEL_CLOSE_CONFLICT` when an auto Excel import has "close worksheet after use" on
+  while the model also has an Excel export - a combination that hangs ExtendSim on Excel's own
+  save prompt at run start. Verified live on ExtendSim 2024 and 2026.
+
+### Fixed
+- **A data file next to the model no longer stops the next run.** A Data Import Export block
+  whose file is a bare name (no folder, e.g. `Arrivals.xlsx`) is now found in the model's own
+  folder, as ExtendSim itself does. ExtendSim 2024 rewrites a path into the model folder to such
+  a bare name after an import or export, so the run after it used to be refused with
+  `DATA_FILE_MISSING`. `model_files_list` shows the bare name resolved against the model folder.
+  A relative path with a folder (`sub/Arrivals.xlsx`), and a bare name in a model that was never
+  saved, are still refused.
+- **ExtendSim's save prompt is answered Cancel, never Save.** "The model '...' has been
+  modified. Do you want to save your changes?" now gets Cancel automatically - the model stays
+  open and unchanged - instead of blocking the server. It is never answered Yes or No. The
+  fallback key for a box that cannot be read (Enter, or Escape for a box with a known answer) now
+  goes only to the box it was meant for, only while ExtendSim responds, and the box counts as
+  closed only when it has really gone; it is no longer a keystroke to whatever window has the
+  focus.
+- **`model_open` compares the whole path.** Opening a model whose file name matches the active
+  model but lives in another folder used to report `alreadyOpen` without opening anything; it now
+  refuses with `MODEL_OPEN_FAILED` and says which folder the open model came from - close it
+  first. ExtendSim's "Already Open" box no longer blocks the server; it is answered OK.
+
 ## 1.25.0 — 2026-10-08
 
 Advanced blocks your AI can set up itself: the Resource Manager (`resources_configure`) and the

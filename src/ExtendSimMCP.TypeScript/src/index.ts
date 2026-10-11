@@ -749,6 +749,46 @@ server.tool(
 );
 
 server.tool(
+  "model_files_list",
+  "List the data files the open model reads and writes: every Data Import Export block (also inside hierarchical blocks) with its direction (import/export), file type, stored and resolved path, whether the file exists (checked on disk), sheet, database and table, and whether it imports/exports automatically. Use it after copying a model or on another machine, before running. Read-only.",
+  { modelId: z.string().optional() },
+  async (params) => safeToolCall("model_files_list", () => backend.modelFilesList(params), params)
+);
+
+server.tool(
+  "model_files_repoint",
+  "Point Data Import Export blocks at other files: either changes [{blockId, path}] or fromFolder + toFolder (every block whose file is under fromFolder moves to the same place under toFolder). Paths must be absolute (at most 255 characters); an import file must exist, an export file's folder must exist. Everything is checked before anything changes, and every new path is read back. The model is not saved - use model_save.",
+  {
+    modelId: z.string().optional(),
+    changes: z.array(z.object({ blockId: z.number().int(), path: z.string().min(1) })).optional(),
+    fromFolder: z.string().min(1).optional(),
+    toFolder: z.string().min(1).optional(),
+  },
+  async (params) => safeToolCall("model_files_repoint", () => backend.modelFilesRepoint(params), params)
+);
+
+server.tool(
+  "model_files_configure",
+  "Set up Data Import Export blocks for Excel or text import/export, verified by read-back. Each entry in `blocks` (at most 20) needs exactly one of blockId (an existing top-level Data Import Export block) or place {x, y} (places a new one from Value.lbr); direction ('import'/'export'); fileType ('excel'/'text'); filePath (absolute, <= 255 characters, no quote; the import file must exist, an export file's folder must exist); database and table (names, resolved to indices and checked to exist - sheet is required and Excel-only); auto (import at run start / export at run end, default true); and optional verifyImport (import entries only - presses Import now with the dialog dismisser running and reports the table's record count; the workbook it opened is closed afterwards). Everything is validated before anything is written (INVALID_PARAMETER, nothing changed); a block inside a hierarchical block is refused. A value that does not read back is MODEL_FILES_CONFIGURE_FAILED, with truthful `steps` saying what was written. The intended database/table of every configured block is stored in the model's AI context (merged, never replacing other context) so model_files_list and the run guard can detect a later silent table retarget; stored targets of blocks no longer in the model are removed (prunedTargets). The model is not saved - use model_save.",
+  {
+    modelId: z.string().optional(),
+    blocks: z.array(z.object({
+      blockId: z.number().int().optional(),
+      place: z.object({ x: z.number(), y: z.number() }).optional(),
+      direction: z.enum(["import", "export"]),
+      fileType: z.enum(["excel", "text"]),
+      filePath: z.string().min(1),
+      sheet: z.string().min(1).optional(),
+      database: z.string().min(1),
+      table: z.string().min(1),
+      auto: z.boolean().optional(),
+      verifyImport: z.boolean().optional(),
+    })).min(1).max(20),
+  },
+  async (params) => safeToolCall("model_files_configure", () => backend.modelFilesConfigure(params), params)
+);
+
+server.tool(
   "dialog_search",
   "Search dialog variable names for blocks. Use to find the correct variable name before block_set_value or block_get_value.",
   {
@@ -1256,7 +1296,7 @@ server.tool(
 
 server.tool(
   "model_open",
-  "Open an ExtendSim model file (.mox). Required before any block or simulation operations.",
+  "Open an ExtendSim model file (.mox). Required before any block or simulation operations. Returns alreadyOpen=true when that same file is the active model; refused with MODEL_OPEN_FAILED when a model with the same file name is open from another folder (ExtendSim cannot hold two models with the same name - close it first). If the model is already open but not active, it is refused with MODEL_OPEN_FAILED and alreadyOpen=true, and nothing is opened (switching through ExtendSim's open dialog hides the other model and closes it with this one) - bring it to the front in ExtendSim or close the active model first.",
   {
     filePath: z.string().describe("Path to the .mox file"),
     readOnly: z.boolean().optional().describe("Open in read-only mode")
@@ -1280,7 +1320,7 @@ server.tool(
 
 server.tool(
   "model_list",
-  "List all currently open models.",
+  "List every open model (name, which one is active, the active model's folder).",
   {},
   async () => {
     return safeToolCall("model_list", () => backend.modelList());
@@ -1301,19 +1341,21 @@ server.tool(
 
 server.tool(
   "model_close",
-  "Close the current model. Without saveFirst, unsaved changes are DISCARDED: the result then has unsavedChanges (true/false, or null when ExtendSim cannot tell - always the case for a saved model) and a warning. Use saveFirst=true whenever the user's changes must be kept. A model that was never saved cannot be saved here: save it with model_save and a filePath first.",
+  "Close the active model. Never saves or discards changes on its own: a model with unsaved changes is refused with MODEL_HAS_UNSAVED_CHANGES unless you pass saveFirst=true (save, then close), discard=true (close without saving), or - for a model that was never saved - filePath (save it there, then close). The response says what happened (closed, saved, discardedChanges / hadUnsavedChanges).",
   {
     modelId: z.string().optional().describe("Model ID"),
-    saveFirst: z.boolean().optional().describe("Save before closing (the model must already have a file)")
+    saveFirst: z.boolean().optional().describe("Save before closing (the model must already have a file)"),
+    discard: z.boolean().optional().describe("Close without saving, discarding any unsaved changes"),
+    filePath: z.string().optional().describe("Save a never-saved model to this new file (absolute, .mox; an existing file is refused, never overwritten) before closing")
   },
-  async ({ modelId, saveFirst }) => {
-    return safeToolCall("model_close", () => backend.modelClose({ modelId, saveFirst }), { modelId, saveFirst });
+  async ({ modelId, saveFirst, discard, filePath }) => {
+    return safeToolCall("model_close", () => backend.modelClose({ modelId, saveFirst, discard, filePath }), { modelId, saveFirst, discard, filePath });
   }
 );
 
 server.tool(
   "model_new",
-  "Create a new empty ExtendSim model. Optionally specify a save path.",
+  "Create a new empty ExtendSim model. Optionally specify a save path. Refused when savePath names a model that is already open.",
   {
     savePath: z.string().optional().describe("Path to save the new model")
   },
@@ -1744,7 +1786,7 @@ server.tool(
 
 server.tool(
   "simulation_run",
-  "Run the simulation. Set waitForCompletion=false to start and return immediately (fire-and-forget) — then poll simulation_status and collect simulation_get_results. Default waitForCompletion=true waits for completion. Set includeStats=true to collect Exit/Queue/Activity/Create statistics inline.",
+  "Run the simulation. Set waitForCompletion=false to start and return immediately (fire-and-forget) — then poll simulation_status and collect simulation_get_results. Default waitForCompletion=true waits for completion. Set includeStats=true to collect Exit/Queue/Activity/Create statistics inline. Refused with DATA_FILE_MISSING (nothing starts) when a file the model imports at run start is missing, not set, or given as a relative path with a folder (ExtendSim does not resolve those; a bare file name next to the saved model is fine) - see model_files_list and model_files_repoint.",
   {
     modelId: z.string().optional().describe("Model ID"),
     endTime: z.number().optional().describe("Simulation time to run to"),
@@ -1752,10 +1794,11 @@ server.tool(
     resetFirst: z.boolean().optional().describe("Reset model before running"),
     waitForCompletion: z.boolean().optional().describe("Wait until simulation completes (default true). Set false for fire-and-forget."),
     includeStats: z.boolean().optional().describe("Include Exit/Queue/Activity/Create statistics in the response (default false)"),
-    statsBlockIds: z.array(z.number()).optional().describe("Block IDs to collect statistics for (with includeStats=true). If omitted, collects all.")
+    statsBlockIds: z.array(z.number()).optional().describe("Block IDs to collect statistics for (with includeStats=true). If omitted, collects all."),
+    saveExports: z.boolean().optional().describe("After the run, Excel exports are saved to disk and workbooks the run opened are closed (savedExports); pass saveExports=false to skip.")
   },
-  async ({ modelId, endTime, runMode, resetFirst, waitForCompletion, includeStats, statsBlockIds }) => {
-    return safeToolCall("simulation_run", () => backend.simulationRun({ modelId, endTime, runMode, resetFirst, waitForCompletion, includeStats, statsBlockIds }), { modelId, endTime, runMode, resetFirst, waitForCompletion, includeStats, statsBlockIds });
+  async ({ modelId, endTime, runMode, resetFirst, waitForCompletion, includeStats, statsBlockIds, saveExports }) => {
+    return safeToolCall("simulation_run", () => backend.simulationRun({ modelId, endTime, runMode, resetFirst, waitForCompletion, includeStats, statsBlockIds, saveExports }), { modelId, endTime, runMode, resetFirst, waitForCompletion, includeStats, statsBlockIds, saveExports });
   }
 );
 
@@ -2158,7 +2201,7 @@ server.tool(
 
 server.tool(
   "simulation_run_multi",
-  "Run multiple simulation replications and collect aggregated statistics. Returns per-run and summary results for specified blocks.",
+  "Run multiple simulation replications and collect aggregated statistics. Returns per-run and summary results for specified blocks. Refused with DATA_FILE_MISSING (nothing starts) when a file the model imports at run start is missing, not set, or given as a relative path with a folder (ExtendSim does not resolve those; a bare file name next to the saved model is fine) - see model_files_list and model_files_repoint.",
   {
     modelId: z.string().optional().describe("Model ID"),
     numberOfRuns: z.number().min(1).max(100).describe("Number of simulation replications (1-100)"),
@@ -2166,30 +2209,32 @@ server.tool(
     randomSeed: z.number().optional().describe("Initial random seed"),
     runMode: z.enum(["normal", "fast"]).optional().describe("Run mode"),
     collectPerRun: z.boolean().optional().describe("Collect detailed results per run (default true)"),
-    blockIds: z.array(z.number()).optional().describe("Block IDs to collect detailed statistics for")
+    blockIds: z.array(z.number()).optional().describe("Block IDs to collect detailed statistics for"),
+    saveExports: z.boolean().optional().describe("After the run, Excel exports are saved to disk and workbooks the run opened are closed (savedExports); pass saveExports=false to skip.")
   },
-  async ({ modelId, numberOfRuns, endTime, randomSeed, runMode, collectPerRun, blockIds }) => {
+  async ({ modelId, numberOfRuns, endTime, randomSeed, runMode, collectPerRun, blockIds, saveExports }) => {
     return safeToolCall("simulation_run_multi", () => backend.simulationRunMulti({
-      modelId, numberOfRuns, endTime, randomSeed, runMode, collectPerRun, blockIds
-    }), { modelId, numberOfRuns, endTime, randomSeed, runMode, collectPerRun, blockIds });
+      modelId, numberOfRuns, endTime, randomSeed, runMode, collectPerRun, blockIds, saveExports
+    }), { modelId, numberOfRuns, endTime, randomSeed, runMode, collectPerRun, blockIds, saveExports });
   }
 );
 
 server.tool(
   "simulation_run_scenarios",
-  "Run what-if scenarios by varying a single parameter across multiple values. Runs simulation for each value and collects results.",
+  "Run what-if scenarios by varying a single parameter across multiple values. Runs simulation for each value and collects results. Refused with DATA_FILE_MISSING (nothing starts) when a file the model imports at run start is missing, not set, or given as a relative path with a folder (ExtendSim does not resolve those; a bare file name next to the saved model is fine) - see model_files_list and model_files_repoint.",
   {
     modelId: z.string().optional().describe("Model ID"),
     blockId: z.number().describe("Block ID containing the parameter to vary"),
     dialogVariable: z.string().describe("Dialog variable name to change between scenarios"),
     values: z.array(z.union([z.number(), z.string()])).max(20).describe("Values to test (max 20)"),
     endTime: z.number().optional().describe("Simulation end time"),
-    runMode: z.enum(["normal", "fast"]).optional().describe("Run mode")
+    runMode: z.enum(["normal", "fast"]).optional().describe("Run mode"),
+    saveExports: z.boolean().optional().describe("After the run, Excel exports are saved to disk and workbooks the run opened are closed (savedExports); pass saveExports=false to skip.")
   },
-  async ({ modelId, blockId, dialogVariable, values, endTime, runMode }) => {
+  async ({ modelId, blockId, dialogVariable, values, endTime, runMode, saveExports }) => {
     return safeToolCall("simulation_run_scenarios", () => backend.simulationRunScenarios({
-      modelId, blockId, dialogVariable, values, endTime, runMode
-    }), { modelId, blockId, dialogVariable, values, endTime, runMode });
+      modelId, blockId, dialogVariable, values, endTime, runMode, saveExports
+    }), { modelId, blockId, dialogVariable, values, endTime, runMode, saveExports });
   }
 );
 
@@ -2222,14 +2267,15 @@ server.tool(
 
 server.tool(
   "optimizer_run",
-  "Run the ExtendSim optimizer. ExtendSim runs the whole optimization before this call returns. With waitForCompletion=true the outcome is checked: success only when at least one generation completed (best value, generations, convergence); an optimization ExtendSim stopped is OPTIMIZER_FAILED, with ExtendSim's own messages in dialogs. Without it the call answers status 'started' and optimizer_get_results reads the outcome.",
+  "Run the ExtendSim optimizer. ExtendSim runs the whole optimization before this call returns. With waitForCompletion=true the outcome is checked: success only when at least one generation completed (best value, generations, convergence); an optimization ExtendSim stopped is OPTIMIZER_FAILED, with ExtendSim's own messages in dialogs. Without it the call answers status 'started' and optimizer_get_results reads the outcome. Refused with DATA_FILE_MISSING (nothing starts) when a file the model imports at run start is missing, not set, or given as a relative path with a folder (ExtendSim does not resolve those; a bare file name next to the saved model is fine) - see model_files_list and model_files_repoint.",
   {
     modelId: z.string().optional().describe("Model ID"),
     timeout: z.number().optional().describe("Max seconds to wait when waitForCompletion=true (default 600)"),
-    waitForCompletion: z.boolean().optional().describe("Wait until optimizer completes (default false). Set true for blocking mode.")
+    waitForCompletion: z.boolean().optional().describe("Wait until optimizer completes (default false). Set true for blocking mode."),
+    saveExports: z.boolean().optional().describe("After the run, Excel exports are saved to disk and workbooks the run opened are closed (savedExports); pass saveExports=false to skip.")
   },
-  async ({ modelId, timeout, waitForCompletion }) => {
-    return safeToolCall("optimizer_run", () => backend.optimizerRun({ modelId, timeout, waitForCompletion }), { modelId, timeout, waitForCompletion });
+  async ({ modelId, timeout, waitForCompletion, saveExports }) => {
+    return safeToolCall("optimizer_run", () => backend.optimizerRun({ modelId, timeout, waitForCompletion, saveExports }), { modelId, timeout, waitForCompletion, saveExports });
   }
 );
 
@@ -2247,14 +2293,15 @@ server.tool(
 
 server.tool(
   "scenario_manager_run",
-  "Run the Scenario Manager. ExtendSim runs all scenarios before this call returns. With waitForCompletion=true the previous results of the selected scenarios are cleared first, so only results from this run count, and the outcome is checked (this needs at least one block response): success only when every selected scenario has every response; otherwise OPTIMIZER_FAILED lists the scenarios without results, with ExtendSim's own messages in dialogs. Validates config and selects all scenarios only when none are selected; a selection you made is kept.",
+  "Run the Scenario Manager. ExtendSim runs all scenarios before this call returns. With waitForCompletion=true the previous results of the selected scenarios are cleared first, so only results from this run count, and the outcome is checked (this needs at least one block response): success only when every selected scenario has every response; otherwise OPTIMIZER_FAILED lists the scenarios without results, with ExtendSim's own messages in dialogs. Validates config and selects all scenarios only when none are selected; a selection you made is kept. Refused with DATA_FILE_MISSING (nothing starts) when a file the model imports at run start is missing, not set, or given as a relative path with a folder (ExtendSim does not resolve those; a bare file name next to the saved model is fine) - see model_files_list and model_files_repoint.",
   {
     modelId: z.string().optional().describe("Model ID"),
     timeout: z.number().optional().describe("Max seconds to wait when waitForCompletion=true (default 600)"),
-    waitForCompletion: z.boolean().optional().describe("Wait until SM completes (default false). Set true for blocking mode.")
+    waitForCompletion: z.boolean().optional().describe("Wait until SM completes (default false). Set true for blocking mode."),
+    saveExports: z.boolean().optional().describe("After the run, Excel exports are saved to disk and workbooks the run opened are closed (savedExports); pass saveExports=false to skip.")
   },
-  async ({ modelId, timeout, waitForCompletion }) => {
-    return safeToolCall("scenario_manager_run", () => backend.scenarioManagerRun({ modelId, timeout, waitForCompletion }), { modelId, timeout, waitForCompletion });
+  async ({ modelId, timeout, waitForCompletion, saveExports }) => {
+    return safeToolCall("scenario_manager_run", () => backend.scenarioManagerRun({ modelId, timeout, waitForCompletion, saveExports }), { modelId, timeout, waitForCompletion, saveExports });
   }
 );
 

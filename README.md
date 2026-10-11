@@ -13,7 +13,7 @@ AI Client (Claude, Gemini, Cursor, ChatGPT)
     │
     │  MCP Protocol (JSON-RPC 2.0)
     ▼
-TypeScript MCP Server (113 tools)
+TypeScript MCP Server (116 tools)
     │
     │  JSON over stdin/stdout
     ▼
@@ -24,11 +24,11 @@ Python COM Backend (pywin32)
 ExtendSim Application
 ```
 
-The server exposes **113 tools** across 18 categories:
+The server exposes **116 tools** across 18 categories:
 
 | Category | Tools |
 |----------|-------|
-| Model Management | `model_open`, `model_save`, `model_new`, `model_close`, `model_info`, `model_validate`, `model_extract`, `model_overview`, `model_snapshot`, `model_list` |
+| Model Management | `model_open`, `model_save`, `model_new`, `model_close`, `model_info`, `model_validate`, `model_extract`, `model_overview`, `model_snapshot`, `model_list`, `model_files_list`, `model_files_repoint`, `model_files_configure` |
 | Block Operations | `block_add`, `block_add_batch`, `block_connect`, `block_disconnect`, `connect_chain`, `connect_graph`, `block_remove`, `block_list`, `connection_list`, `block_info`, `block_discover`, `block_discover_variables`, `block_introspect` |
 | Block Layout | `block_move`, `block_get_position`, `block_align`, `block_duplicate`, `block_find` |
 | Configuration | `block_configure`, `block_set_value`, `block_get_value`, `execute_command`, `attribute_set`, `attribute_get`, `table_get`, `table_set`, `detect_attributes`, `resources_configure` |
@@ -70,11 +70,10 @@ npm run build
 
 ### Install from Installer
 
-Download `SimulationsMCP-Setup-1.25.0.exe` from the `installer/` directory and run it.
+Download `SimulationsMCP-Setup-1.26.0.exe` from the `installer/` directory and run it.
 
-The prebuilt installer matches the current source: **v1.25.0, 113 tools** (including
-`block_introspect`, `table_get`/`table_set`, `detect_attributes`, and the full
-pattern-mining pipeline). See `CHANGELOG.md` for release history.
+The prebuilt installer matches the current source: **v1.26.0, 116 tools**. See `CHANGELOG.md`
+for release history.
 
 ### Configure Your AI Client
 

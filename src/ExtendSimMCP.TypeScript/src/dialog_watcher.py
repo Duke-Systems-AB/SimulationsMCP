@@ -7,9 +7,11 @@ block indefinitely. This script uses two strategies to find and dismiss dialogs:
   Strategy 1 (UIA): Windows UI Automation - works when ExtendSim is responsive.
     Finds QMessageBox elements, reads their text, clicks OK via InvokePattern.
 
-  Strategy 2 (win32gui fallback): Raw Windows API - works in Ghost/hung state.
-    Finds Qt5QWindowIcon windows titled "ExtendSim", uses SetForegroundWindow +
-    keyboard simulation to press Enter and dismiss the dialog.
+  Strategy 2 (win32gui fallback): Raw Windows API - finds boxes even in Ghost/hung
+    state, but presses a key only once ExtendSim responds again.
+    Finds Qt5QWindowIcon windows titled "ExtendSim" and posts Enter to that window
+    (PostMessage, never a global keystroke) - only while ExtendSim responds; see
+    _press_key_on.
 
 Architecture: Runs as a SEPARATE PROCESS from the Python COM backend.
 This is required because the COM backend's main thread is blocked on the
@@ -25,10 +27,11 @@ Output: JSON to stdout
 Requires: pywin32, comtypes
 """
 import json
+import os
 import sys
 import time
 import ctypes
-import ctypes.wintypes
+import win32api
 import win32gui
 import win32con
 import win32process
@@ -276,14 +279,16 @@ def try_uia_strategy():
     Strategy 1: Use UI Automation to find and dismiss dialogs.
     Returns list of dismissed dialogs, or empty list if UIA can't find anything.
 
-    Known boxes (KNOWN_BOXES / KNOWN_PROMPTS) are answered first, then plain "ExtendSim"
-    QMessageBox-style boxes get OK directly by hwnd (_dismiss_plain_boxes - only in ExtendSim's
-    own process, only when its buttons are exactly ["OK"]), then any remaining message boxes
-    found as descendants of the main window get OK; chained boxes are followed for up to
-    CHAINED_ROUNDS rounds. A box that could not be answered ends the pass at once - it needs a
-    person, and nothing behind it can appear. With no main window found at all, the
-    descendant-search step is skipped (nothing to search from) but known/plain boxes are still
-    followed for the same CHAINED_ROUNDS - this is how the live bug's box was actually dismissed.
+    Known boxes (KNOWN_BOXES / KNOWN_PROMPTS) are answered first, then Excel's own save prompt
+    (_dismiss_excel_save_prompts - a window of an EXCEL.EXE process, never ExtendSim's own), then
+    plain "ExtendSim" QMessageBox-style boxes get OK directly by hwnd (_dismiss_plain_boxes - only
+    in ExtendSim's own process, only when its buttons are exactly ["OK"]), then any remaining
+    message boxes found as descendants of the main window get OK; chained boxes are followed for
+    up to CHAINED_ROUNDS rounds. A box that could not be answered ends the pass at once - it needs
+    a person, and nothing behind it can appear. With no main window found at all, the
+    descendant-search step is skipped (nothing to search from) but known/excel/plain boxes are
+    still followed for the same CHAINED_ROUNDS - this is how the live bug's box was actually
+    dismissed.
     """
     if not _uia_available:
         return []
@@ -297,6 +302,10 @@ def try_uia_strategy():
             known = answer_known_boxes()
             dismissed.extend(known)
             if any(not d.get("dismissed") for d in known):
+                return dismissed
+            excel = _dismiss_excel_save_prompts()
+            dismissed.extend(excel)
+            if any(not d.get("dismissed") for d in excel):
                 return dismissed
             plain = _dismiss_plain_boxes()
             dismissed.extend(plain)
@@ -313,12 +322,12 @@ def try_uia_strategy():
                     dismissed.extend(boxes)
                     if any(not d.get("dismissed") for d in boxes):
                         return dismissed
-            if not known and not plain and (final or not boxes):
+            if not known and not excel and not plain and (final or not boxes):
                 # Report as soon as the chain is over: the command's own answer usually follows
                 # within a fraction of a second, and a result printed after it is dropped by the
                 # TypeScript layer (the dialog would be missing from dialogsDuringCommand).
                 break
-            final = not known and not plain
+            final = not known and not excel and not plain
             time.sleep(0.5)
     except Exception:
         return dismissed
@@ -387,76 +396,58 @@ def answer_known_boxes():
         else:
             texts, buttons = (read[0], read[1]) if read is not None else ([], [])
             try:
-                win32gui.SetForegroundWindow(d["hwnd"])
-                time.sleep(0.2)
-                _send_escape_key()
-                time.sleep(0.3)
+                # Escape = the box's reject button: Cancel, or the only button of a single-OK box.
+                closed = _press_key_on(d["hwnd"], VK_ESCAPE)
             except Exception:
-                pass
+                closed = False
             method = "win32gui Escape"
         _progress({"dialog": {"title": d["title"], "texts": texts, "buttons": buttons}})
         answered.append({"title": d["title"], "texts": texts, "buttons": buttons,
-                         "dismissed": True, "answered": answer, "method": method})
+                         "dismissed": method == "UIA" or closed, "answered": answer, "method": method})
     return answered
 
 
-# ─── Strategy 2: win32gui fallback (for Ghost/hung state) ─────────────────────
+# ─── Strategy 2: win32gui fallback (keys posted to one window, only while responsive) ─
 
-# SendInput structures for keyboard simulation
-INPUT_KEYBOARD = 1
-KEYEVENTF_KEYUP = 0x0002
 VK_RETURN = 0x0D
-
-
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [
-        ("wVk", ctypes.wintypes.WORD),
-        ("wScan", ctypes.wintypes.WORD),
-        ("dwFlags", ctypes.wintypes.DWORD),
-        ("time", ctypes.wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
-    ]
-
-
-class INPUT(ctypes.Structure):
-    class _INPUT(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT)]
-
-    _fields_ = [
-        ("type", ctypes.wintypes.DWORD),
-        ("_input", _INPUT),
-    ]
-
-
-def _send_enter_key():
-    """Simulate physical Enter key press via SendInput."""
-    inputs = (INPUT * 2)()
-
-    # Key down
-    inputs[0].type = INPUT_KEYBOARD
-    inputs[0]._input.ki.wVk = VK_RETURN
-
-    # Key up
-    inputs[1].type = INPUT_KEYBOARD
-    inputs[1]._input.ki.wVk = VK_RETURN
-    inputs[1]._input.ki.dwFlags = KEYEVENTF_KEYUP
-
-    ctypes.windll.user32.SendInput(2, ctypes.pointer(inputs[0]),
-                                    ctypes.sizeof(INPUT))
-
-
 VK_ESCAPE = 0x1B
+RESPONSIVE_TIMEOUT_MS = 200
 
 
-def _send_escape_key():
-    """Simulate an Escape key press - a Qt dialog's reject, i.e. its Cancel button."""
-    inputs = (INPUT * 2)()
-    inputs[0].type = INPUT_KEYBOARD
-    inputs[0]._input.ki.wVk = VK_ESCAPE
-    inputs[1].type = INPUT_KEYBOARD
-    inputs[1]._input.ki.wVk = VK_ESCAPE
-    inputs[1]._input.ki.dwFlags = KEYEVENTF_KEYUP
-    ctypes.windll.user32.SendInput(2, ctypes.pointer(inputs[0]), ctypes.sizeof(INPUT))
+def _responsive(hwnd):
+    """True only while ExtendSim's UI thread answers: IsHungAppWindow is false and a WM_NULL sent with
+    SMTO_ABORTIFHUNG comes back within RESPONSIVE_TIMEOUT_MS. A key given to a busy ExtendSim waits in
+    its queue and is handled whenever the thread next pumps - by then a different box may be up."""
+    try:
+        if ctypes.windll.user32.IsHungAppWindow(hwnd):
+            return False
+        win32gui.SendMessageTimeout(hwnd, win32con.WM_NULL, 0, 0, win32con.SMTO_ABORTIFHUNG,
+                                    RESPONSIVE_TIMEOUT_MS)
+        return True
+    except Exception:
+        return False
+
+
+def _post_key(hwnd, vk):
+    """Post a key press to ONE window. Unlike SendInput (global: it goes to whatever has the focus when
+    the thread reads it) a posted message is bound to hwnd and dropped if that window is destroyed."""
+    win32gui.PostMessage(hwnd, win32con.WM_KEYDOWN, vk, 0x00000001)
+    win32gui.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0xC0000001)
+
+
+def _press_key_on(hwnd, vk):
+    """The only keyboard path of this module. Posts vk to hwnd only if the window still exists and
+    ExtendSim responds; returns True only when the box has really gone afterwards (checked for ~1 s).
+    Risk this replaces (seen live 2026-10-10): a global Enter queued while ExtendSim was
+    busy could be delivered later to the save prompt ("Worksheet", focus on Yes) and save the model."""
+    if not win32gui.IsWindow(hwnd) or not _responsive(hwnd):
+        return False
+    _post_key(hwnd, vk)
+    for _ in range(10):
+        time.sleep(0.1)
+        if not win32gui.IsWindow(hwnd):
+            return True
+    return False
 
 
 # Boxes whose title does not say "ExtendSim" and whose default button must NOT be pressed,
@@ -464,7 +455,10 @@ def _send_escape_key():
 # opening a library built before 2026.R1 shows "Unsigned Blocks Detected" with "Sign Blocks"
 # (signs and SAVES the library files) and "Cancel" (leaves them unchanged; the blocks still
 # work). Answered through UIA, else with Escape - never Enter.
-KNOWN_BOXES = {"Unsigned Blocks Detected": "Cancel"}
+# Measured live 2026-10-10 on ExtendSim 2024 and 2026: model_open of a model that is already open
+# but not the active one shows "Already Open" ("A model with the same name is already open.") with a
+# single OK, which blocked COM until a person pressed it. OK changes nothing.
+KNOWN_BOXES = {"Unsigned Blocks Detected": "Cancel", "Already Open": "OK"}
 
 # Yes/No prompts whose title does not say "ExtendSim", answered only when their TEXT starts
 # with a known prefix; any other prompt with that title is reported, never clicked (and never
@@ -472,9 +466,160 @@ KNOWN_BOXES = {"Unsigned Blocks Detected": "Cancel"}
 # 2024: resources_configure on a model whose resource pools changed makes the Resource Manager
 # ask whether to delete the now unused pools. "No" deletes nothing; the new resources and
 # requirements are generated either way, the old empty pools stay listed.
+#
+# The save prompt, measured live 2026-10-10 on ExtendSim 2024 and 2026: closing a model with unsaved
+# changes shows "Worksheet" - "The model '<name>' has been modified. Do you want to save your
+# changes?" - with Yes/No/Cancel and the FOCUS ON YES, so Enter saves the model. Cancel leaves the
+# model open and unchanged; Yes would overwrite the user's file and No would throw their changes
+# away. Only Cancel is ever pressed, and never Enter or Escape.
 KNOWN_PROMPTS = {
     "User Prompt": {"The model has unused resource pools": "No"},
+    "Worksheet": {"The model '": "Cancel"},
 }
+
+
+# Excel's own save prompt (measured live 2026-10-10): closing an Excel workbook that
+# has unsaved changes - e.g. ExtendSim's "Close worksheet after use" calling Excel.Quit() with an
+# unsaved export workbook still open - shows a window IN THE EXCEL.EXE PROCESS, not ExtendSim's:
+# NUIDialog, empty title, "Save your changes to this file?", Save / Don't Save / Cancel. It can
+# never be found by title (empty) or by KNOWN_BOXES/KNOWN_PROMPTS (those are scoped to ExtendSim's
+# own process). Only Cancel is ever pressed - Save would overwrite the user's file from a stale
+# in-memory copy, Don't Save would throw away whatever is in it - and nothing else in Excel is
+# ever touched: a window of EXCEL.EXE whose UIA text is not exactly this prompt is left alone.
+#
+# Only the automation Excel is ever looked at: the Excel that a Data Import Export block uses runs
+# as `EXCEL.EXE /automation -Embedding` (measured live 2026-10-10). The same prompt in the user's
+# own, interactively started Excel is theirs to answer - pressing Cancel there would stop them from
+# closing their own workbook - so an EXCEL.EXE whose command line lacks "/automation" is ignored,
+# and so is one whose command line cannot be read (nothing is answered on a guess).
+EXCEL_PROCESS_NAME = "EXCEL.EXE"
+EXCEL_PROMPT_CLASS = "NUIDialog"
+EXCEL_SAVE_PROMPT_TEXT = "Save your changes to this file?"
+EXCEL_AUTOMATION_SWITCH = "/automation"
+
+# pid -> True/False (command line read: automation Excel or not). Only successful reads are
+# cached, so a process whose command line could not be read is tried again on the next pass.
+_excel_automation_cache = {}
+
+
+def _process_command_line(pid):
+    """Command line of process `pid` via WMI (Win32_Process, pywin32); None when it cannot be
+    read (no such process, access denied, WMI unavailable)."""
+    try:
+        import win32com.client
+        wmi = win32com.client.GetObject("winmgmts:")
+        for proc in wmi.ExecQuery(
+                "SELECT CommandLine FROM Win32_Process WHERE ProcessId = %d" % int(pid)):
+            return proc.CommandLine
+    except Exception:
+        return None
+    return None
+
+
+def _is_automation_excel_window(hwnd):
+    """True only when hwnd's process command line was read and contains "/automation" - the
+    Excel that ExtendSim's block uses. False for the user's own Excel and when the command line
+    cannot be read; the latter is reported on stderr (the prompt is left for a person)."""
+    pid = _window_pid(hwnd)
+    if pid is None:
+        return False
+    if pid in _excel_automation_cache:
+        return _excel_automation_cache[pid]
+    cmd = _process_command_line(pid)
+    if cmd is None:
+        try:
+            sys.stderr.write("dialog_watcher: could not read the command line of EXCEL.EXE pid %d;"
+                             " its save prompt is not answered\n" % pid)
+            sys.stderr.flush()
+        except Exception:
+            pass
+        return False
+    result = EXCEL_AUTOMATION_SWITCH in cmd.lower()
+    _excel_automation_cache[pid] = result
+    return result
+
+
+def _window_process_name(hwnd):
+    """Image name (e.g. "EXCEL.EXE") of hwnd's owning process, uppercased; "" if it can't be
+    determined - such a window is never matched to Excel."""
+    pid = _window_pid(hwnd)
+    if pid is None:
+        return ""
+    handle = None
+    try:
+        handle = win32api.OpenProcess(
+            win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
+        return os.path.basename(win32process.GetModuleFileNameEx(handle, 0)).upper()
+    except Exception:
+        return ""
+    finally:
+        if handle is not None:
+            try:
+                win32api.CloseHandle(handle)
+            except Exception:
+                pass
+
+
+def _find_excel_windows():
+    """Top-level, visible windows shaped like Excel's own save prompt: class "NUIDialog", empty
+    title, in an EXCEL.EXE process started for automation (see EXCEL_AUTOMATION_SWITCH) - no UIA,
+    and the (more expensive) process checks only run once the cheap class/title check already
+    matches. Used both to decide whether a pass should even look for the prompt (main(), below)
+    and as the candidate set _find_excel_save_prompts reads.
+
+    The shape check matters: an ordinary open workbook window (class "XLMAIN", titled e.g.
+    "Book1 - Excel") must never open a pass - walking its ribbon/grid via UIA
+    FindAll(Descendants) takes seconds, and is exactly the kind of call try_uia_strategy's own
+    docstring says must never run before win32 has confirmed a real box."""
+    windows = []
+
+    def enum_callback(hwnd, _):
+        if (win32gui.IsWindowVisible(hwnd) and win32gui.GetClassName(hwnd) == EXCEL_PROMPT_CLASS
+                and not win32gui.GetWindowText(hwnd) and _window_process_name(hwnd) == EXCEL_PROCESS_NAME
+                and _is_automation_excel_window(hwnd)):
+            windows.append(hwnd)
+        return True
+
+    win32gui.EnumWindows(enum_callback, None)
+    return windows
+
+
+def _find_excel_save_prompts(windows=None):
+    """Of the prompt-shaped EXCEL.EXE windows (`windows`, or _find_excel_windows() when omitted),
+    the ones whose UIA tree really contains the exact save-prompt text - read only, never presses
+    anything. `windows` lets a caller that has already enumerated them (extendsim_probe's check())
+    pass the list through instead of enumerating twice. Used both by _dismiss_excel_save_prompts
+    (below) and by extendsim_probe's read-only check (so the TypeScript watchdog can see the
+    prompt without clicking it)."""
+    out = []
+    for hwnd in (_find_excel_windows() if windows is None else windows):
+        probe = _uia_read_and_press(hwnd, None)            # read only: no button named None
+        texts, buttons = (probe[0], probe[1]) if probe is not None else ([], [])
+        if EXCEL_SAVE_PROMPT_TEXT in texts:
+            out.append({"hwnd": hwnd, "title": "Excel", "texts": texts, "buttons": buttons})
+    return out
+
+
+def _dismiss_excel_save_prompts():
+    """Excel's own save prompt in any EXCEL.EXE window - answered Cancel through UIA Invoke,
+    falling back to Escape posted to that window only while it responds (_press_key_on). Any
+    EXCEL.EXE window whose UIA text is not exactly EXCEL_SAVE_PROMPT_TEXT is read but never
+    pressed."""
+    out = []
+    for d in _find_excel_save_prompts():
+        _progress({"dialog": {"title": d["title"], "texts": d["texts"], "buttons": d["buttons"]}})
+        pressed = _uia_read_and_press(d["hwnd"], "Cancel")
+        if pressed is not None and pressed[2]:
+            method, closed = "UIA", True
+        else:
+            method = "win32gui Escape"
+            try:
+                closed = _press_key_on(d["hwnd"], VK_ESCAPE)
+            except Exception:
+                closed = False
+        out.append({"title": d["title"], "texts": d["texts"], "buttons": d["buttons"],
+                    "dismissed": closed, "method": method})
+    return out
 
 
 def _is_startup_reminder(title):
@@ -607,7 +752,7 @@ def _find_win32_error_dialogs(extendsim_pid=None):
 def try_win32gui_strategy():
     """
     Strategy 2: Use raw win32gui to find and dismiss dialogs.
-    Works even when ExtendSim is in Ghost (Not Responding) state.
+    Finds boxes even when ExtendSim is in Ghost (Not Responding) state; presses only once it responds.
     Returns list of dismissed dialogs.
     """
     dismissed = []
@@ -639,17 +784,20 @@ def try_win32gui_strategy():
     if any(d.get("answer") or d.get("prompts") for d in qt_dialogs):
         dismissed.extend(answer_known_boxes())
 
-    # 3. Handle Qt ExtendSim dialogs (SetForegroundWindow + SendInput Enter)
+    # Excel's own save prompt is NOT re-checked here: every
+    # caller of this function (main(), below, and extendsim_probe.dismiss()) always calls
+    # try_uia_strategy() first, whose own per-round loop already covers it under the exact same
+    # _uia_available gate - detecting the prompt's text needs UIA either way, so trying again
+    # here would just re-read the same windows a moment later with no new information.
+
+    # 3. Handle Qt ExtendSim dialogs (Enter posted to the box, only while ExtendSim responds)
     for d in qt_dialogs:
         if d.get("answer") or d.get("prompts"):
             continue
         if d.get("is_maintenance"):
-            # Dismiss maintenance dialog too
+            # Dismiss the start-up reminder too (Enter posted to that box only, only while ExtendSim responds)
             try:
-                win32gui.SetForegroundWindow(d["hwnd"])
-                time.sleep(0.2)
-                _send_enter_key()
-                time.sleep(0.3)
+                _press_key_on(d["hwnd"], VK_RETURN)
             except Exception:
                 pass
             continue
@@ -660,17 +808,15 @@ def try_win32gui_strategy():
         texts = [t for t in (read[0] if read else []) if t] or [dialog_report.GHOST_PLACEHOLDER]
         _progress({"dialog": {"title": d["title"], "texts": texts}})
         try:
-            # Bring the dialog to foreground and press Enter
-            win32gui.SetForegroundWindow(d["hwnd"])
-            time.sleep(0.2)
-            _send_enter_key()
+            # Enter posted to this box only, only while ExtendSim responds; dismissed only if it
+            # really closed - otherwise reported (a person, or the next pass, deals with it).
+            closed = _press_key_on(d["hwnd"], VK_RETURN)
             dismissed.append({
                 "title": d["title"],
                 "texts": texts,
-                "dismissed": True,
-                "method": "win32gui SendInput"
+                "dismissed": closed,
+                "method": "win32gui PostMessage"
             })
-            time.sleep(0.3)
         except Exception:
             pass
 
@@ -693,13 +839,18 @@ def main():
         qt_dialogs, main_hwnd = _find_extendsim_dialog_windows()
         pid = _window_pid(main_hwnd) if main_hwnd is not None else None
         win32_error_dialogs = _find_win32_error_dialogs(pid) if pid is not None else []
+        # Cheap win32-only pre-filter (class/title, no UIA): an EXCEL.EXE window shaped like the
+        # save prompt may be what ExtendSim is stuck on (its own main window shows nothing new
+        # while it waits on Excel.Quit()). An ORDINARY Excel window never matches this shape, so
+        # it never opens a pass (see _find_excel_windows).
+        excel_windows = _find_excel_windows()
 
         if qt_dialogs or win32_error_dialogs:
             if win32_error_dialogs or any(not d.get("is_maintenance") for d in qt_dialogs):
                 # Before any UIA call, which blocks while ExtendSim is busy: a pass killed
                 # from here on still tells the caller that ExtendSim showed a box.
                 _progress({"seen": True})
-            # Strategy 1: UI Automation (best - can read dialog text)
+            # Strategy 1: UI Automation (best - can read dialog text); also covers Excel's prompt
             uia_results = try_uia_strategy()
             if uia_results:
                 print(json.dumps({"found": True, "dialogs": uia_results}))
@@ -709,6 +860,16 @@ def main():
             win32_results = try_win32gui_strategy()
             if win32_results:
                 print(json.dumps({"found": True, "dialogs": win32_results}))
+                return 0
+        elif excel_windows:
+            # Only a window shaped like Excel's own prompt is open, no ExtendSim box of its own -
+            # go straight to the Excel step. The full ExtendSim-oriented strategies must NOT run
+            # here: try_uia_strategy's UIA calls against ExtendSim's own main window can block for
+            # as long as ExtendSim is busy (exactly the case here - it is waiting on Excel.Quit()).
+            _progress({"seen": True})
+            excel_results = _dismiss_excel_save_prompts()
+            if excel_results:
+                print(json.dumps({"found": True, "dialogs": excel_results}))
                 return 0
 
         time.sleep(poll_sec)

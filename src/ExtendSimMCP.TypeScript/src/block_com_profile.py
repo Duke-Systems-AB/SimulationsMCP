@@ -66,7 +66,7 @@ class Com:
         return r["blockId"]
 
     def close_model(self):
-        return self._b.model_close(None, False)
+        return self._b.model_close(None, discard=True)   # our temporary model; nothing to keep
 
     def open_library(self, path):
         """Ask ExtendSim to open a library (File > Open; ExtendSim reads it, not us). ModL strings

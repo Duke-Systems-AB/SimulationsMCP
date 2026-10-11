@@ -1,9 +1,9 @@
 Simulations MCP Server - Installation Guide
 ============================================
 Duke Systems AB
-Version 1.25.0 — 113 tools
+Version 1.26.0 — 116 tools
 Build the installer with installer\build-installer.bat (requires Inno Setup 6 +
-Node + Python) -> output\SimulationsMCP-Setup-1.25.0.exe
+Node + Python) -> output\SimulationsMCP-Setup-1.26.0.exe
 
 PREREQUISITES
 -------------
@@ -186,10 +186,11 @@ FIRST SESSION — IMPORTANT
 When your AI client connects, it should call MCP_init first.
 This returns critical usage rules, available tools, and workflow guidance.
 
-The server provides 113 tools across these categories:
+The server provides 116 tools across these categories:
   Model, Block, Block Layout, Values, Config, Attributes,
   Simulation, Statistics, Multi-run, Database, DB Relations,
-  Global Arrays, Hierarchy, Analysis (Optimizer, Scenario Manager),
+  Global Arrays, Hierarchy, Analysis (Optimizer, Scenario Manager,
+  Analysis Manager), Resources, Data files (Excel/text import and export),
   Templates, Annotations, Time/Date, Context, Patterns and Mining,
   Advisor, Reference, and Status tools.
 
@@ -199,6 +200,8 @@ Key tools for AI assistants:
   - model_advisor   — Analyze model and get warnings/suggestions
   - guide_draft / guide_save — Turn a model you built into a guide of your own
   - block_configure — Configure any block type with one call
+  - model_files_list / model_files_configure — See, repoint and set up the
+                      Excel and text files a model reads and writes
 
 FIRE-AND-FORGET OPERATIONS
 ---------------------------

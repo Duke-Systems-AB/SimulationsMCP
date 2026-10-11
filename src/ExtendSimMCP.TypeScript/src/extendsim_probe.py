@@ -56,6 +56,17 @@ def check() -> dict:
     dialogs = _uia_boxes() if all_win32_dialogs else []
     if not dialogs:
         dialogs = [{"title": d["title"], "texts": [], "buttons": []} for d in all_win32_dialogs]
+
+    # Excel's own save prompt lives in an EXCEL.EXE window, never ExtendSim's - read only here
+    # (never clicked by check()); dw._find_excel_windows() is a cheap win32-only shape check (no
+    # UIA) so it is tried even when ExtendSim itself shows nothing (its main window can be stuck
+    # on Excel.Quit() with no dialog of its own open yet). The list is passed into
+    # _find_excel_save_prompts rather than enumerated twice.
+    excel_windows = dw._find_excel_windows()
+    if excel_windows:
+        dialogs = dialogs + [{"title": p["title"], "texts": p["texts"], "buttons": p["buttons"]}
+                              for p in dw._find_excel_save_prompts(excel_windows)]
+
     return {
         "dialogs": dialogs,
         "windowFound": main_hwnd is not None,

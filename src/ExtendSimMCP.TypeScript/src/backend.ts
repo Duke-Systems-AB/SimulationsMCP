@@ -37,8 +37,11 @@ const EARLY_DIALOG_CHECK_MS = 1_000;
 const COMMAND_TIMEOUTS: Record<string, number> = {
   // 30s - medium: file I/O, multi-block ops, bulk reads
   model_open: 30_000,
+  // model_list reads the open model windows by UI Automation: measured 8.1-8.3 s during a running
+  // simulation (2026-10-10), past the 10 s default with COM on top. Python bounds that read at 5 s
+  // (model_lifecycle.WINDOW_READ_DEADLINE_SEC) and falls back to the active model.
+  model_list: 30_000,
   model_save: 30_000,
-  model_close: 30_000,  // saveFirst runs SaveModel, same op model_save gets 30s for
   detect_license: 30_000,  // opens+closes a temp model; called by MCP_init
   model_new: 30_000,
   model_validate: 30_000,
@@ -70,8 +73,18 @@ const COMMAND_TIMEOUTS: Record<string, number> = {
   // Reads the Analysis database's result tables through COM, one cell per call; they grow with every
   // experiment ever recorded in the model (only the wanted experiment's rows are read in full).
   analysis_manager_get_results: 120_000,
+  // 60s - model data files: a scan reads about ten values per Data Import Export block
+  model_files_list: 60_000,
+  model_files_repoint: 60_000,
+  // 120s - up to 20 blocks, each written then read back; an Excel verifyImport entry adds an
+  // Import press (dismisser running) plus a worker call to close the workbook it opened.
+  model_files_configure: 120_000,
   // 60s - save/close/reopen cycle
   block_configure: 60_000,
+  // 60s - when neither saveFirst nor discard is given, model_close probes for unsaved changes by
+  // closing and reading what the dialog dismisser caught; the probe waits for the dismisser's
+  // pass, at most ~25 s.
+  model_close: 60_000,
   // 2-10min - long-running operations
   extendsim_start: 120_000,
   simulation_run: 300_000,
@@ -90,6 +103,10 @@ const SKIP_EARLY_DIALOG_CHECK = new Set([
   'scenario_manager_run',
   'scenario_manager_status',
   'optimizer_run',
+  // model_close's probe reads the save prompt through its own dismisser; the early check's
+  // watcher could answer the prompt first (Cancel - safe), and the call would then end as a
+  // dialog error instead of MODEL_HAS_UNSAVED_CHANGES.
+  'model_close',
 ]);
 
 /** Heartbeat interval in ms (checks if Python process is alive) */
@@ -620,6 +637,23 @@ export function processResponse(response: any): void {
 // Text ExtendSim shows when an error stopped a run (measured 2026-09-29/30, 2024 and 2026).
 const RUN_ABORT_TEXT = /aborted|missing or bad data/i;
 
+const MISSING_FILE_BOX =
+  /DLG_Filename_txt\s+(.*?)\s+used in Data Import Export block number\s+(\d+)\s+does not exist or is not in the current folder/is;
+
+/** Same note as data_files.missing_file_notes on the Python side. */
+export function dataFileNotesFor(texts: string[]): string[] {
+  const notes: string[] = [];
+  for (const t of texts) {
+    const m = MISSING_FILE_BOX.exec(t ?? "");
+    if (m) {
+      notes.push(
+        `the file ${m[1]} used by Data Import Export block ${m[2]} was not found; the block has emptied its file path, so do not save the model before repointing it with model_files_repoint`,
+      );
+    }
+  }
+  return notes;
+}
+
 /**
  * A dialog dismissed while a command ran is never thrown away (2026-09-30). The real response
  * gets `dialogsDuringCommand`; a `simulation_run` that an ExtendSim error aborted - the dialog
@@ -631,6 +665,8 @@ export function annotateWithDialogs(command: string, response: unknown, dialogs:
   const r = response as Record<string, unknown>;
   const texts = dialogs.map((d) => d.text ?? "").filter((t) => t);
   const out = { ...r, dialogsDuringCommand: texts };
+  const notes = dataFileNotesFor(texts);
+  if (notes.length) (out as Record<string, unknown>).dataFileNotes = notes;
   if (command !== "simulation_run" || r.success === false) return out;
   const aborted = texts.some((t) => RUN_ABORT_TEXT.test(t));
   if (!aborted && r.status !== "stopped early") return out;
@@ -643,6 +679,7 @@ export function annotateWithDialogs(command: string, response: unknown, dialogs:
     currentTime: r.currentTime ?? r.stoppedAt,
     endTime: r.endTime,
     dialogsDuringCommand: texts,
+    ...(notes.length ? { dataFileNotes: notes } : r.dataFileNotes ? { dataFileNotes: r.dataFileNotes } : {}),
   };
 }
 
@@ -716,7 +753,7 @@ function checkFromDialog(dialogInfo: DialogInfo): ProbeCheck | null {
 /**
  * Gets the timeout for a specific command
  */
-function getTimeout(command: string): number {
+export function getTimeout(command: string): number {
   return COMMAND_TIMEOUTS[command] ?? DEFAULT_TIMEOUT;
 }
 
@@ -1157,6 +1194,8 @@ export async function modelInfo(params: {
 export async function modelClose(params: {
   modelId?: string;
   saveFirst?: boolean;
+  discard?: boolean;
+  filePath?: string;
 }) {
   return await sendCommand("model_close", params);
 }
@@ -1290,6 +1329,18 @@ export async function analysisManagerGetResults(params: Record<string, unknown>)
   return await sendCommand("analysis_manager_get_results", params);
 }
 
+export async function modelFilesList(params: Record<string, unknown>) {
+  return await sendCommand("model_files_list", params);
+}
+
+export async function modelFilesRepoint(params: Record<string, unknown>) {
+  return await sendCommand("model_files_repoint", params);
+}
+
+export async function modelFilesConfigure(params: Record<string, unknown>) {
+  return await sendCommand("model_files_configure", params);
+}
+
 export async function blockDiscover(params: {
   modelId?: string;
   libraryName: string;
@@ -1372,6 +1423,7 @@ export async function simulationRun(params: {
   waitForCompletion?: boolean;
   includeStats?: boolean;
   statsBlockIds?: number[];
+  saveExports?: boolean;
 }) {
   return await sendCommand("simulation_run", params);
 }
@@ -1621,6 +1673,7 @@ export async function simulationRunMulti(params: {
   runMode?: string;
   collectPerRun?: boolean;
   blockIds?: number[];
+  saveExports?: boolean;
 }) {
   return await sendCommand("simulation_run_multi", params);
 }
@@ -1632,6 +1685,7 @@ export async function simulationRunScenarios(params: {
   values: (number | string)[];
   endTime?: number;
   runMode?: string;
+  saveExports?: boolean;
 }) {
   return await sendCommand("simulation_run_scenarios", params);
 }
@@ -1655,6 +1709,7 @@ export async function optimizerRun(params: {
   modelId?: string;
   timeout?: number;
   waitForCompletion?: boolean;
+  saveExports?: boolean;
 }) {
   return await sendCommand("optimizer_run", params);
 }
@@ -1670,6 +1725,7 @@ export async function scenarioManagerRun(params: {
   modelId?: string;
   timeout?: number;
   waitForCompletion?: boolean;
+  saveExports?: boolean;
 }) {
   return await sendCommand("scenario_manager_run", params);
 }

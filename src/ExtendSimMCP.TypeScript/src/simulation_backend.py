@@ -18,6 +18,7 @@ from patterns import list_patterns, get_pattern
 from dialog_table import table_get_entry, table_set_entry
 from attribute_detect import detect_attributes_entry
 from pattern_approve import approve_pattern_entry
+import model_lifecycle
 
 # Startup log - written immediately on import to verify correct file is running
 _log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "temp")
@@ -277,6 +278,7 @@ class ErrorCode:
     MODEL_OPEN_FAILED = "MODEL_OPEN_FAILED"
     MODEL_SAVE_FAILED = "MODEL_SAVE_FAILED"
     MODEL_CLOSE_FAILED = "MODEL_CLOSE_FAILED"
+    MODEL_HAS_UNSAVED_CHANGES = "MODEL_HAS_UNSAVED_CHANGES"   # model_close without a choice
     BLOCK_PROFILE_FAILED = "BLOCK_PROFILE_FAILED"
 
     # Block errors
@@ -301,6 +303,11 @@ class ErrorCode:
     INVALID_PARAMETER = "INVALID_PARAMETER"
     SET_VALUE_FAILED = "SET_VALUE_FAILED"
     GET_VALUE_FAILED = "GET_VALUE_FAILED"
+    MODEL_FILES_REPOINT_FAILED = "MODEL_FILES_REPOINT_FAILED"   # see data_files.py
+    DATA_FILE_MISSING = "DATA_FILE_MISSING"                     # see data_files.py
+    MODEL_FILES_CONFIGURE_FAILED = "MODEL_FILES_CONFIGURE_FAILED"   # see data_configure.py
+    DATA_FILE_TARGET_CHANGED = "DATA_FILE_TARGET_CHANGED"           # see data_files.py
+    DATA_FILE_EXCEL_CLOSE_CONFLICT = "DATA_FILE_EXCEL_CLOSE_CONFLICT"   # see data_files.py
 
     # Command errors
     UNKNOWN_COMMAND = "UNKNOWN_COMMAND"
@@ -715,53 +722,51 @@ def detect_license(model_id: Optional[str] = None) -> dict:
                      f"Failed to detect license: {e}")
 
 
+def _norm_model_path(path: str) -> str:
+    """One spelling per file, for comparing model paths only: absolute, "." / ".." and doubled or mixed
+    separators resolved (2024 reports forward slashes), case folded (Windows)."""
+    return os.path.normcase(os.path.normpath(os.path.abspath(path.replace("/", os.sep))))
+
+
+def _same_name_conflict(file_path: str, active_name: str, active_folder: str) -> Optional[str]:
+    """None when file_path IS the active model (same full path); otherwise why it cannot be opened.
+
+    Called only when the file name equals the active model's name. GetModelPath gives the folder
+    without a trailing separator, and "" for a model that was never saved. A bare file name with no
+    folder names the active model itself (as before)."""
+    if "/" not in file_path.replace("\\", "/"):
+        return None
+    if not active_folder:
+        return (f"a model named {active_name} is already open and has never been saved; ExtendSim "
+                "cannot hold two models with the same name - close it first")
+    if _norm_model_path(os.path.join(active_folder, active_name)) == _norm_model_path(file_path):
+        return None
+    return (f"a model named {active_name} is already open from {active_folder}; ExtendSim cannot "
+            "hold two models with the same name - close it first")
+
+
 def model_open(file_path: str, read_only: bool = False) -> dict:
-    """Opens an ExtendSim model."""
+    """Opens an ExtendSim model. The decision - already open and active, open but not active
+    (refused, nothing opened), or opened now - is model_lifecycle.open_model; this adds today's
+    fields and the model's AI context."""
     try:
         _reset_auto_layout()   # BUG-002: fresh flow-layout cursor per model
 
         app = get_extendsim_app()
-        file_path_normalized = file_path.replace("\\", "/")
-        expected_model_name = file_path.split("\\")[-1].split("/")[-1]
-
-        # Check if model is already open
-        app.Execute("globalStr0 = GetModelName();")
-        current_model_name = _read_str0(app)
-
-        if current_model_name and current_model_name.lower() == expected_model_name.lower():
-            result = {
-                "success": True,
-                "modelId": "model_1",
-                "name": current_model_name,
-                "filePath": file_path,
-                "alreadyOpen": True,
-                "blockCount": 0
-            }
-            # Auto-load AI context if present
-            try:
-                ctx = _context_read_all(app)
-                if ctx is not None:
-                    result["context"] = ctx
-            except Exception:
-                pass  # Don't fail model_open if context read fails
-            return result
-
-        # Open the model
-        cmd = f'OpenExtendFile("{_escape_modl_string(file_path_normalized)}")'
-        app.Execute(cmd)
-
-        # Get model name
-        app.Execute("globalStr0 = GetModelName();")
-        model_name = _read_str0(app)
-
+        core = model_lifecycle.open_model(model_lifecycle.BackendOps(sys.modules[__name__], app),
+                                          file_path)
+        if not core.get("success"):
+            return core
         result = {
             "success": True,
             "modelId": "model_1",
-            "name": model_name,
+            "name": core.get("name") or "",
             "filePath": file_path,
-            "alreadyOpen": False,
+            "alreadyOpen": bool(core.get("alreadyOpen")),
             "blockCount": 0
         }
+        if "warning" in core:
+            result["warning"] = core["warning"]
         # Auto-load AI context if present
         try:
             ctx = _context_read_all(app)
@@ -795,16 +800,12 @@ def model_save(model_id: Optional[str] = None, file_path: Optional[str] = None) 
 
 
 def model_list() -> dict:
-    """Lists open models."""
-    # ExtendSim typically has only one model open at a time
+    """Lists every open model (model_lifecycle.list_models): the active one first with its folder,
+    the others by their windows; only the active model, with a warning, when the windows cannot be
+    read."""
     try:
         app = get_extendsim_app()
-        app.Execute("globalStr0 = GetModelName();")
-        model_name = _read_str0(app)
-
-        if model_name:
-            return {"models": [{"modelId": "model_1", "name": model_name}]}
-        return {"models": []}
+        return model_lifecycle.list_models(model_lifecycle.BackendOps(sys.modules[__name__], app))
     except Exception as e:
         return {"success": False, "models": [], "errorCode": ErrorCode.COM_ERROR, "error": str(e)}
 
@@ -888,60 +889,22 @@ def _active_model_name(app) -> str:
 # ExecuteMenuCommand(4) closes the active WINDOW. With one of the model's block dialogs in
 # front, the first close takes the dialog and the model stays open (measured live on 2026,
 # 2026-09-29, after an equation write). So the close is verified by the model name and
-# retried; each attempt closes one more window of the same model.
-_CLOSE_ATTEMPTS = 3
+# retried; each attempt closes one more window of the same model. The count lives in
+# model_lifecycle.CLOSE_ATTEMPTS; this name is kept for the code and docs that cite it.
+_CLOSE_ATTEMPTS = model_lifecycle.CLOSE_ATTEMPTS
 
 
-def model_close(model_id: Optional[str] = None, save_first: bool = False) -> dict:
-    """Closes the model. Without save_first, unsaved changes are discarded - and the result
-    says so (Jonas 2026-09-29: warn, do not refuse). The close is verified: if the model is
-    still the active one after _CLOSE_ATTEMPTS closes, MODEL_CLOSE_FAILED."""
+def model_close(model_id: Optional[str] = None, save_first: bool = False, discard: bool = False,
+                file_path: Optional[str] = None) -> dict:
+    """Closes the active model - and never saves or discards a change on its own (Jonas 2026-10-10,
+    replacing 2026-09-29's "warn, do not refuse"): a changed model is closed only with save_first,
+    discard, or (a never-saved model) file_path; otherwise MODEL_HAS_UNSAVED_CHANGES and the model
+    stays open and unchanged. The decision is model_lifecycle.close_model."""
     try:
         app = get_extendsim_app()
-        name = _active_model_name(app)
-        if not name:
-            # The active window would be something else (a library) - do not close it.
-            return _error(ErrorCode.MODEL_NOT_OPEN, "no model is open, so there is nothing to close")
-        never_saved, dirty = _model_unsaved_state(app)
-
-        if save_first:
-            if never_saved:
-                # SaveModel on a never-saved model opens "Save As" - a modal that blocks COM.
-                return _error(ErrorCode.MODEL_SAVE_FAILED,
-                              "this model has never been saved, so it has no file to save to",
-                              suggestion="save it first with model_save and a filePath, then close")
-            app.Execute("SaveModel();")
-        else:
-            app.Execute("SetDirty(False);")
-
-        attempts = 0
-        while True:
-            attempts += 1
-            app.Execute("ExecuteMenuCommand(4)")        # closes the active window
-            if _active_model_name(app) != name:
-                break
-            if attempts == _CLOSE_ATTEMPTS:
-                return _error(ErrorCode.MODEL_CLOSE_FAILED,
-                              f"'{name}' is still open after {attempts} close attempts",
-                              suggestion="close any open dialogs of the model in ExtendSim, then try again")
-            if not save_first:
-                app.Execute("SetDirty(False);")          # still discarding, as on the first close
-
-        result = {"success": True, "wasSaved": save_first}
-        if attempts > 1:
-            result["closeAttempts"] = attempts           # a dialog of the model was in front
-        if save_first:
-            return result
-        result["unsavedChanges"] = dirty
-        if dirty:
-            result["warning"] = ("Closed without saving: this model had never been saved and its "
-                                 "changes are lost. Use saveFirst=true (after model_save with a "
-                                 "filePath) when changes must be kept.")
-        elif dirty is None:
-            result["warning"] = ("Closed without saving. ExtendSim cannot tell whether a saved model "
-                                 "had unsaved changes; any were discarded. Use saveFirst=true when "
-                                 "the user's changes must be kept.")
-        return result
+        return model_lifecycle.close_model(
+            model_lifecycle.BackendOps(sys.modules[__name__], app),
+            {"saveFirst": save_first, "discard": discard, "filePath": file_path})
     except Exception as e:
         return _com_error(e, "model_close")
 
@@ -959,6 +922,14 @@ def model_new(save_path: Optional[str] = None) -> dict:
         _reset_auto_layout()   # BUG-002: fresh flow-layout cursor per model
 
         app = get_extendsim_app(create_if_missing=True)
+
+        # A savePath naming a model that is already open would put a second model of that name
+        # next to it (ExtendSim cannot hold two) - refuse before anything is created.
+        if save_path:
+            conflict = model_lifecycle.new_model_conflict(
+                model_lifecycle.BackendOps(sys.modules[__name__], app), save_path)
+            if conflict:
+                return conflict
 
         # File > New via menu command 2
         app.Execute("ExecuteMenuCommand(2)")
@@ -10952,12 +10923,14 @@ def extract_psg(file_path=None, save_path=None, model_id=None):
     import psg_extract
     app = get_extendsim_app()
     opened = False
+    opened_name = ""
     try:
         if file_path:
             res = model_open(file_path, True)
             if not res.get("success"):
                 return res
             opened = not res.get("alreadyOpen", False)  # only close if WE opened it
+            opened_name = res.get("name") or model_lifecycle._file_name(file_path)
         else:
             chk = _validate_model_open(app)
             if not chk.get("success"):
@@ -10979,7 +10952,11 @@ def extract_psg(file_path=None, save_path=None, model_id=None):
     finally:
         if opened:
             try:
-                model_close(None, False)
+                # discard=True throws changes away, so it may only ever reach the model this call
+                # opened: if anything else is active now (the open did not take, or another model
+                # came to the front), that is the user's model and it is left alone.
+                if _active_model_name(app).lower() == opened_name.lower():
+                    model_close(None, discard=True)   # our own read-only copy
             except Exception:
                 pass
 
@@ -11071,6 +11048,32 @@ def cluster_patterns(candidates_paths=None, file_paths=None, psg_paths=None, sav
         return _com_error(e, "cluster_patterns")
 
 
+def _data_file_ops():
+    """data_files.BackendOps for the open model, or None when ExtendSim or a model is not there (the run
+    tool then reports that itself)."""
+    import data_files
+    app = get_extendsim_app()
+    if app is None or not _validate_model_open(app).get("success"):
+        return None
+    return data_files.BackendOps(sys.modules[__name__], app)
+
+
+def _guarded(run, still_running=None):
+    """The five run commands refuse to start when an auto-import data file is missing (data_files.py), and after
+    a finished run save the model's Excel exports and close the workbooks the run opened (excel_exports.py,
+    through the excel_save_worker.py subprocess) unless the call passes saveExports=false."""
+    import data_files
+    import excel_exports
+    return data_files.guarded(run, lambda: _data_file_ops(), save_exports=True, still_running=still_running,
+                              worker=lambda payload: excel_exports.run_worker(payload))
+
+
+def _sim_run_still_running(p):
+    """simulation_run with waitForCompletion=false returns while the run goes on in a background thread; the
+    other four run tools return with the run finished (optimizer/SM 'started' = run, outcome not checked)."""
+    return not p.get("waitForCompletion", True)
+
+
 # Dispatch table
 COMMANDS = {
     "extendsim_status": lambda p: extendsim_status(),
@@ -11080,7 +11083,8 @@ COMMANDS = {
     "model_save": lambda p: model_save(p.get("modelId"), p.get("filePath")),
     "model_list": lambda p: model_list(),
     "model_info": lambda p: model_info(p.get("modelId"), p.get("includeStatistics", False)),
-    "model_close": lambda p: model_close(p.get("modelId"), p.get("saveFirst", False)),
+    "model_close": lambda p: model_close(p.get("modelId"), p.get("saveFirst", False),
+                                         p.get("discard", False), p.get("filePath")),
     "model_new": lambda p: model_new(p.get("savePath")),
     "block_add": lambda p: block_add(
         p["libraryName"], p["blockName"],
@@ -11144,6 +11148,9 @@ COMMANDS = {
     "optimizer_configure": lambda p: __import__("analysis_config").optimizer_configure_command(p),
     "analysis_manager_configure": lambda p: __import__("analysis_config").analysis_manager_configure_command(p),
     "analysis_manager_get_results": lambda p: __import__("analysis_config").analysis_manager_results_command(p),
+    "model_files_list": lambda p: __import__("data_files").model_files_list_command(p),
+    "model_files_repoint": lambda p: __import__("data_files").model_files_repoint_command(p),
+    "model_files_configure": lambda p: __import__("data_configure").model_files_configure_command(p),
     "block_discover": lambda p: block_discover(
         p["libraryName"], p["blockName"], p.get("modelId")
     ),
@@ -11155,11 +11162,11 @@ COMMANDS = {
         p.get("blockId"), p.get("libraryName"), p.get("blockName"),
         p.get("readScalarValues", True), p.get("modelId")
     ),
-    "simulation_run": lambda p: simulation_run(
+    "simulation_run": _guarded(lambda p: simulation_run(
         p.get("modelId"), p.get("endTime"), p.get("runMode", "normal"),
         p.get("resetFirst", True), p.get("waitForCompletion", True),
         p.get("includeStats", False), p.get("statsBlockIds")
-    ),
+    ), still_running=_sim_run_still_running),
     "simulation_stop": lambda p: simulation_stop(p.get("modelId")),
     "simulation_pause": lambda p: simulation_pause(p.get("modelId")),
     "simulation_resume": lambda p: simulation_resume(p.get("modelId")),
@@ -11341,15 +11348,15 @@ COMMANDS = {
         p["blockIds"], p.get("modelId")
     ),
     # Multi-run and scenario operations
-    "simulation_run_multi": lambda p: simulation_run_multi(
+    "simulation_run_multi": _guarded(lambda p: simulation_run_multi(
         p["numberOfRuns"], p.get("modelId"), p.get("endTime"),
         p.get("randomSeed"), p.get("runMode", "normal"),
         p.get("collectPerRun", True), p.get("blockIds")
-    ),
-    "simulation_run_scenarios": lambda p: simulation_run_scenarios(
+    )),
+    "simulation_run_scenarios": _guarded(lambda p: simulation_run_scenarios(
         p["blockId"], p["dialogVariable"], p["values"],
         p.get("modelId"), p.get("endTime"), p.get("runMode", "normal")
-    ),
+    )),
     # v1.3 tools
     "workstation_set_config": lambda p: workstation_set_config(
         p["blockId"],
@@ -11533,10 +11540,10 @@ COMMANDS = {
         p.get("truncatePercent"), p.get("antithetic"),
         p.get("showPlotter"), p.get("modelId")
     ),
-    "optimizer_run": lambda p: optimizer_run(
+    "optimizer_run": _guarded(lambda p: optimizer_run(
         p.get("modelId"), p.get("timeout", 600),
         p.get("waitForCompletion", False)
-    ),
+    )),
     "optimizer_get_results": lambda p: optimizer_get_results(
         p["blockId"], p.get("modelId")
     ),
@@ -11547,10 +11554,10 @@ COMMANDS = {
         p.get("reportDetails"), p.get("saveScenarios"),
         p.get("modelId")
     ),
-    "scenario_manager_run": lambda p: scenario_manager_run(
+    "scenario_manager_run": _guarded(lambda p: scenario_manager_run(
         p.get("modelId"), p.get("timeout", 600),
         p.get("waitForCompletion", False)
-    ),
+    )),
     "scenario_manager_status": lambda p: scenario_manager_status(
         p.get("modelId")
     ),

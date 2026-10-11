@@ -1,6 +1,6 @@
 # Simulations MCP Server — User Manual
 
-**Version:** 1.25.0
+**Version:** 1.26.0
 **Author:** Duke Systems AB
 **Date:** 2026-09-23
 
@@ -24,7 +24,7 @@
 
 ## 1. Introduction
 
-The Simulations MCP Server is a Model Context Protocol (MCP) server that enables AI assistants to build, configure, run, and analyze ExtendSim simulation models programmatically. It bridges AI clients (Claude Code, Claude Desktop, Gemini CLI, Cursor, ChatGPT) to ExtendSim's full modeling environment through 113 specialized tools.
+The Simulations MCP Server is a Model Context Protocol (MCP) server that enables AI assistants to build, configure, run, and analyze ExtendSim simulation models programmatically. It bridges AI clients (Claude Code, Claude Desktop, Gemini CLI, Cursor, ChatGPT) to ExtendSim's full modeling environment through 116 specialized tools.
 
 ### What is MCP?
 
@@ -74,7 +74,7 @@ ExtendSim registers its COM component during installation. If needed, run Extend
 
 ### Option A: Installer (Recommended)
 
-1. Run `SimulationsMCP-Setup-1.25.0.exe` as administrator (the prebuilt installer matches the current source)
+1. Run `SimulationsMCP-Setup-1.26.0.exe` as administrator (the prebuilt installer matches the current source)
 2. Choose installation directory (default: `C:\Program Files\SimulationsMCP`)
 3. Select whether to install as a Windows Service (only needed for ChatGPT — see Section 4.5)
 4. Complete the installation
@@ -379,6 +379,89 @@ an error with ExtendSim's own message box text in `dialogs`; a box whose text co
 is reported as "ExtendSim showed a message box whose text could not be read" rather than left
 silent.
 
+### 4.12 Data files of a model (Excel)
+
+Models read and write external files — most often Excel — through ExtendSim's **Data Import
+Export** block (Value.lbr). Each block stores one file path; when a model is copied to another
+folder or machine, its blocks still point at the old paths, and a run then stops on ExtendSim's
+own box ("...does not exist or is not in the current folder. Please locate the input file").
+
+- **`model_files_list`** — read-only. Lists every Data Import Export block in the model
+  (including ones inside hierarchical blocks) with its direction (import/export), file type,
+  stored and resolved path, whether the file exists on disk, sheet, database/table, and whether
+  it imports or exports automatically. File existence is checked on disk in Python, never by
+  asking ExtendSim to open the file. A bare file name (no folder, e.g. `Arrivals.xlsx`) is
+  resolved against the model's own folder and marked `"location": "model folder"` — ExtendSim
+  finds such a file next to the model, and ExtendSim 2024 itself rewrites a path into the model
+  folder to a bare name after an import or export. A relative path with a folder
+  (`sub/Arrivals.xlsx`) gets a warning — ExtendSim does not find it, so the run guard refuses it;
+  repoint it to an absolute path. A model that has never been saved has no folder, so a bare
+  name there cannot be found either.
+- **`model_files_repoint`** — points one or more blocks at other files, either `changes:
+  [{blockId, path}]` for named blocks or `fromFolder` + `toFolder` to move every block whose file
+  is under one folder to the same place under another. Every new path must be absolute, at most
+  255 characters, and contain no `"`; an import file must exist, an export file's folder must
+  exist. Everything is checked before anything is written, and every new path is read back to
+  confirm ExtendSim kept it exactly — a path that does not read back returns
+  `MODEL_FILES_REPOINT_FAILED` instead of a cheerful success. The tool does not save the model;
+  save the new paths with `model_save`.
+- **`model_files_configure`** — sets up Data Import Export blocks for Excel or text import/export.
+  Each entry in `blocks` (at most 20) needs exactly one of `blockId` (an existing top-level Data
+  Import Export block) or `place: {x, y}` (places a new one from `Value.lbr`); `direction`
+  (`import`/`export`); `fileType` (`excel`/`text`); `filePath` (absolute, at most 255 characters,
+  no `"`; the import file must exist, an export file's folder must exist); `database` and `table`
+  (names, resolved to indices and checked to exist — the database/table popups themselves are
+  never opened, since they block COM with a modal "Database Selector"); `sheet` (required,
+  Excel only); `auto` (import at run start / export at run end, default `true`); and optional
+  `verifyImport` (import entries only — presses Import now with the dialog watcher running and
+  reports the table's record count; the workbook it opened is closed afterwards). Everything is
+  validated before anything is written — `INVALID_PARAMETER`, nothing changed — and a block
+  inside a hierarchical block is refused. A value that does not read back is
+  `MODEL_FILES_CONFIGURE_FAILED`, with truthful `steps` saying what was written. The intended
+  database/table of every configured block is stored in the model's AI context (merged, never
+  replacing other context) so `model_files_list` and the run guard can detect a later silent table
+  retarget (see below). The tool does not save the model; save the new setup with `model_save`. A
+  text export keeps the block's own delimiter (tab by default); the decimal separator for numbers
+  follows the Windows regional settings, not the tool call — measured as a comma on this machine.
+- **The run guard.** `simulation_run`, `simulation_run_multi`, `simulation_run_scenarios`,
+  `optimizer_run` and `scenario_manager_run` all refuse to start with:
+  - `DATA_FILE_MISSING` — a file the model would auto-import at run start is missing, has no path
+    set, or has a relative path with a folder (even when the file sits under the model's folder,
+    ExtendSim does not find it; a bare file name next to the saved model is fine). `missingFiles`
+    names the block, the stored path and the `reason`; the suggestion is to repoint it with
+    `model_files_repoint` or restore the file.
+  - `DATA_FILE_TARGET_CHANGED` — a block configured with `model_files_configure` now points at a
+    different table than the one it was set up for (the block keys on the table's INDEX, which a
+    deleted-and-recreated table re-uses). `targetChanged` names the block, the intended
+    database/table and the one it now resolves to; the suggestion is to run
+    `model_files_configure` again.
+  - `DATA_FILE_EXCEL_CLOSE_CONFLICT` — an auto Excel import has "close worksheet after use" turned
+    on while the model also has an Excel export; that combination hangs ExtendSim on Excel's own
+    save prompt at run start. `conflicts` names the blocks; the suggestion is to turn the setting
+    off in ExtendSim or remove the Excel export.
+
+  In every case nothing starts, so ExtendSim's own box never appears and the block's path is never
+  emptied. If a file disappears mid-run and ExtendSim's box appears anyway, it is still answered
+  automatically, and the run's response carries a readable `dataFileNotes` entry — the block has
+  emptied its own path by then, so do not save the model before repointing it.
+- **Saving Excel exports.** After a run finishes, the run tools (`simulation_run`,
+  `simulation_run_multi`, `simulation_run_scenarios`, `optimizer_run`, `scenario_manager_run`) save
+  any Excel export workbook the model points at to disk themselves — ExtendSim itself never does,
+  on either version — and close workbooks the run opened that have no unsaved changes. The
+  response carries `savedExports` and `closedWorkbooks`; pass `saveExports: false` to skip this.
+  An export target workbook that was already open in Excel before the run is saved too —
+  including any unsaved edits you made in it yourself — but it stays open; only the model's
+  own workbooks that the run itself opened are closed. Excel is never started by this step,
+  and it runs in a worker process with a 20 s deadline per call (one call before the run, one
+  after), so a stuck Excel cannot hang the server; at worst a run returns up to about 40 s
+  later. If the worker times out, the warning says so — Excel may then be showing a box of
+  its own (a read-only file, a compatibility check), so check Excel.
+
+**Needs Excel installed.** For the Excel file type, ExtendSim starts Excel in the background and
+keeps a workbook it has used open and locked until something closes it — this is ExtendSim's own
+behaviour, not something these tools control. See the block guide
+(`block_search "Data Import Export" detail: true`) for what is and is not proved.
+
 ---
 
 ## 5. Getting Started
@@ -440,22 +523,38 @@ These rules prevent common errors that can crash ExtendSim or produce invalid mo
 
 ## 6. Tool Reference
 
-The server provides 113 tools organized into categories. Each tool accepts structured parameters (validated with JSON Schema) and returns structured JSON responses.
+The server provides 116 tools organized into categories. Each tool accepts structured parameters (validated with JSON Schema) and returns structured JSON responses.
 
 ### 6.1 Model Management
 
 | Tool | Description |
 |------|-------------|
-| `model_new` | Create a new empty model |
-| `model_open` | Open an existing model file (.mox) |
+| `model_new` | Create a new empty model. Refused with `INVALID_PARAMETER` if `savePath` names a model that is already open — close it first |
+| `model_open` | Open an existing model file (.mox). If that same file is already the active model, it says so (`alreadyOpen`); if a model with the same file name is open from another folder, it refuses with `MODEL_OPEN_FAILED` — ExtendSim cannot hold two models with the same name, so close that one first. If a model with that name is open but not the active one, it also refuses with `MODEL_OPEN_FAILED` (`alreadyOpen`, `activeModel`) instead of switching to it — bring it to the front in ExtendSim yourself, or close the active model first. If ExtendSim does not open the file (a path that does not exist, say), it refuses with `MODEL_OPEN_FAILED` and names the model that is still active |
 | `model_save` | Save the current model (optional: save-as with new path) |
-| `model_close` | Close the current model. Without `saveFirst` the changes are discarded and the result says so (`unsavedChanges`, `warning`); a model that was never saved must be saved with `model_save` and a file path before `saveFirst` works. The close is checked: if a dialog of the model was in front it is repeated (`closeAttempts`) |
-| `model_list` | List all open models |
+| `model_close` | Close the active model. Never saves or discards changes on its own — a model with unsaved changes is refused with `MODEL_HAS_UNSAVED_CHANGES` and stays open, unchanged, unless you pass `saveFirst` (save, then close), `discard` (close without saving), or — for a model that has never been saved — `filePath` (save it there, then close). See "Closing models safely" below. The close is checked: if a dialog of the model was in front it is repeated (`closeAttempts`) |
+| `model_list` | List every open model (name, which one is active, the active model's folder); falls back to the active model alone, with a warning, if the window list cannot be read |
 | `model_info` | Get model metadata (blocks, connections, databases) |
+| `model_files_list` | List every Data Import Export block (also inside hierarchical blocks): its file, whether the file exists on disk, sheet, database/table, and whether it imports/exports automatically. Read-only - use after copying a model or on another machine, before running |
+| `model_files_repoint` | Point Data Import Export blocks at other files, either by block or by moving everything under one folder to another. Validated before anything changes (absolute path, file/folder exists) and every new path is read back; the model is not saved - use `model_save`. See §4.12 |
+| `model_files_configure` | Set up Data Import Export blocks for Excel or text import/export (direction, file type, path, sheet, database/table, auto, optional verifyImport), verified by read-back; the model is not saved - use `model_save`. See §4.12 |
 | `model_validate` | Check model for structural issues (unconnected blocks, missing queues) |
 | `model_snapshot` | Capture the full model state as a JSON summary |
 | `model_extract` | Deep extraction of model structure, connections, and configurations |
 | `model_overview` | High-level summary optimized for large models (24k+ blocks) |
+
+**Closing models safely.** `model_close` never saves or discards a change you did not ask it to.
+Called with no choice at all on a model that has unsaved changes, it returns
+`MODEL_HAS_UNSAVED_CHANGES` and leaves the model open and exactly as it was — nothing is lost and
+nothing is saved behind your back. Tell it what to do: `saveFirst: true` saves then closes;
+`discard: true` closes without saving (for a model that already has a file, ExtendSim cannot say
+afterwards whether it actually had changes, so the response marks `discardedChanges: "unknown"`);
+and for a model that has never been saved, `filePath` saves it there first, then closes. `filePath`
+must be a new file: a file that already exists is refused with `INVALID_PARAMETER` (nothing is
+overwritten). If a save does not take, the model is left open and the answer is `MODEL_SAVE_FAILED`.
+Passing both `saveFirst` and `discard` is `INVALID_PARAMETER`. Measured: about 3-5 s when
+`model_close` has to check a saved model for unsaved changes or confirm that a save took
+(`saveFirst`, `filePath`), under 2 s otherwise.
 
 **Counting.** `model_overview` reports `totalBlocks` (ordinary blocks, the same number
 `block_list` returns), `hierarchicalBlocks` and `textBlocks` separately. ExtendSim's
@@ -924,6 +1023,15 @@ about a block), or takes longer than expected over a command.
   It looks for message boxes shortly after each command starts and every 10 seconds while a
   long command (such as a simulation run) is going. During Scenario Manager and optimizer
   runs it only reports what it sees and never clicks.
+- **A few boxes get one fixed, safe answer.** ExtendSim's save prompt ("The model '...' has
+  been modified. Do you want to save your changes?") is only ever answered **Cancel**, so the
+  model stays open and unchanged — the server never saves your model or throws your changes
+  away through it. "Already Open" ("A model with the same name is already open.") is answered
+  OK. Excel's own "Save your changes to this file?" is answered **Cancel** too, but only in the
+  background Excel that a Data Import Export block uses (an Excel started for automation) —
+  the same prompt in an Excel you started yourself is left for you. When the server has to fall back to a key (Enter, or Escape for a box with a known answer),
+  the key goes only to that box and only while ExtendSim responds; while ExtendSim is busy the
+  box is reported, not pressed, and it counts as closed only when it has really gone.
 - **ExtendSim's start-up reminders are closed too** - ExtendSim 2024's "Maintenance & Support
   Expired ..." and ExtendSim 2026's "Subscription Renewal" box. Until one of them is closed
   ExtendSim does not answer the server at all. Their text is never passed to the AI or
@@ -987,9 +1095,10 @@ recovery hint — treat it as a bonus, not a guarantee.
 | Error Code | Meaning |
 |------------|---------|
 | `MODEL_NOT_OPEN` | The operation needs an open model; none is open |
-| `MODEL_OPEN_FAILED` | The model file could not be opened |
+| `MODEL_OPEN_FAILED` | The model file could not be opened (ExtendSim did not make it the active model) — also returned by `model_open` when a model with that file name is already open from another folder, or is open but not the active model (ExtendSim cannot hold two models with the same name, and switching to an open model is not safe through COM; see §6.1) |
 | `MODEL_CLOSE_FAILED` | `model_close` closed a window but the model is still open after three attempts - close the model's open dialogs in ExtendSim and try again |
-| `MODEL_SAVE_FAILED` | The model could not be saved - also returned by `model_close` with `saveFirst` on a model that has never been saved (save it with `model_save` and a file path first) |
+| `MODEL_SAVE_FAILED` | The model could not be saved. Also returned by `model_close` when `saveFirst` is given for a model that has never been saved (pass `filePath` instead: `model_close` saves it there, then closes), and when the save did not take - closing then still asked to save the changes, so the model is left open and unchanged |
+| `MODEL_HAS_UNSAVED_CHANGES` | `model_close` refuses to close a model with unsaved changes unless you pass `saveFirst`, `discard`, or (a model that has never been saved) `filePath`; the model stays open and unchanged. See "Closing models safely" in §6.1 |
 | `MODEL_QUERY_FAILED` | Reading model metadata failed |
 
 **Blocks and connections**
@@ -1037,6 +1146,16 @@ recovery hint — treat it as a bonus, not a guarantee.
 |------------|---------|
 | `ANALYSIS_CONFIG_FAILED` | Something ExtendSim generated did not read back, or a prompt was not answered; `steps` says how far it got |
 
+**Data files (Data Import Export blocks)**
+
+| Error Code | Meaning |
+|------------|---------|
+| `MODEL_FILES_REPOINT_FAILED` | `model_files_repoint` wrote a new path that did not read back exactly as written; `steps` says which blocks were changed |
+| `MODEL_FILES_CONFIGURE_FAILED` | `model_files_configure` wrote or verified a block and a value did not read back exactly as written (or the intent could not be stored in the model's AI context); `steps` says what was written so far |
+| `DATA_FILE_MISSING` | A run tool found a file the model would auto-import at run start missing, unset or given as a relative path with a folder, so nothing was started; `missingFiles` names the block, the path and the `reason` |
+| `DATA_FILE_TARGET_CHANGED` | A run tool found a block configured with `model_files_configure` now pointing at a different table than the one it was set up for, so nothing was started; `targetChanged` names the block, the intended database/table and the one it now resolves to |
+| `DATA_FILE_EXCEL_CLOSE_CONFLICT` | A run tool found an auto Excel import with "close worksheet after use" on while the model also has an Excel export - that combination hangs ExtendSim on Excel's own save prompt - so nothing was started; `conflicts` names the blocks |
+
 **Request validation**
 
 | Error Code | Meaning |
@@ -1076,9 +1195,9 @@ Timeouts are compiled into `backend.ts` and cannot be changed without rebuilding
 | Timeout | Commands |
 |---------|----------|
 | 10 s (default) | Everything not listed below |
-| 30 s | `model_open`, `model_save`, `model_close`, `model_new`, `model_validate`, `detect_license`, `block_template`, `block_add_batch`, `block_discover`, `block_discover_variables`, `block_introspect`, `simulation_get_block_stats`, `db_get_records`, `db_import`, `db_export`, `db_create`, `hierarchy_list`, `hierarchy_get_contents`, `scenario_manager_status`, `scenario_manager_get_results` |
-| 60 s | `block_configure` (save/close/reopen cycle), `simulation_get_results` |
-| 2 min | `extendsim_start`, `block_list`, `model_extract`, `block_profile`, `block_guide_draft`, `resources_configure`, `analysis_manager_get_results` |
+| 30 s | `model_open`, `model_list`, `model_save`, `model_new`, `model_validate`, `detect_license`, `block_template`, `block_add_batch`, `block_discover`, `block_discover_variables`, `block_introspect`, `simulation_get_block_stats`, `db_get_records`, `db_import`, `db_export`, `db_create`, `hierarchy_list`, `hierarchy_get_contents`, `scenario_manager_status`, `scenario_manager_get_results` |
+| 60 s | `model_close` (probes a saved model for unsaved changes when no choice is given), `model_files_list`, `model_files_repoint`, `block_configure` (save/close/reopen cycle), `simulation_get_results` |
+| 2 min | `extendsim_start`, `block_list`, `model_extract`, `block_profile`, `block_guide_draft`, `resources_configure`, `analysis_manager_get_results`, `model_files_configure` |
 | 3 min | `scenario_manager_configure`, `optimizer_configure`, `analysis_manager_configure` |
 | 5 min | `simulation_run` (blocking mode only) |
 | 10 min | `simulation_run_multi`, `simulation_run_scenarios`, `scenario_manager_run`, `optimizer_run` — the last two only with `waitForCompletion=true` |
