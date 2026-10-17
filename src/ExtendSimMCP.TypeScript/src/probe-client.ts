@@ -2,7 +2,7 @@
  * Talks to extendsim_probe.py - a long-lived Python process with NO ExtendSim COM that
  * looks at ExtendSim's windows while the backend is blocked in a COM call. Every failure
  * here is quiet: a check that cannot be made returns null and the watchdog carries on
- * without it (spec §5.3, §6). Killing this process is safe - it holds no COM connection.
+ * without it. Killing this process is safe - it holds no COM connection.
  */
 import { spawn as nodeSpawn, type ChildProcess } from "child_process";
 import * as readline from "readline";

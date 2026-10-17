@@ -57,7 +57,7 @@ const esVersion = z.string().regex(/^\d{4}$/);                        // ExtendS
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const blockKey = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 ._()/-]{0,79}$/);
 
-/** A block guide (spec 2026-09-30 §4.1): what the block is for and what is PROVED about driving
+/** A block guide - what the block is for and what is PROVED about driving
  *  it with the server's tools. `since`: lowest server version whose tools the guide uses. */
 export const BlockGuideSchema = z.object({
   library: str,

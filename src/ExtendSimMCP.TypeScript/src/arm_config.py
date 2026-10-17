@@ -1,4 +1,4 @@
-"""Advanced Resource Management (ARM) through COM - resources_configure (spec 2026-10-04).
+"""Advanced Resource Management (ARM) through COM - resources_configure.
 
 ExtendSim's Resource Manager builds resources and requirements from two tables of the Advanced
 Resources database when its Auto-Generate Components button is pressed - and only with the block's
@@ -17,7 +17,7 @@ EXPRESSION_FIELDS = ("Resource Requirement ID", "Property", "Operator", "Value",
                      "Relationship with Next Row", "Expression Group ID")
 OPS = ("=", ">", ">=", "<", "<=", "!=", "In", "BitAND")
 # Only these fields of the generated tables are read after the press: the whole post-press tail
-# has to finish inside the TypeScript layer's dialog grace window (finding 1, 2026-10-05).
+# has to finish inside the TypeScript layer's dialog grace window (measured 2026-10-05).
 RESOURCE_FIELDS = ("Name", "Pool")
 REQUIREMENT_FIELDS = ("Name",)
 FILTER_FIELDS = ("Filtering Conditions Name", "Filtering Option", "Filtering Operation",
@@ -79,7 +79,7 @@ def validate(spec):
         if has_q == bool(any_of):
             return f"requirement {name!r}: give quantity or anyOf (exactly one)"
         if any_of and r.get("where"):
-            # The OR rows carry no filters of their own (spec section 4): a where here would be
+            # The OR rows carry no filters of their own (by design): a where here would be
             # dropped silently, so refuse it rather than generate a requirement that ignores it.
             return (f"requirement {name!r}: where cannot be combined with anyOf - put the filters on the "
                     "member requirements instead")

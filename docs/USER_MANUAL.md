@@ -1,8 +1,8 @@
 # Simulations MCP Server — User Manual
 
-**Version:** 1.26.0
+**Version:** 1.27.0
 **Author:** Duke Systems AB
-**Date:** 2026-09-23
+**Date:** 2026-10-16
 
 ---
 
@@ -74,7 +74,7 @@ ExtendSim registers its COM component during installation. If needed, run Extend
 
 ### Option A: Installer (Recommended)
 
-1. Run `SimulationsMCP-Setup-1.26.0.exe` as administrator (the prebuilt installer matches the current source)
+1. Run `SimulationsMCP-Setup-1.27.0.exe` as administrator (the prebuilt installer matches the current source)
 2. Choose installation directory (default: `C:\Program Files\SimulationsMCP`)
 3. Select whether to install as a Windows Service (only needed for ChatGPT — see Section 4.5)
 4. Complete the installation
@@ -531,10 +531,10 @@ The server provides 116 tools organized into categories. Each tool accepts struc
 |------|-------------|
 | `model_new` | Create a new empty model. Refused with `INVALID_PARAMETER` if `savePath` names a model that is already open — close it first |
 | `model_open` | Open an existing model file (.mox). If that same file is already the active model, it says so (`alreadyOpen`); if a model with the same file name is open from another folder, it refuses with `MODEL_OPEN_FAILED` — ExtendSim cannot hold two models with the same name, so close that one first. If a model with that name is open but not the active one, it also refuses with `MODEL_OPEN_FAILED` (`alreadyOpen`, `activeModel`) instead of switching to it — bring it to the front in ExtendSim yourself, or close the active model first. If ExtendSim does not open the file (a path that does not exist, say), it refuses with `MODEL_OPEN_FAILED` and names the model that is still active |
-| `model_save` | Save the current model (optional: save-as with new path) |
+| `model_save` | Save the current model (optional: save-as with new path; a never-saved model needs one). The save is checked - `MODEL_SAVE_FAILED` if it did not take |
 | `model_close` | Close the active model. Never saves or discards changes on its own — a model with unsaved changes is refused with `MODEL_HAS_UNSAVED_CHANGES` and stays open, unchanged, unless you pass `saveFirst` (save, then close), `discard` (close without saving), or — for a model that has never been saved — `filePath` (save it there, then close). See "Closing models safely" below. The close is checked: if a dialog of the model was in front it is repeated (`closeAttempts`) |
-| `model_list` | List every open model (name, which one is active, the active model's folder); falls back to the active model alone, with a warning, if the window list cannot be read |
-| `model_info` | Get model metadata (blocks, connections, databases) |
+| `model_list` | List every open model (name, which one is active, the active model's folder); falls back to the active model alone, with a warning, if the window list cannot be read (the warning says so when an earlier window read is still running; after 60 s such a read is given up on and a new one is made) |
+| `model_info` | Get model metadata: name, end and current time, simulation phase, optionally run statistics (`includeStatistics`), and `unsavedChanges` — `true`/`false` for a model that has never been saved, `"unknown"` for a saved one (with `unsavedChangesNote`): ExtendSim cannot report a saved model's unsaved changes without closing it, so `model_info` never tries; `model_close` checks for real and refuses with `MODEL_HAS_UNSAVED_CHANGES` |
 | `model_files_list` | List every Data Import Export block (also inside hierarchical blocks): its file, whether the file exists on disk, sheet, database/table, and whether it imports/exports automatically. Read-only - use after copying a model or on another machine, before running |
 | `model_files_repoint` | Point Data Import Export blocks at other files, either by block or by moving everything under one folder to another. Validated before anything changes (absolute path, file/folder exists) and every new path is read back; the model is not saved - use `model_save`. See §4.12 |
 | `model_files_configure` | Set up Data Import Export blocks for Excel or text import/export (direction, file type, path, sheet, database/table, auto, optional verifyImport), verified by read-back; the model is not saved - use `model_save`. See §4.12 |
@@ -898,7 +898,11 @@ scenario_manager_status()       → { running, currentScenario, totalScenarios }
 scenario_manager_get_results()  → Collect full results matrix
 ```
 
-The server selects all scenarios only when none are selected; a selection you made is kept. With `waitForCompletion: true` it clears the previous results of the selected scenarios first, so only results from this run count, and the run succeeds only when every selected scenario has every response (this needs at least one block response); otherwise `OPTIMIZER_FAILED` lists the scenarios without results (`scenariosWithoutResults`) and ExtendSim's own messages (`dialogs`). An auto-dialog-dismisser runs in the background to handle error dialogs and reports their texts.
+The server selects all scenarios only when none are selected; a selection you made is kept. With `waitForCompletion: true` it clears the previous results of the selected scenarios first, so only results from this run count, and the run succeeds only when every selected scenario has every response (this needs at least one block response); otherwise `OPTIMIZER_FAILED` lists the scenarios without results (`scenariosWithoutResults`) and ExtendSim's own messages (`dialogs`). A box saying the run was aborted also makes it `OPTIMIZER_FAILED`, even when every scenario has values (without `waitForCompletion` that is the only check). An auto-dialog-dismisser runs in the background to handle error dialogs and reports their texts. A Scenarios table that holds one row with every cell blank counts as no scenarios.
+
+**`timeout` does not limit the run.** ExtendSim runs all scenarios before the call returns, with or without `waitForCompletion`; `timeout` only bounds the wait for ExtendSim to report idle afterwards (`waitForCompletion: true`). After the server's 10-minute command limit the call answers `COM_TIMEOUT` while ExtendSim may still be running.
+
+**One analysis block per model.** When the model holds both a Scenario Manager and an Optimizer, `scenario_manager_run` and `optimizer_run` refuse with `INVALID_PARAMETER` before anything runs or changes: ExtendSim starts both with the same command and picks the block itself, so the other block could run and old results would be read.
 
 ### 8.3 optimizer_run
 
@@ -907,7 +911,7 @@ optimizer_run()                 → Runs the optimization (ExtendSim finishes be
 optimizer_get_results()         → Collect optimization results
 ```
 
-With `waitForCompletion: true` the run succeeds only when at least one generation completed, and reports the best value, generations and convergence; an optimization that ExtendSim stopped is `OPTIMIZER_FAILED`, with ExtendSim's own messages in `dialogs`.
+With `waitForCompletion: true` the run succeeds only when at least one generation completed and no box ExtendSim showed says the run was aborted, and reports the best value, generations and convergence; an optimization that ExtendSim stopped or aborted (an error box, or Stop) is `OPTIMIZER_FAILED`, with ExtendSim's own messages in `dialogs`. Without `waitForCompletion` only an abort box is checked. As for the Scenario Manager, `timeout` does not limit the run, and a model holding both analysis blocks is refused (`INVALID_PARAMETER`); a model without an Optimizer is `BLOCK_NOT_FOUND`.
 
 ---
 
@@ -1097,7 +1101,7 @@ recovery hint — treat it as a bonus, not a guarantee.
 | `MODEL_NOT_OPEN` | The operation needs an open model; none is open |
 | `MODEL_OPEN_FAILED` | The model file could not be opened (ExtendSim did not make it the active model) — also returned by `model_open` when a model with that file name is already open from another folder, or is open but not the active model (ExtendSim cannot hold two models with the same name, and switching to an open model is not safe through COM; see §6.1) |
 | `MODEL_CLOSE_FAILED` | `model_close` closed a window but the model is still open after three attempts - close the model's open dialogs in ExtendSim and try again |
-| `MODEL_SAVE_FAILED` | The model could not be saved. Also returned by `model_close` when `saveFirst` is given for a model that has never been saved (pass `filePath` instead: `model_close` saves it there, then closes), and when the save did not take - closing then still asked to save the changes, so the model is left open and unchanged |
+| `MODEL_SAVE_FAILED` | The model could not be saved: the file did not change (read-only, locked, open elsewhere, or a file system with coarse timestamps), ExtendSim said it cannot save there, or a never-saved model was given no file path. The model is left open with its changes. Returned by `model_save`, `model_new` with `savePath`, and `block_configure`'s save-and-reopen step too. Also returned by `model_close` when `saveFirst` is given for a model that has never been saved (pass `filePath` instead: `model_close` saves it there, then closes), and when the save did not take - closing then still asked to save the changes, so the model is left open and unchanged |
 | `MODEL_HAS_UNSAVED_CHANGES` | `model_close` refuses to close a model with unsaved changes unless you pass `saveFirst`, `discard`, or (a model that has never been saved) `filePath`; the model stays open and unchanged. See "Closing models safely" in §6.1 |
 | `MODEL_QUERY_FAILED` | Reading model metadata failed |
 
@@ -1131,7 +1135,8 @@ recovery hint — treat it as a bonus, not a guarantee.
 | `SIMULATION_RUN_FAILED` | The run could not be started or completed - also when ExtendSim aborted it (it stopped at time 0, or an error dialog appeared during the run; the dialog text is in `dialogsDuringCommand`) |
 | `SIMULATION_TIMEOUT` | The run exceeded its timeout |
 | `MULTI_RUN_FAILED` | A multi-run or scenario sweep failed |
-| `OPTIMIZER_FAILED` / `OPTIMIZER_TIMEOUT` | The Optimizer failed or exceeded its timeout |
+| `OPTIMIZER_FAILED` | An Optimizer **or Scenario Manager** run failed: ExtendSim stopped or aborted it (a box saying "aborted" counts, also after results were written), a scenario has no results, the run could not be checked, or the Scenario Manager has no (selected) scenarios. Scenario Manager failures use this code too |
+| `OPTIMIZER_TIMEOUT` | ExtendSim did not report idle within `timeout` seconds after an Optimizer or Scenario Manager run returned (`waitForCompletion: true`) |
 
 **Advanced resources**
 
@@ -1200,7 +1205,7 @@ Timeouts are compiled into `backend.ts` and cannot be changed without rebuilding
 | 2 min | `extendsim_start`, `block_list`, `model_extract`, `block_profile`, `block_guide_draft`, `resources_configure`, `analysis_manager_get_results`, `model_files_configure` |
 | 3 min | `scenario_manager_configure`, `optimizer_configure`, `analysis_manager_configure` |
 | 5 min | `simulation_run` (blocking mode only) |
-| 10 min | `simulation_run_multi`, `simulation_run_scenarios`, `scenario_manager_run`, `optimizer_run` — the last two only with `waitForCompletion=true` |
+| 10 min | `simulation_run_multi`, `simulation_run_scenarios`, `scenario_manager_run`, `optimizer_run` — the last two in both modes, since ExtendSim finishes the run before they return |
 
 A separate **early dialog check** fires 1 second into any command: a modal dialog
 appearing that fast always means a configuration error, never a long-running

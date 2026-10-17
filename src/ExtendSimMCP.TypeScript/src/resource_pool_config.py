@@ -3,7 +3,7 @@
 
 Pure cores take an injected `backend` and are effect-verified + fail-closed.
 Live-verified recipe (2026-07-12): 49 items through a full acquire/use/release
-cycle, configured entirely in code. See spec 2026-07-12-resource-machine-design.md.
+cycle, configured entirely in code.
 
 COM facts: ResourcePoolName / Queue ResourceTable are string cells written via
 SetDialogVariable (ResourceTable has no _ttbl suffix, so _set_var would silently

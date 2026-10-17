@@ -1,10 +1,10 @@
 # src/pattern_approve.py
 """Pattern approval + library persistence (M10).
 
-Assembles a validated, M3-instantiable library entry (§7.1) from an M9 mined pattern
+Assembles a validated, M3-instantiable library entry from a mined pattern
 candidate plus a caller-supplied naming, and writes it into patterns/molecules/. Pure
 + file I/O, no COM. Nothing is written unless it passes molecule_schema.validate_molecule
-and the caller deliberately approves. See spec 2026-07-16-m10-approve-pattern-design.md.
+and the caller deliberately approves.
 """
 import os
 import re

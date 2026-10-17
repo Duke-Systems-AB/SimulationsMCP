@@ -5,7 +5,6 @@ build_psg() transforms a raw per-scope model snapshot (gathered by the live COM
 reader in simulation_backend.py) into a multi-scale PSG: one scope per level
 (root + every H-block at every depth), each with nodes, internal edges, and
 boundary-crossing edges. Zero COM here; unit-tested with fixtures.
-See spec 2026-07-15-m7-extract-psg-design.md.
 """
 from collections import defaultdict
 

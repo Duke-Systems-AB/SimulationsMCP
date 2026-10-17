@@ -3,7 +3,6 @@
  * One file per guide in the user's folder; the file name is the scenario key; every file
  * passes the same ScenarioSchema as the official guides. Local guides are merged into the
  * official set, never replace an official guide, and are marked source "local".
- * Spec: docs/superpowers/specs/2026-09-23-own-guides-design.md
  */
 import { ScenarioSchema, type GuideFile, type Scenario } from "./guide-schema.js";
 import { guideMeta, type GuideView } from "./guide-core.js";

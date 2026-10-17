@@ -125,7 +125,7 @@ function asRecord(x: unknown): Record<string, unknown> | undefined {
   return x && typeof x === "object" ? (x as Record<string, unknown>) : undefined;
 }
 
-/** Dialog and stuck facts for a tool event - the dialog text only ever sanitized (spec S8). */
+/** Dialog and stuck facts for a tool event - the dialog text only ever sanitized. */
 export function dialogEventFields(result: unknown): Record<string, unknown> {
   const f: Record<string, unknown> = {};
   const r = asRecord(result);

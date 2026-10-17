@@ -3,7 +3,6 @@
  * <key>.json per guide. Reading never creates the folder and never throws - problems
  * become LocalGuideError entries so the official guides always work. Writes are atomic
  * (temp file + rename). Paths are only ever built from a validated key.
- * Spec: docs/superpowers/specs/2026-09-23-own-guides-design.md
  */
 import { createHash } from "crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "fs";

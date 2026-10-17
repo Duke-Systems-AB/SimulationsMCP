@@ -1,4 +1,4 @@
-"""Shift block schedules (spec 2026-10-04 section 3).
+"""Shift block schedules (2026-10-04).
 
 ExtendSim's Shift block holds its schedule in ShiftTable with the columns Time; Number or on/off;
 Description - one row per CHANGE ([0, "On"], [8, "Off"]), measured on ExtendSim 2026 against the
@@ -55,3 +55,17 @@ def write(cells, rows):
         got = (cells.get(r, 0), cells.get(r, 1))
         if got != (t, s):
             raise RuntimeError(f"Shift table row {r} reads back {got}, expected {(t, s)}")
+
+
+def status_type_mismatch(got, wanted):
+    """None when the ShiftStatusTypePop value read back (`got`, as COM returns it) equals the
+    `wanted` status type; otherwise why the write did not take. ExtendSim can keep the old popup
+    value without an error (e.g. a value outside the popup's options), so the write is only
+    reported once it reads back."""
+    try:
+        if int(float(got)) == int(wanted):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return (f"write of ShiftStatusTypePop did not take: the block kept {got!r}, not {wanted} "
+            f"({ON_OFF} = on/off, {NUMBERS} = numbers)")

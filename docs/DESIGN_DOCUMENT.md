@@ -1,8 +1,8 @@
 # Simulations MCP Server — Architecture and Design Document
 
-**Version:** 1.26.0
+**Version:** 1.27.0
 **Author:** Duke Systems AB
-**Date:** 2026-09-23
+**Date:** 2026-10-16
 **Classification:** Technical — for IT security specialists, software architects, and power users
 
 ---
@@ -144,7 +144,7 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - Server version is read dynamically from `package.json`, not hardcoded
 - One error contract at one boundary: the Python backend's standard failure shape is `{success: false, errorCode, error}`, and `toolResponse()`/`recordToolCall()` treat `success === false` exactly like `status === "error"`. Without that normalization, backend failures reach the client flagged as successes and telemetry counts only timeouts as errors
 
-### 3.2 Backend Bridge (backend.ts, ~1928 lines)
+### 3.2 Backend Bridge (backend.ts, ~2049 lines)
 
 **Responsibilities:**
 - Python subprocess lifecycle management
@@ -164,7 +164,7 @@ The Python process is a long-lived singleton — spawned once and kept alive for
 - A dismissed dialog does not immediately fail the command: after a successful auto-dismiss the bridge holds a 5-second grace window (`DIALOG_DISMISS_GRACE_MS`) for the real response to arrive, so a benign informational popup cannot fail an otherwise-successful command
 - A retried command (after a backend restart) is re-armed with a fresh timeout rather than inheriting the dying request's remaining countdown
 
-### 3.3 Python COM Backend (simulation_backend.py, ~11727 lines)
+### 3.3 Python COM Backend (simulation_backend.py, ~11927 lines)
 
 **Responsibilities:**
 - COM communication with ExtendSim via `win32com.client.GetActiveObject`
@@ -187,7 +187,7 @@ The Python process is a long-lived singleton — spawned once and kept alive for
   its own shipped ModL; a call to a function that does not exist raises a compile-error modal
   that blocks COM, which no offline test with a fake COM object can detect
 
-### 3.4 Dialog Watcher (dialog_watcher.py, ~480 lines)
+### 3.4 Dialog Watcher (dialog_watcher.py, ~963 lines)
 
 **Responsibilities:**
 - Windows UI Automation (UIA) to detect ExtendSim modal dialogs
@@ -203,6 +203,9 @@ The Python process is a long-lived singleton — spawned once and kept alive for
   2026 "ExtendSim Subscription Renewal") count only when they belong to the ExtendSim main
   window's process. They are dismissed silently: the watcher does not report them and the
   probe never reads their text, because the 2026 box shows the licence's activation key
+- ExtendSim's "Saving File" and "Saving Backup File" boxes (a model file or its backup could
+  not be written) are answered OK and their text is reported, so the command fails with
+  `MODEL_SAVE_FAILED` instead of blocking until its timeout
 
 ### 3.5 Advisor (advisor.ts, ~280 lines)
 

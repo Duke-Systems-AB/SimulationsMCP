@@ -2,7 +2,6 @@
  * Pure decisions for the web guide lookup: is it on, is a check due, is a file valid,
  * which file wins, which scenarios this server may show. No I/O and no network here -
  * guide-source.ts injects all of that - so every rule is testable offline.
- * Spec: docs/superpowers/specs/2026-09-23-web-guide-lookup-design.md
  */
 import { GuideFileSchema, LIMITS, SCHEMA_VERSION, type GuideFile } from "./guide-schema.js";
 import type { LocalGuideError, LocalGuideRename } from "./local-guides-core.js";

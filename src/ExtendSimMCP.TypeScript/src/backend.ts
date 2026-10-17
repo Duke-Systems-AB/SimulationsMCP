@@ -90,8 +90,10 @@ const COMMAND_TIMEOUTS: Record<string, number> = {
   simulation_run: 300_000,
   simulation_run_multi: 600_000,
   simulation_run_scenarios: 600_000,
-  optimizer_run: 600_000,       // Only used with waitForCompletion=true
-  scenario_manager_run: 600_000, // Only used with waitForCompletion=true
+  // Both modes: ExecuteMenuCommand(6002) returns only after ExtendSim has finished the run,
+  // also with waitForCompletion=false.
+  optimizer_run: 600_000,
+  scenario_manager_run: 600_000,
   scenario_manager_status: 30_000,      // May need COM calls during active SM run
   scenario_manager_get_results: 30_000,
   model_extract: 120_000,
@@ -165,7 +167,7 @@ export interface PendingRequest {
   // Dialogs dismissed while this request ran, kept so the real response still reports them
   // (annotateWithDialogs) instead of the dismissal being silently thrown away.
   dialogsSeen?: DialogInfo[];
-  // The watchdog (spec §5.3): a probe check every ~10s while this request runs.
+  // The watchdog (stuck recovery): a probe check every ~10s while this request runs.
   watchdogTimerId?: ReturnType<typeof setTimeout>;
   // The most recent probe result seen for this request, if any.
   lastCheck?: ProbeCheck | null;
@@ -192,7 +194,7 @@ export interface PendingRequest {
 }
 const requestQueue: PendingRequest[] = [];
 let isProcessingRequest = false;
-// The stuck state (spec 2026-09-24 §5.1): a command's outcome was settled (timeout, or a
+// The stuck state (stuck recovery): a command's outcome was settled (timeout, or a
 // dialog and the grace window lapsed) while Python is still inside its COM call. Nothing is
 // written to Python until it answers that call - this replaces the old stale-response
 // counter, which let the queue write the next command behind the blocked one, where it
@@ -201,7 +203,7 @@ let stuck: StuckInfo | null = null;
 // Re-entrancy guard for handleProcessDeath (C4 fix)
 let isHandlingProcessDeath = false;
 
-// The watchdog's eyes (spec §5.2): started on first use; null when disabled for the session.
+// The watchdog's eyes (stuck recovery): started on first use; null when disabled for the session.
 let probe: ProbeLike | null = null;
 let probeCreated = false;
 let stuckPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -309,8 +311,8 @@ function scheduleWatchdog(req: PendingRequest, delay: number): void {
   }, delay);
 }
 
-/** While stuck, keep polling the probe so extendsim_status shows a fresh last check (spec
- * §5.1). Captures the stuck episode before the await: a process death (or the command
+/** While stuck, keep polling the probe so extendsim_status shows a fresh last check.
+ * Captures the stuck episode before the await: a process death (or the command
  * finally answering) between the check starting and finishing must not write a check from
  * one episode into the next. */
 function startStuckPolling(): void {
@@ -1140,7 +1142,7 @@ export function shutdownBackend(): void {
 // STATUS OPERATIONS
 // ============================================================================
 
-/** Every extendsim_status answer reports queue state (spec: `state` is always present),
+/** Every extendsim_status answer reports queue state (`state` is always present),
  * even a genuine Python-side error - it is not itself a sign the queue is stuck. */
 export function withQueueState<T extends object>(r: T, isStuck: boolean): T & { state: "stuck" | "idle" } {
   return { ...r, state: isStuck ? "stuck" : "idle" };

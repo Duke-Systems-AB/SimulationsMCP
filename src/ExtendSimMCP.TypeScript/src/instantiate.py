@@ -3,7 +3,7 @@
 
 Orchestrates an injected EsOps interface so the COM construction sequence
 is testable. Every COM-affecting step is effect-verified, never trusting a
-success flag (krav 12). See spec 2026-06-27-m3-instantiate-pattern-design.md.
+success flag.
 """
 import json as _json
 import os as _os
@@ -196,7 +196,7 @@ def build_molecule(molecule: Dict[str, Any], params: Dict[str, Any], ops) -> Dic
 class RealOps:
     """EsOps backed by the live simulation_backend COM primitives.
 
-    Every state-changing call effect-verifies (krav 12): success flags are
+    Every state-changing call effect-verifies (requirement): success flags are
     necessary but never sufficient.
     """
     def __init__(self, backend):

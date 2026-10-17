@@ -5,7 +5,6 @@ Pure core over M7's multi-scale PSG (from extract_psg). Emits one candidate
 molecule subgraph per H-block scope, each tagged with a stable WL fingerprint that
 canonicalizes topology (lib:blocktype + port/direction), independent of parameter
 values. Clustering / near-miss / param inference is M9. Zero COM here.
-See spec 2026-07-16-m8-boundary-wl-fingerprint-design.md.
 """
 import hashlib
 

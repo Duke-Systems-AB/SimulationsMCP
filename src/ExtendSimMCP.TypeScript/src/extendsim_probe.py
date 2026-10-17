@@ -1,6 +1,6 @@
 """
 ExtendSim probe - a long-lived helper that LOOKS at ExtendSim's windows while the backend
-is busy inside a COM call (spec 2026-09-24-extendsim-stuck-recovery-design.md, §5.2).
+is busy inside a COM call (the stuck-recovery watchdog).
 
 It never talks to ExtendSim over COM - only reads windows. Checks are win32 first
 (EnumWindows, IsHungAppWindow): instant, and safe to poll even while a simulation is

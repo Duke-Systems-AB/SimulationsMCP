@@ -1,5 +1,5 @@
 # src/queue_block_config.py
-"""Queue Matching and Queue Equation configuration over COM (spec 2026-09-30).
+"""Queue Matching and Queue Equation configuration over COM (2026-09-30).
 
 Only what was proved live on ExtendSim 2024 and 2026 (block learning recipes, 2026-09-30):
 

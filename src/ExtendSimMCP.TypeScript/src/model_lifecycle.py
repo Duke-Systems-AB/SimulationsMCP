@@ -28,7 +28,9 @@ Pure: COM is reached only through an injected `ops` object (duck-typed; see the 
 section for the full contract). This module never imports simulation_backend, win32com or comtypes.
 """
 import os
+import sys
 import threading
+import time
 
 CLOSE_ATTEMPTS = 3
 
@@ -37,6 +39,10 @@ CLOSE_ATTEMPTS = 3
 # during a running simulation (UI Automation waits for ExtendSim's busy UI thread - see
 # extendsim_probe.check), well under a second when idle.
 WINDOW_READ_DEADLINE_SEC = 5
+
+# Age limit of the "earlier read still running" guard (2026-10-16): a left-over window read older
+# than this is taken as one that never returns, and a new read is started (and reported).
+WINDOW_READ_STALE_SEC = 60
 
 _CLOSE_SUGGESTION = "close any open dialogs of the model in ExtendSim, then try again"
 
@@ -53,13 +59,104 @@ def is_save_prompt(text):
     return isinstance(text, str) and text.startswith("The model '") and "has been modified" in text
 
 
+def is_save_failure_box(text):
+    """ExtendSim's "Saving File" box: the model file could not be written. Measured live
+    2026-10-16 on 2024 (SaveModel() on a read-only .mox): 'Cannot save model file in this folder.
+    Please "Save File As..." in a different folder', single OK. dialog_watcher answers it OK. The
+    "Saving Backup File" box ('Cannot create a backup file ...') is NOT a failure: after its OK the
+    model file is still written (measured)."""
+    return isinstance(text, str) and text.startswith("Cannot save model file")
+
+
+# A save whose file time has not moved is read once more after this wait before it counts as
+# failed: a file system with coarse timestamps, or a write that lands a moment late.
+SAVE_RECHECK_SEC = 1.0
+
+_NOT_WRITTEN = ("the file's modification time did not change (it may be read-only, locked or open "
+                "elsewhere, or on a file system with coarse timestamps)")
+
+
+def _guarded_save(ops, do_save, check_path, require_existing):
+    """Run a save under the dialog auto-dismisser and verify it. Returns (error dict or None, the
+    dismisser's texts).
+
+    SaveModel()/SaveModelAs() answer nothing, and a box ExtendSim raises during the save ("Saving
+    File", "Saving Backup File") blocks COM until answered - model_close skips the backend's early
+    dialog check, so without the dismisser only its timeout would answer it. A "Saving File" box
+    seen = the save failed. check_path is the file the save writes: afterwards it must exist, and if
+    it existed before, its modification time must have moved (compared with ==, so a clock step
+    cannot fake a failure; an unchanged time is read again after SAVE_RECHECK_SEC).
+    require_existing: the file must exist before the save (a saved model's own file). Any check
+    failing fails closed - the caller closes nothing, so the model stays open with its changes."""
+    before = ops.file_mtime(check_path)
+    if require_existing and before is None:
+        return _err("MODEL_SAVE_FAILED",
+                    f"cannot read the model file {check_path}, so a save could not be verified; "
+                    "nothing was saved and the model is still open",
+                    filePath=check_path), []
+    handle = ops.start_dismisser()
+    try:
+        do_save()
+    finally:
+        texts = ops.stop_dismisser(handle)
+    extra = {"dialogs": texts} if texts else {}
+    if any(is_save_failure_box(t) for t in texts):
+        return _err("MODEL_SAVE_FAILED",
+                    "ExtendSim could not save the model file (check that it is not read-only or "
+                    "open elsewhere); the model is still open with its changes",
+                    filePath=check_path, **extra), texts
+
+    def written():
+        after = ops.file_mtime(check_path)
+        return after is not None and (before is None or after != before)
+
+    if not written():
+        if SAVE_RECHECK_SEC:
+            time.sleep(SAVE_RECHECK_SEC)
+        if not written():
+            return _err("MODEL_SAVE_FAILED",
+                        f"{check_path} was not written by the save: {_NOT_WRITTEN}; the model is "
+                        "still open with its changes",
+                        filePath=check_path, **extra), texts
+    return None, texts
+
+
+def save_model(ops, file_path):
+    """model_save's (and model_new's savePath) save, verified as _guarded_save does: file_path
+    given -> SaveModelAs there; else SaveModel to the model's own file. A never-saved model with no
+    file_path is refused - SaveModel() would open the native "Save Model As" dialog, blocking COM."""
+    name = ops.active_name()
+    if not name:
+        return _err("MODEL_NOT_OPEN", "no model is open, so there is nothing to save")
+    if file_path:
+        failed, texts = _guarded_save(ops, lambda: ops.save_as(file_path), file_path,
+                                      require_existing=False)
+        shown = file_path
+    else:
+        folder = ops.active_path()
+        if not folder:
+            return _err("MODEL_SAVE_FAILED",
+                        "this model has never been saved, so it has no file to save to; pass "
+                        "filePath to save it")
+        failed, texts = _guarded_save(ops, ops.save,
+                                      os.path.join(folder, name).replace("\\", "/"),
+                                      require_existing=True)
+        shown = name
+    if failed:
+        return failed
+    result = {"success": True, "filePath": shown}
+    if texts:
+        result["dialogs"] = texts
+    return result
+
+
 def _file_name(path):
     return (path or "").replace("\\", "/").rsplit("/", 1)[-1]
 
 
 def _norm_model_path(path):
     """One spelling per file, for comparing model paths only - copies simulation_backend's helper of
-    the same name (PR #101): absolute, "." / ".." and doubled or mixed separators resolved (2024
+    the same name (same rules): absolute, "." / ".." and doubled or mixed separators resolved (2024
     reports forward slashes), case folded (Windows)."""
     return os.path.normcase(os.path.normpath(os.path.abspath(path.replace("/", os.sep))))
 
@@ -68,7 +165,7 @@ def _same_name_conflict(file_path, active_name, active_folder):
     """None when file_path IS the model named active_name (same full path, or a bare file name with
     no folder - which can only mean that model itself); otherwise why file_path conflicts with it.
 
-    Copies simulation_backend._same_name_conflict (PR #101): a never-saved model has no folder
+    Copies simulation_backend._same_name_conflict: a never-saved model has no folder
     (active_folder == ""), so any non-bare path naming it the same is a conflict."""
     if "/" not in file_path.replace("\\", "/"):
         return None
@@ -204,7 +301,10 @@ def close_model(ops, spec):
             if os.path.exists(file_path):
                 return _err("INVALID_PARAMETER", f"{file_path} already exists; choose a new file name",
                             filePath=file_path)
-            ops.save_as(file_path)
+            failed, texts = _guarded_save(ops, lambda: ops.save_as(file_path), file_path,
+                                          require_existing=False)
+            if failed:
+                return failed
             if not ops.active_path():
                 return _err("MODEL_SAVE_FAILED",
                             f"SaveModelAs('{file_path}') did not give the model a folder - the save "
@@ -218,7 +318,10 @@ def close_model(ops, spec):
                             f"after SaveModelAs('{file_path}') no model is active - the save cannot "
                             "be confirmed",
                             filePath=file_path)
-            return _finish_close(ops, name, {"saved": True, "filePath": file_path}, after_save=True)
+            extra = {"saved": True, "filePath": file_path}
+            if texts:
+                extra["dialogs"] = texts
+            return _finish_close(ops, name, extra, after_save=True)
         if discard:
             ops.set_clean()
             return _finish_close(ops, name, {"saved": False, "discardedChanges": True})
@@ -231,7 +334,7 @@ def close_model(ops, spec):
                     "it first, discard=true to close without saving, or save it yourself before "
                     "closing")
 
-    # A saved model. A filePath is for a never-saved model only (spec 3.1): here it is ignored -
+    # A saved model. A filePath is for a never-saved model only (by design): here it is ignored -
     # never a silent Save As somewhere else - and the answer says so.
     result = _close_saved(ops, name, save_first, discard)
     if file_path:
@@ -242,8 +345,14 @@ def close_model(ops, spec):
 
 def _close_saved(ops, name, save_first, discard):
     if save_first:
-        ops.save()
-        return _finish_close(ops, name, {"saved": True}, after_save=True)
+        model_file = os.path.join(ops.active_path(), name).replace("\\", "/")
+        failed, texts = _guarded_save(ops, ops.save, model_file, require_existing=True)
+        if failed:
+            return failed
+        extra = {"saved": True}
+        if texts:
+            extra["dialogs"] = texts
+        return _finish_close(ops, name, extra, after_save=True)
     if discard:
         return _finish_close(ops, name,
                              {"saved": False, "discardedChanges": "unknown",
@@ -257,20 +366,49 @@ def _add_note(result, note):
     result["note"] = f"{result['note']}; {note}" if result.get("note") else note
 
 
+def unsaved_changes_report(never_saved, dirty):
+    """model_info's unsavedChanges from _model_unsaved_state's (never_saved, dirty). Exact only for
+    a model that was never saved (its dirty flag is readable); for a saved model ExtendSim gives no
+    readable flag, and the one real test - close_model's save-prompt probe - would close a clean
+    model, so model_info never runs it: "unknown", with a note saying where it is checked."""
+    if never_saved and dirty is not None:
+        return {"unsavedChanges": bool(dirty)}
+    if never_saved:
+        note = "ExtendSim did not answer its dirty flag for this never-saved model"
+    else:
+        note = ("ExtendSim cannot report unsaved changes of a saved model without closing it; "
+                "model_close checks for real (by its save-prompt probe) and refuses with "
+                "MODEL_HAS_UNSAVED_CHANGES when there are any")
+    return {"unsavedChanges": "unknown", "unsavedChangesNote": note}
+
+
 def list_models(ops):
     """model_list's decision: every open model when window_names() can be read, else today's answer
     (the active model only) with a warning."""
     active = ops.active_name()
+    notes, guard = [], None
     try:
-        names = _read_window_names(ops)
+        names = _read_window_names(ops, notes)
+    except WindowReadInFlight as e:
+        names, guard = None, str(e)
     except Exception:
         names = None          # the read failed or timed out - unlike an empty list, a true answer
 
     if names is None:
-        result = list_models(_NoWindows(ops))
+        result = _models_result(ops, active, [])
         result["warning"] = "only the active model could be listed"
-        return result
+        if guard:
+            result["warning"] += (f" (the window-read guard is active: {guard}; it lifts after "
+                                  f"{WINDOW_READ_STALE_SEC} s)")
+    else:
+        result = _models_result(ops, active, names)
+    if notes:
+        result["warning"] = "; ".join(([result["warning"]] if result.get("warning") else []) + notes)
+    return result
 
+
+def _models_result(ops, active, names):
+    """The model_list answer: the active model first (with its folder), then the other `names`."""
     models = []
     counter = 1
     if active:
@@ -286,22 +424,6 @@ def list_models(ops):
         models.append({"modelId": f"model_{counter}", "name": n, "active": False})
         counter += 1
     return {"success": True, "count": len(models), "models": models}
-
-
-class _NoWindows:
-    """ops whose window list reads as empty: list_models' answer when the real read failed."""
-
-    def __init__(self, ops):
-        self._ops = ops
-
-    def active_name(self):
-        return self._ops.active_name()
-
-    def active_path(self):
-        return self._ops.active_path()
-
-    def window_names(self):
-        return []
 
 
 def open_model(ops, path):
@@ -342,7 +464,7 @@ def open_model(ops, path):
     ops.open_file(path)
     # OpenExtendFile answers nothing a caller can trust: on a path that does not exist it fails
     # silently and the model that was active stays active. Reporting *that* model as opened let
-    # extract_psg read it and then close it with discard=True (final review, finding 1) - so the
+    # extract_psg read it and then close it with discard=True - so the
     # open counts only when the requested model is the active one now.
     opened = ops.active_name()
     if not opened or opened.lower() != requested_name.lower():
@@ -387,10 +509,48 @@ def new_model_conflict(ops, save_path):
 # Open model windows, from UI Automation
 # ---------------------------------------------------------------------------
 
-def _read_window_names(ops):
+# The worker thread of the last _read_window_names call and when it started. While it is still
+# alive (a read that overran its deadline and was left to finish) and younger than
+# WINDOW_READ_STALE_SEC, no second read is started: each one would add another thread waiting on
+# ExtendSim's busy UI thread.
+_window_read_worker = None
+_window_read_started = 0.0
+
+
+class WindowReadInFlight(TimeoutError):
+    """The guard is active: an earlier window read is still running, so none was started."""
+
+
+def _log(message):
+    try:
+        sys.stderr.write(f"model_lifecycle: {message}\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+def _read_window_names(ops, notes=None):
     """ops.window_names(), bounded by WINDOW_READ_DEADLINE_SEC: it runs on a daemon thread, and a
     read still going at the deadline raises TimeoutError (callers treat it as a failed read). The
-    thread is left to finish on its own - it is read-only UI Automation and holds no lock of ours."""
+    thread is left to finish on its own - it is read-only UI Automation and holds no lock of ours.
+    While such a left-over read is still running, the next call raises WindowReadInFlight at once
+    (the same failed read) instead of starting another thread - until the left-over read is older
+    than WINDOW_READ_STALE_SEC: then it is taken as never returning, a new read starts, and the
+    fact is logged and appended to `notes` (when given) for the caller to report."""
+    global _window_read_worker, _window_read_started
+    previous = _window_read_worker
+    if previous is not None and previous.is_alive():
+        age = time.monotonic() - _window_read_started
+        if age < WINDOW_READ_STALE_SEC:
+            message = (f"an earlier read of the open model windows is still running "
+                       f"(started {age:.0f} s ago)")
+            _log(f"{message}; going on without the window list")
+            raise WindowReadInFlight(message)
+        message = (f"an earlier read of the open model windows never returned (started {age:.0f} s "
+                   "ago); a new read was started")
+        _log(message)
+        if notes is not None:
+            notes.append(message)
     box = {}
 
     def run():
@@ -400,6 +560,8 @@ def _read_window_names(ops):
             box["error"] = e
 
     worker = threading.Thread(target=run, name="model-window-read", daemon=True)
+    _window_read_worker = worker
+    _window_read_started = time.monotonic()
     worker.start()
     worker.join(WINDOW_READ_DEADLINE_SEC)
     if worker.is_alive():
@@ -477,6 +639,14 @@ class BackendOps:
     def save(self):
         self._app.Execute("SaveModel();")
 
+    @staticmethod
+    def file_mtime(path):
+        """The file's modification time, None when it cannot be read (missing, no access)."""
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            return None
+
     def save_as(self, path):
         self._app.Execute(f'SaveModelAs("{self._modl_path(path)}");')
 
@@ -503,6 +673,11 @@ class BackendOps:
         dw.comtypes.CoInitialize()
         try:
             return self._uia_model_names(dw)
+        except Exception as e:
+            # The traceback's frames hold the UIA element pointers of _uia_model_names; they must
+            # be released before CoUninitialize below, not later when the exception is collected.
+            e.__traceback__ = None
+            raise
         finally:
             dw.comtypes.CoUninitialize()
 

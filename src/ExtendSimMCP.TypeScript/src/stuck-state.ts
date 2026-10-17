@@ -1,7 +1,6 @@
 /**
  * What the server says while ExtendSim is stuck: a command's outcome was settled (timeout,
  * or a dialog and the grace window lapsed) but Python has not answered it yet. Pure.
- * Spec: docs/superpowers/specs/2026-09-24-extendsim-stuck-recovery-design.md §5.1
  */
 import { dialogLine, type ProbeCheck } from "./watchdog-core.js";
 

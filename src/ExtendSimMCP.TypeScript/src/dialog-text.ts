@@ -1,5 +1,5 @@
 /**
- * Dialog text for telemetry (spec S8): keeps the shape of ExtendSim's message, drops
+ * Dialog text for telemetry: keeps the shape of ExtendSim's message, drops
  * everything that could be the user's - quoted names, paths, numbers. Pure.
  */
 export const DIALOG_TEXT_MAX = 200;

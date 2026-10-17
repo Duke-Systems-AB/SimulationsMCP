@@ -3,6 +3,70 @@
 All notable changes to the Simulations MCP Server. Versions match the installer
 (`installer/SimulationsMCP-Setup-<version>.exe`) and `package.json`.
 
+## 1.27.0 — 2026-10-16
+
+Saves that fail are reported, not hidden: `model_save`, `model_new`, `model_close` and
+`block_configure` now check that a save really happened and answer `MODEL_SAVE_FAILED` with
+ExtendSim's message, leaving the model open with your work, instead of reporting success or
+hanging on ExtendSim's "Saving File" box. Analysis runs and results fail closed: an aborted or
+unreadable Optimizer or Scenario Manager run is an error, never old or wrong numbers.
+`model_info` reports `unsavedChanges`. 116 tools. Live-tested on ExtendSim 2024.
+
+### Added
+- **`model_info` reports `unsavedChanges`.** `true` or `false` for a model that has never been
+  saved; `"unknown"` for a saved model, with `unsavedChangesNote` - ExtendSim cannot tell without
+  closing the model, so `model_info` never tries. `model_close` still checks for real and refuses
+  with `MODEL_HAS_UNSAVED_CHANGES`.
+
+### Fixed
+- **Analysis runs and results fail closed on unreadable reads.** `optimizer_run` and
+  `scenario_manager_run` refuse to run (instead of hanging) when the scan for analysis blocks
+  cannot step through the model. `scenario_manager_run` and `scenario_manager_get_results` read
+  only the columns the Scenarios table really has, answer with an error when that count cannot be
+  read, and mark a scenario whose cell could not be read as an error instead of showing another
+  cell's value.
+- **`model_list` no longer loses the window list for good after one stuck read.** A window read
+  that has not returned after 60 s is given up on and a new one is made; the warning says when an
+  earlier read is still running.
+- **Analysis runs fail when ExtendSim aborts them.** `optimizer_run` and `scenario_manager_run`
+  now answer with an error (`OPTIMIZER_FAILED`) when ExtendSim's own box says the run was aborted,
+  instead of reporting an unfinished run as completed. A box whose text could not be read also
+  makes the run an error, since nobody can confirm what it said.
+- **`scenario_manager_run` with `waitForCompletion` never reports old results as a new run.** When
+  the selected scenarios cannot be read, or a table cell cannot be read back after clearing the
+  previous results, the run is refused before it starts.
+- **A model with both a Scenario Manager and an Optimizer is refused** by `optimizer_run` and
+  `scenario_manager_run` (`INVALID_PARAMETER`, with the reason): ExtendSim could run the other
+  block and old results would be read. `optimizer_run` without an Optimizer in the model answers
+  `BLOCK_NOT_FOUND`. A Scenario Manager table that shows one blank placeholder row counts as having
+  no scenarios; checking that row reads only columns the table really has, so it no longer risks
+  ExtendSim's blocking "out of range" box.
+- **`shift_set_schedule` checks the status type it wrote.** The value is read back, and a mismatch
+  is an error instead of a success.
+- **`detect_license` never closes a model that is not its own.** Its temporary model is closed only
+  when it is the active one.
+- **Box texts are kept after a chained box.** When an answered ExtendSim box is the only one open,
+  its text is reported with the command's answer instead of arriving too late and being dropped. A
+  chained box that opens up to about a second later is still handled in the same pass.
+- **`block_configure` no longer loses a change when the model cannot be saved.** When an Activity
+  or Create setting needs the model saved, closed and reopened to take effect, the save is now
+  checked before the model is closed. If it did not take (the file is read-only or open
+  elsewhere), the answer is `MODEL_SAVE_FAILED` and the model stays open with your change -
+  nothing is discarded. A close or reopen that fails is also reported as an error (saying whether
+  the model is still open or must be reopened with `model_open`) instead of a success with a
+  warning. ExtendSim's "Saving File" and "Saving Backup File" boxes (shown when a model file or
+  its backup cannot be written), which used to block the server until someone pressed OK, are now
+  answered OK automatically and their text is reported. Verified live on ExtendSim 2024.
+- **`model_close` with `saveFirst` (or `filePath`) checks that the save really happened.** A model
+  whose file is read-only or open elsewhere now returns `MODEL_SAVE_FAILED` within a second, with
+  ExtendSim's message in `dialogs` and the model left open with its changes, instead of the call
+  hanging on ExtendSim's "Saving File" box until its timeout. Verified live on ExtendSim 2024.
+- **`model_save` and `model_new` with `savePath` report a save that did not happen.** They used to
+  answer success even when ExtendSim refused to write the file (read-only or locked); now that is
+  `MODEL_SAVE_FAILED` with ExtendSim's message, and the model stays open with your work. A model
+  that has never been saved needs `filePath` (instead of opening ExtendSim's own Save As dialog,
+  which blocked the server). Verified live on ExtendSim 2024.
+
 ## 1.26.0 — 2026-10-11
 
 A model's data files, end to end: the AI can see which Excel and text files a model reads and

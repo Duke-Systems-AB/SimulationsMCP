@@ -170,6 +170,25 @@ def _uia_dismiss_box(box):
 # further boxes. So one pass keeps going while each round still finds something.
 CHAINED_ROUNDS = 5
 
+# After a known box was answered, the pass waits this long for a chained box to appear, then looks
+# once more with win32 only; when nothing else is open it reports at once instead of starting the
+# (slow) UIA walk - the walk took seconds, so the box texts reached the TypeScript layer only
+# after the command had answered, and were dropped there.
+CHAIN_SETTLE_SEC = 0.5
+
+# A chained box can open slightly after that first look: before reporting early,
+# the pass waits this much longer and looks once more (win32 only again). Only when both looks find
+# nothing does it report without the UIA walk.
+CHAIN_SECOND_SETTLE_SEC = 0.5
+
+
+def _nothing_else_open():
+    """True when no ExtendSim box (any title ExtendSim's own boxes carry) and no automation-Excel
+    prompt window is open right now. win32 only: no UIA, no process-tree walk beyond the Excel
+    check's own cheap class/title test."""
+    dialogs, _ = _find_extendsim_dialog_windows()
+    return not dialogs and not _find_excel_windows()
+
 
 def _uia_round(uia, main_win):
     """Dismiss every QMessageBox open right now. Returns the report entries."""
@@ -288,7 +307,9 @@ def try_uia_strategy():
     a person, and nothing behind it can appear. With no main window found at all, the
     descendant-search step is skipped (nothing to search from) but known/excel/plain boxes are
     still followed for the same CHAINED_ROUNDS - this is how the live bug's box was actually
-    dismissed.
+    dismissed. After an answered known box the pass waits CHAIN_SETTLE_SEC and, when a win32-only
+    look finds nothing else open, waits CHAIN_SECOND_SETTLE_SEC and looks once more (win32 only);
+    when that look finds nothing either, it reports at once without the UIA walk.
     """
     if not _uia_available:
         return []
@@ -311,6 +332,12 @@ def try_uia_strategy():
             dismissed.extend(plain)
             if any(not d.get("dismissed") for d in plain):
                 return dismissed
+            if known and not excel and not plain:
+                time.sleep(CHAIN_SETTLE_SEC)
+                if _nothing_else_open():
+                    time.sleep(CHAIN_SECOND_SETTLE_SEC)
+                    if _nothing_else_open():
+                        break
             boxes = []
             if not main_window_missing:
                 if uia is None:
@@ -458,7 +485,15 @@ def _press_key_on(hwnd, vk):
 # Measured live 2026-10-10 on ExtendSim 2024 and 2026: model_open of a model that is already open
 # but not the active one shows "Already Open" ("A model with the same name is already open.") with a
 # single OK, which blocked COM until a person pressed it. OK changes nothing.
-KNOWN_BOXES = {"Unsigned Blocks Detected": "Cancel", "Already Open": "OK"}
+# Measured live 2026-10-16 on ExtendSim 2024: SaveModel() on a read-only model file shows "Saving File"
+# ('Cannot save model file in this folder. Please "Save File As..." in a different folder') with a
+# single OK, blocking COM. OK only closes it; the save did not happen either way, and the caller
+# (block_configure's save-and-reopen) detects that from the file's unchanged modification time.
+# Same day: when the model's .bak cannot be replaced (a read-only .bak) the save first shows "Saving
+# Backup File" ('Cannot create a backup file in this folder. ...'), single OK; after OK the save of
+# the model file itself still goes ahead (measured: its modification time changed, setting kept).
+KNOWN_BOXES = {"Unsigned Blocks Detected": "Cancel", "Already Open": "OK", "Saving File": "OK",
+               "Saving Backup File": "OK"}
 
 # Yes/No prompts whose title does not say "ExtendSim", answered only when their TEXT starts
 # with a known prefix; any other prompt with that title is reported, never clicked (and never
@@ -497,9 +532,43 @@ EXCEL_PROMPT_CLASS = "NUIDialog"
 EXCEL_SAVE_PROMPT_TEXT = "Save your changes to this file?"
 EXCEL_AUTOMATION_SWITCH = "/automation"
 
-# pid -> True/False (command line read: automation Excel or not). Only successful reads are
-# cached, so a process whose command line could not be read is tried again on the next pass.
+# (pid, process creation time) -> True/False (command line read: automation Excel or not). The
+# creation time is part of the key because Windows reuses pids: a new process that inherits the
+# pid of an earlier Excel must never inherit its answer. Only successful reads are cached, and
+# only when the creation time could be read too, so anything unconfirmed is read again next pass.
 _excel_automation_cache = {}
+
+# PROCESS_QUERY_LIMITED_INFORMATION: enough for GetProcessTimes, granted more widely than
+# PROCESS_QUERY_INFORMATION (not every pywin32 build exports the constant).
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+
+def _process_creation_time(pid):
+    """Creation time of process `pid` (a comparable value from GetProcessTimes), or None when it
+    cannot be read (no such process, access denied)."""
+    handle = None
+    try:
+        handle = win32api.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        created = win32process.GetProcessTimes(handle)["CreationTime"]
+        return str(created)
+    except Exception:
+        return None
+    finally:
+        if handle is not None:
+            try:
+                win32api.CloseHandle(handle)
+            except Exception:
+                pass
+
+
+def _has_automation_switch(cmd):
+    """True when the command line `cmd` holds "/automation" as a whole token (case-insensitive).
+    A substring is not enough: a path or file name containing "/automation" (e.g.
+    "C:/automation/Book1.xlsx") belongs to an ordinary, user-started Excel."""
+    for token in cmd.split():
+        if token.strip('"').lower() == EXCEL_AUTOMATION_SWITCH:
+            return True
+    return False
 
 
 def _process_command_line(pid):
@@ -517,14 +586,16 @@ def _process_command_line(pid):
 
 
 def _is_automation_excel_window(hwnd):
-    """True only when hwnd's process command line was read and contains "/automation" - the
+    """True only when hwnd's process command line was read and holds the "/automation" token - the
     Excel that ExtendSim's block uses. False for the user's own Excel and when the command line
     cannot be read; the latter is reported on stderr (the prompt is left for a person)."""
     pid = _window_pid(hwnd)
     if pid is None:
         return False
-    if pid in _excel_automation_cache:
-        return _excel_automation_cache[pid]
+    created = _process_creation_time(pid)
+    key = (pid, created)
+    if created is not None and key in _excel_automation_cache:
+        return _excel_automation_cache[key]
     cmd = _process_command_line(pid)
     if cmd is None:
         try:
@@ -534,8 +605,9 @@ def _is_automation_excel_window(hwnd):
         except Exception:
             pass
         return False
-    result = EXCEL_AUTOMATION_SWITCH in cmd.lower()
-    _excel_automation_cache[pid] = result
+    result = _has_automation_switch(cmd)
+    if created is not None:
+        _excel_automation_cache[key] = result
     return result
 
 

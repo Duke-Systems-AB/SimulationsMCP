@@ -3,7 +3,7 @@
 
 Pure mapping over an injected reader; RealReader wraps the live COM backend.
 A block's in-variable table (IVars_ttbl) yields reads, the out-variable table
-(OVars_ttbl) yields writes. See spec 2026-06-28-m6-attribute-detection-design.md.
+(OVars_ttbl) yields writes.
 """
 import re
 

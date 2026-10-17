@@ -70,9 +70,9 @@ npm run build
 
 ### Install from Installer
 
-Download `SimulationsMCP-Setup-1.26.0.exe` from the `installer/` directory and run it.
+Download `SimulationsMCP-Setup-1.27.0.exe` from the `installer/` directory and run it.
 
-The prebuilt installer matches the current source: **v1.26.0, 116 tools**. See `CHANGELOG.md`
+The prebuilt installer matches the current source: **v1.27.0, 116 tools**. See `CHANGELOG.md`
 for release history.
 
 ### Configure Your AI Client

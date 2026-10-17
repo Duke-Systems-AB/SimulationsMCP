@@ -439,14 +439,14 @@ try {
   // Fallback to hardcoded version
 }
 
-// Modelling guides: bundled, or a newer copy from duke.se (spec 2026-09-23-web-guide-lookup).
+// Modelling guides: bundled, or a newer copy from duke.se.
 const guideSource = createGuideSource({
   distDir: __dirname,
   serverVersion,
   report: (e) => recordEvent("guide_fetch", { outcome: e.outcome, dur_ms: e.durMs, version: e.version }),
 });
 
-// The user's own guides (spec 2026-09-23-own-guides-design): read on every call, so a
+// The user's own guides: read on every call, so a
 // saved guide shows up at once. The web-lookup off switch does not affect them.
 const localGuideDir = defaultLocalGuideDir();
 
@@ -1308,7 +1308,7 @@ server.tool(
 
 server.tool(
   "model_save",
-  "Save the current model. Optionally provide a filePath for Save As.",
+  "Save the current model. Optionally provide a filePath for Save As (required for a model that has never been saved). The save is checked: if it did not take (e.g. a read-only or locked file) the answer is MODEL_SAVE_FAILED and the model stays open with its changes.",
   {
     modelId: z.string().optional().describe("Model ID"),
     filePath: z.string().optional().describe("New path for Save As")
@@ -1329,7 +1329,7 @@ server.tool(
 
 server.tool(
   "model_info",
-  "Get model metadata including name, block count, and optionally simulation run statistics.",
+  "Get model metadata including name, simulation times and phase, and optionally simulation run statistics. unsavedChanges is true/false for a never-saved model and \"unknown\" for a saved one (ExtendSim cannot report it without closing the model; model_close checks it for real and refuses with MODEL_HAS_UNSAVED_CHANGES).",
   {
     modelId: z.string().optional().describe("Model ID"),
     includeStatistics: z.boolean().optional().describe("Include run statistics")
@@ -2267,11 +2267,11 @@ server.tool(
 
 server.tool(
   "optimizer_run",
-  "Run the ExtendSim optimizer. ExtendSim runs the whole optimization before this call returns. With waitForCompletion=true the outcome is checked: success only when at least one generation completed (best value, generations, convergence); an optimization ExtendSim stopped is OPTIMIZER_FAILED, with ExtendSim's own messages in dialogs. Without it the call answers status 'started' and optimizer_get_results reads the outcome. Refused with DATA_FILE_MISSING (nothing starts) when a file the model imports at run start is missing, not set, or given as a relative path with a folder (ExtendSim does not resolve those; a bare file name next to the saved model is fine) - see model_files_list and model_files_repoint.",
+  "Run the ExtendSim optimizer. ExtendSim runs the whole optimization before this call returns - also with waitForCompletion=false - and 'timeout' does not limit the run itself: it only bounds the wait for ExtendSim to report idle afterwards (waitForCompletion=true). After 10 minutes the call answers COM_TIMEOUT while ExtendSim may still be running. With waitForCompletion=true the outcome is checked: success only when at least one generation completed (best value, generations, convergence) and no box ExtendSim showed says the run was aborted; an optimization ExtendSim stopped or aborted (error box or Stop) is OPTIMIZER_FAILED, with ExtendSim's own messages in dialogs. Without it the call answers status 'started' (OPTIMIZER_FAILED only when a box said aborted) and optimizer_get_results reads the outcome. Refused with INVALID_PARAMETER (nothing runs) when the model holds both an Optimizer and a Scenario Manager: ExtendSim starts both with the same command and could run the other one; BLOCK_NOT_FOUND when there is no Optimizer. Refused with DATA_FILE_MISSING (nothing starts) when a file the model imports at run start is missing, not set, or given as a relative path with a folder (ExtendSim does not resolve those; a bare file name next to the saved model is fine) - see model_files_list and model_files_repoint.",
   {
     modelId: z.string().optional().describe("Model ID"),
-    timeout: z.number().optional().describe("Max seconds to wait when waitForCompletion=true (default 600)"),
-    waitForCompletion: z.boolean().optional().describe("Wait until optimizer completes (default false). Set true for blocking mode."),
+    timeout: z.number().optional().describe("With waitForCompletion=true: max seconds to wait for ExtendSim to report idle after the run (default 600). Does not limit the run itself."),
+    waitForCompletion: z.boolean().optional().describe("Check the outcome (default false). ExtendSim finishes the optimization before the call returns either way."),
     saveExports: z.boolean().optional().describe("After the run, Excel exports are saved to disk and workbooks the run opened are closed (savedExports); pass saveExports=false to skip.")
   },
   async ({ modelId, timeout, waitForCompletion, saveExports }) => {
@@ -2293,11 +2293,11 @@ server.tool(
 
 server.tool(
   "scenario_manager_run",
-  "Run the Scenario Manager. ExtendSim runs all scenarios before this call returns. With waitForCompletion=true the previous results of the selected scenarios are cleared first, so only results from this run count, and the outcome is checked (this needs at least one block response): success only when every selected scenario has every response; otherwise OPTIMIZER_FAILED lists the scenarios without results, with ExtendSim's own messages in dialogs. Validates config and selects all scenarios only when none are selected; a selection you made is kept. Refused with DATA_FILE_MISSING (nothing starts) when a file the model imports at run start is missing, not set, or given as a relative path with a folder (ExtendSim does not resolve those; a bare file name next to the saved model is fine) - see model_files_list and model_files_repoint.",
+  "Run the Scenario Manager. ExtendSim runs all scenarios before this call returns - also with waitForCompletion=false - and 'timeout' does not limit the run itself: it only bounds the wait for ExtendSim to report idle afterwards (waitForCompletion=true). After 10 minutes the call answers COM_TIMEOUT while ExtendSim may still be running. With waitForCompletion=true the previous results of the selected scenarios are cleared first, so only results from this run count, and the outcome is checked (this needs at least one block response): success only when every selected scenario has every response and no box ExtendSim showed says the run was aborted; otherwise OPTIMIZER_FAILED lists the scenarios without results, with ExtendSim's own messages in dialogs. Without it, OPTIMIZER_FAILED only when a box said aborted. Scenario Manager failures use OPTIMIZER_FAILED. Refused with INVALID_PARAMETER (nothing runs or changes) when the model holds both a Scenario Manager and an Optimizer: ExtendSim starts both with the same command and could run the other one. A table with one all-blank row counts as no scenarios. Validates config and selects all scenarios only when none are selected; a selection you made is kept. Refused with DATA_FILE_MISSING (nothing starts) when a file the model imports at run start is missing, not set, or given as a relative path with a folder (ExtendSim does not resolve those; a bare file name next to the saved model is fine) - see model_files_list and model_files_repoint.",
   {
     modelId: z.string().optional().describe("Model ID"),
-    timeout: z.number().optional().describe("Max seconds to wait when waitForCompletion=true (default 600)"),
-    waitForCompletion: z.boolean().optional().describe("Wait until SM completes (default false). Set true for blocking mode."),
+    timeout: z.number().optional().describe("With waitForCompletion=true: max seconds to wait for ExtendSim to report idle after the run (default 600). Does not limit the run itself."),
+    waitForCompletion: z.boolean().optional().describe("Clear old results first and check the outcome (default false). ExtendSim finishes all scenarios before the call returns either way."),
     saveExports: z.boolean().optional().describe("After the run, Excel exports are saved to disk and workbooks the run opened are closed (savedExports); pass saveExports=false to skip.")
   },
   async ({ modelId, timeout, waitForCompletion, saveExports }) => {

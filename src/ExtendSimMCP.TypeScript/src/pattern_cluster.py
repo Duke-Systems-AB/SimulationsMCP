@@ -4,8 +4,7 @@
 Pure core over M8's candidate subgraphs. Groups instances (exact WL bucket +
 near-miss graph-edit-distance merge) and infers each cluster's parameter schema,
 interface, and template — the mined pattern candidates M10 approves. Zero COM;
-stdlib only (self-contained Hungarian, no scipy). See spec
-2026-07-16-m9-cluster-infer-design.md.
+stdlib only (self-contained Hungarian, no scipy).
 """
 import statistics
 from collections import Counter, defaultdict

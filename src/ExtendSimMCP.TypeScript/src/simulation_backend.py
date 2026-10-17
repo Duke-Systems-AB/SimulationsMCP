@@ -671,10 +671,17 @@ def detect_license(model_id: Optional[str] = None) -> dict:
                          suggestion="Start ExtendSim first with extendsim_start()")
 
         # IsLibEnabled needs a model open. Open a temporary one only if none is.
-        app.Execute("globalStr0 = GetModelName();")
-        opened_temp = not (_read_str0(app) or "").strip()
+        opened_temp = not (_active_model_name(app) or "").strip()
+        temp_name = ""
         if opened_temp:
             app.Execute("ExecuteMenuCommand(2);")   # File > New (blank model)
+            temp_name = (_active_model_name(app) or "").strip()
+            if not temp_name:
+                return _error(ErrorCode.LICENSE_DETECTION_FAILED,
+                              "Failed to detect license: no model is open and a temporary blank "
+                              "model could not be opened",
+                              suggestion="Open a model in ExtendSim, then try again")
+        close_warning = None
 
         def _lib_enabled(type_code):
             app.Execute(f"global0 = IsLibEnabled({type_code});")
@@ -689,9 +696,7 @@ def detect_license(model_id: Optional[str] = None) -> dict:
             has_rate = _lib_enabled(18)   # Pro (Rate/Reliability)
         finally:
             if opened_temp:
-                # Close the temporary model without a save prompt.
-                app.Execute("SetDirty(False);")
-                app.Execute("ExecuteMenuCommand(4);")
+                close_warning = _close_license_temp_model(app, temp_name)
 
         if has_rate:
             license_type = "Pro"
@@ -709,17 +714,36 @@ def detect_license(model_id: Optional[str] = None) -> dict:
             block_libraries = ["Value.lbr"]
             simulation_types = ["continuous"]
 
-        return {
+        result = {
             "success": True,
             "license": license_type,
             "libraries": libraries,
             "blockLibraries": block_libraries,
             "simulationTypes": simulation_types
         }
+        if close_warning:
+            result["warning"] = close_warning
+        return result
 
     except Exception as e:
         return _error(ErrorCode.LICENSE_DETECTION_FAILED,
                      f"Failed to detect license: {e}")
+
+
+def _close_license_temp_model(app, temp_name: str) -> Optional[str]:
+    """Close detect_license's temporary blank model - only when it is still the active model.
+
+    The close discards (SetDirty(False) + close window), so closing whatever happens to be active
+    could throw away a model the user opened meanwhile. If the active model is not the temporary
+    one, nothing is closed and the returned warning says so; None when it was closed."""
+    active = (_active_model_name(app) or "").strip()
+    if active != temp_name:
+        return (f"the temporary model {temp_name} that was opened to read the license is not the "
+                f"active model ({active or 'no model is open'}), so it was not closed; close "
+                f"{temp_name} in ExtendSim without saving")
+    app.Execute("SetDirty(False);")
+    app.Execute("ExecuteMenuCommand(4);")
+    return None
 
 
 def _norm_model_path(path: str) -> str:
@@ -780,21 +804,13 @@ def model_open(file_path: str, read_only: bool = False) -> dict:
 
 
 def model_save(model_id: Optional[str] = None, file_path: Optional[str] = None) -> dict:
-    """Saves the model."""
+    """Saves the model, verified (model_lifecycle.save_model, 2026-10-16): the save runs under the
+    dialog auto-dismisser, a "Saving File" box or a model file that was not written is
+    MODEL_SAVE_FAILED. It used to report success after ExtendSim refused a read-only file."""
     try:
         app = get_extendsim_app()
-
-        if file_path:
-            file_path_normalized = file_path.replace("\\", "/")
-            app.Execute(f'SaveModelAs("{_escape_modl_string(file_path_normalized)}")')
-        else:
-            app.Execute("SaveModel()")
-
-        # Get actual model name
-        app.Execute("globalStr0 = GetModelName();")
-        model_name = _read_str0(app)
-
-        return {"success": True, "filePath": file_path or model_name or "unknown"}
+        return model_lifecycle.save_model(model_lifecycle.BackendOps(sys.modules[__name__], app),
+                                          file_path or None)
     except Exception as e:
         return _error(ErrorCode.MODEL_SAVE_FAILED, str(e))
 
@@ -844,6 +860,15 @@ def model_info(model_id: Optional[str] = None, include_statistics: bool = False)
             "simulationPhase": sim_phase,
             "isRunning": sim_phase > 0
         }
+        # Unsaved changes: read-only (never the save-prompt probe, which closes a clean model).
+        if model_name:
+            try:
+                result.update(model_lifecycle.unsaved_changes_report(*_model_unsaved_state(app)))
+            except Exception as e:
+                result.update({"unsavedChanges": "unknown",
+                               "unsavedChangesNote": f"the unsaved state could not be read: {e}"})
+        else:
+            result.update({"unsavedChanges": "unknown", "unsavedChangesNote": "no model is open"})
 
         # Include statistics if requested
         if include_statistics:
@@ -940,8 +965,15 @@ def model_new(save_path: Optional[str] = None) -> dict:
 
         # Save if path provided
         if save_path:
-            save_path_normalized = save_path.replace("\\", "/")
-            app.Execute(f'SaveModelAs("{_escape_modl_string(save_path_normalized)}")')
+            # Verified like model_save: a save that did not take is an error, never success.
+            saved = model_lifecycle.save_model(
+                model_lifecycle.BackendOps(sys.modules[__name__], app), save_path)
+            if not saved.get("success"):
+                out = dict(saved)
+                out["error"] = (f"the new model {model_name or ''} was created but not saved to "
+                                f"{save_path}: {saved.get('error', 'unknown')}").replace("  ", " ")
+                out["name"] = model_name or ""
+                return out
             # Re-get model name after save
             app.Execute("globalStr0 = GetModelName();")
             model_name = _read_str0(app)
@@ -2923,7 +2955,7 @@ def _set_popup_verified(app, block_id: int, var_name: str, value: int) -> dict:
 
 
 # Helper: Save/close/reopen model to persist popup menu changes
-def _persist_popup_change(app) -> dict:
+def _persist_popup_change(app, ops=None) -> dict:
     """Saves, closes, and reopens the current model to force block reinitialization.
 
     Some blocks (Activity, Create) require a save/close/reopen cycle after
@@ -2935,43 +2967,75 @@ def _persist_popup_change(app) -> dict:
     without a trailing separator, and "" for a model that has never been saved. The
     reopen is verified by name - OpenExtendFile fails silently on a wrong path.
 
-    Returns:
-        dict with success status and model path
-    """
-    try:
-        # Get current model name and path
-        app.Execute("globalStr0 = GetModelName();")
-        model_name = _read_str0(app)
-        if not model_name:
-            return {"success": False, "error": "No model open"}
+    The save is verified and never discarded (2026-10-16): save and close go through
+    model_lifecycle.close_model(saveFirst=True). It saves under the dialog auto-dismisser (a
+    "Saving File" box = failure) and requires the file's modification time to change, before
+    any close; the close has no SetDirty(False), so a save that still did not take shows up as
+    the "Worksheet" save prompt; block dialogs in front of the model are absorbed by its close
+    retries. Any check failing fails the whole call (MODEL_SAVE_FAILED), with the model still open
+    and its change intact.
 
-        app.Execute(f'globalStr0 = GetModelPath("{_escape_modl_string(model_name)}");')
-        folder = _read_str0(app)
+    `ops` is injected for tests; by default model_lifecycle.BackendOps over this module and `app`.
+
+    Returns:
+        {success: True, modelPath} or an _error() dict saying whether the model is still open
+        (save/close failures) or must be reopened (reopen failure)
+    """
+    if ops is None:
+        ops = model_lifecycle.BackendOps(sys.modules[__name__], app)
+    full_path = None
+    closed_ok = False      # past the close: a failure now means "reopen it", not "still open"
+    try:
+        model_name = ops.active_name()
+        if not model_name:
+            return _error(ErrorCode.MODEL_NOT_OPEN, "No model open")
+
+        folder = ops.active_path()
         if not folder:
             # SaveModel() on a never-saved model opens "Save As", which blocks COM.
-            return {"success": False,
-                    "error": "the model has never been saved, so it cannot be saved and "
-                             "reopened - save it with model_save first"}
+            return _error(ErrorCode.MODEL_SAVE_FAILED,
+                          "the model has never been saved, so it cannot be saved and "
+                          "reopened - save it with model_save first")
         full_path = folder.replace("\\", "/").rstrip("/") + "/" + model_name
 
-        # Save current state
-        app.Execute("SaveModel()")
+        closed = model_lifecycle.close_model(ops, {"saveFirst": True})
+        if not closed.get("success"):
+            code = closed.get("errorCode") or ErrorCode.MODEL_CLOSE_FAILED
+            message = closed.get("error", "the model could not be closed")
+            if code == ErrorCode.MODEL_CLOSE_FAILED:
+                message = (f"{message}; the change was saved, but the model is still open and "
+                           "was not reopened - close any open dialogs of the model and reopen "
+                           "it with model_open")
+            elif "still open" not in message:
+                message = f"{message}; the model is still open"
+            extra = {k: v for k, v in closed.items() if k not in ("success", "errorCode", "error")}
+            extra["modelPath"] = full_path
+            return _error(code, message, **extra)
 
-        # Close without save prompt (already saved)
-        app.Execute("SetDirty(False);")
-        app.Execute("ExecuteMenuCommand(4)")
+        closed_ok = True
+        dialogs = closed.get("dialogs") or []
 
         # Reopen, and confirm it really is back
-        app.Execute(f'OpenExtendFile("{_escape_modl_string(full_path)}")')
-        app.Execute("globalStr0 = GetModelName();")
-        if _read_str0(app) != model_name:
-            return {"success": False, "modelPath": full_path,
-                    "error": f"the model was saved and closed but did not reopen from "
-                             f"{full_path} - open it again with model_open"}
+        ops.open_file(full_path)
+        if ops.active_name() != model_name:
+            return _error(ErrorCode.MODEL_OPEN_FAILED,
+                          f"the model was saved and closed but did not reopen from "
+                          f"{full_path} - open it again with model_open",
+                          modelPath=full_path)
 
-        return {"success": True, "modelPath": full_path}
+        result = {"success": True, "modelPath": full_path}
+        if dialogs:
+            result["dialogs"] = dialogs
+        return result
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        extra = {"modelPath": full_path} if full_path else {}
+        if closed_ok:
+            return _error(ErrorCode.MODEL_OPEN_FAILED,
+                          f"the model was saved and closed, but reopening it failed: {e} - "
+                          "reopen it with model_open", **extra)
+        return _error(ErrorCode.MODEL_SAVE_FAILED,
+                      f"save/close failed: {e}; the model is still open with the change unless "
+                      "ExtendSim closed it - check it in ExtendSim", **extra)
 
 
 # Activity delay option constants - VERIFIED against the block's own source.
@@ -3109,6 +3173,15 @@ def activity_set_delay(block_id: int,
         persist = None
         if not pop_result["success"]:
             persist = _persist_popup_change(app)
+            if not persist.get("success"):
+                # The fallback did not complete: never report success, and write nothing more
+                # (the model may be closed or the change unsaved). The error says which.
+                return _error(persist.get("errorCode") or ErrorCode.MODEL_SAVE_FAILED,
+                              f"{pop_result['warning']} The save/close/reopen fallback failed: "
+                              f"{persist.get('error', 'unknown')}",
+                              blockId=block_id, operation="activity_set_delay",
+                              **{k: v for k, v in persist.items()
+                                 if k not in ("success", "errorCode", "error")})
 
         # v1.17.4 — Additional Activity parameters
         if max_items is not None:
@@ -3144,13 +3217,10 @@ def activity_set_delay(block_id: int,
             "shift": shift,
             "persisted": persist.get("success", False) if persist else None
         }
+        if persist and persist.get("dialogs"):
+            result["dialogs"] = persist["dialogs"]
         if not pop_result["success"]:
             result["warnings"] = [pop_result["warning"]]
-            if persist and not persist.get("success"):
-                result["warnings"].append(
-                    f"Save/reopen fallback also failed: {persist.get('error', 'unknown')}. "
-                    f"Popup change may not take effect until model is manually saved and reopened."
-                )
         return result
     except Exception as e:
         return _error(ErrorCode.SET_VALUE_FAILED, str(e),
@@ -3248,6 +3318,15 @@ def create_set_arrivals(block_id: int,
         persist = None
         if warnings:  # popup verification failures
             persist = _persist_popup_change(app)
+            if not persist.get("success"):
+                # The fallback did not complete: never report success. The error says whether the
+                # model is still open or must be reopened.
+                return _error(persist.get("errorCode") or ErrorCode.MODEL_SAVE_FAILED,
+                              f"{' '.join(warnings)} The save/close/reopen fallback failed: "
+                              f"{persist.get('error', 'unknown')}",
+                              blockId=block_id, operation="create_set_arrivals",
+                              **{k: v for k, v in persist.items()
+                                 if k not in ("success", "errorCode", "error")})
 
         result = {
             "success": True,
@@ -3261,13 +3340,10 @@ def create_set_arrivals(block_id: int,
             "costTimeUnit": cost_time_unit,
             "persisted": persist.get("success", False) if persist else None
         }
+        if persist and persist.get("dialogs"):
+            result["dialogs"] = persist["dialogs"]
         if warnings:
             result["warnings"] = warnings
-            if persist and not persist.get("success"):
-                result["warnings"].append(
-                    f"Save/reopen fallback also failed: {persist.get('error', 'unknown')}. "
-                    f"Popup change may not take effect until model is manually saved and reopened."
-                )
         return result
     except Exception as e:
         return _error(ErrorCode.SET_VALUE_FAILED, str(e),
@@ -6051,7 +6127,7 @@ def queue_equation_set_config(block_id: int,
         block_id: Queue Equation block ID
         equation: ModL equation using QEQ variables (e.g. "QEQItemRank = DueDate - RemainingTime;")
         release_rule: "highestRank", "lowestRank", "firstTrue", or "allTrue"
-        input_attribute: turn the block's single input row into this attribute (spec 2026-09-30)
+        input_attribute: turn the block's single input row into this attribute
 
     The output-name cells are always filled (CheckData copies names from the dialog tables).
     The equation compiles at run start; Test is never pressed from here.
@@ -6140,6 +6216,10 @@ def shift_set_schedule(block_id: int,
 
         if status_type is not None:
             _set_var(app, block_id, "ShiftStatusTypePop", status_type)
+            mismatch = shift_schedule.status_type_mismatch(
+                _get_var(app, block_id, "ShiftStatusTypePop"), status_type)
+            if mismatch:
+                return _error(ErrorCode.SET_VALUE_FAILED, mismatch, blockId=block_id)
         num_periods, rows = 0, []
         if schedule:
             app.Execute("global0 = -1;")
@@ -7643,75 +7723,140 @@ def _simulation_phase(app) -> int:
     return int(parse_float(app.Request("System", "globalInt0+:0:0:0")) or 0)
 
 
+# Upper bound on the blocks _analysis_blocks visits (a safety net; the largest models seen hold
+# about 24k blocks).
+_ANALYSIS_SCAN_CAP = 100_000
+
+
+def _analysis_blocks(app):
+    """(blockId, name) of the first Optimizer and the first Scenario Manager in the model.
+
+    Runs before every optimizer_run and scenario_manager_run, so it is kept cheap: three COM calls
+    per block (one Execute that copies the block's name - at most _COM_STR_PIECE characters, so a
+    long text block never reaches the 128-character Request limit - and steps to the next object,
+    then one Request for each), and the scan stops as soon as one of each kind is found, which is
+    all the both-blocks refusal needs. The Scenario Manager found is remembered for
+    _get_sm_block_id, so scenario_manager_run does not scan the model a second time.
+
+    Fail closed (2026-10-16): if the Execute fails silently, global0 keeps the current id and the
+    scan would never end - an id that does not advance, or more than _ANALYSIS_SCAN_CAP blocks,
+    raises RuntimeError, so the run is refused instead of going on from a partial scan."""
+    global _cached_sm_block_id
+    kinds = ("Optimizer", "Scenario Manager")
+    found = {}
+    app.Execute("global0 = objectIDNext(-1, 0);")
+    block = int(parse_float(app.Request("System", "global0+:0:0:0")))
+    visited = 0
+    while block != -1:
+        visited += 1
+        if visited > _ANALYSIS_SCAN_CAP:
+            raise RuntimeError(f"the scan for analysis blocks stopped after {_ANALYSIS_SCAN_CAP} blocks "
+                               "without reaching the end of the model; nothing was run")
+        app.Execute(f"globalStr9 = StrPart(BlockName({block}), 0, {_COM_STR_PIECE}); "
+                    f"global0 = objectIDNext({block}, 0);")
+        name = app.Request("System", "globalStr9+:0:0:0") or ""
+        if name in kinds and name not in found:
+            found[name] = block
+            if len(found) == len(kinds):
+                break
+        following = int(parse_float(app.Request("System", "global0+:0:0:0")))
+        if following == block:
+            raise RuntimeError(f"the scan for analysis blocks did not advance past block {block} "
+                               "(objectIDNext left the id unchanged); nothing was run")
+        block = following
+    if "Scenario Manager" in found:
+        _cached_sm_block_id = found["Scenario Manager"]
+    return [(b, n) for n, b in found.items()]
+
+
 def optimizer_run(model_id: Optional[str] = None,
                   timeout: int = 600,
                   wait_for_completion: bool = False) -> dict:
     """Runs optimization via ExtendSim's built-in optimizer.
 
     Uses ExecuteMenuCommand(6002) which triggers the Optimizer block; ExtendSim runs the whole
-    optimization before that call returns (measured 2026-10-05).
+    optimization before that call returns (measured 2026-10-05) - also without wait_for_completion.
+
+    Refused before anything runs when the model has no Optimizer, or holds a Scenario Manager as
+    well (6002 could run that one instead, and its old results would be read).
 
     Args:
-        timeout: Max seconds to wait when wait_for_completion=True (default 600 = 10 minutes)
-        wait_for_completion: If False (default), returns immediately after starting.
-            Use optimizer_get_results to check results when done.
-            If True, polls GetSimulationPhase() until idle (legacy behavior).
+        timeout: Max seconds to wait for ExtendSim to report idle AFTER the run has returned
+            (wait_for_completion=True only). It does not limit the run itself.
+        wait_for_completion: If False (default), the outcome is not checked (only an abort box
+            fails the call). Use optimizer_get_results to read the results.
+            If True, the Optimizer's counters and the dismissed box texts decide the outcome.
     """
     import time
+    import analysis_run
     try:
         app = get_extendsim_app()
+
+        blocks = _analysis_blocks(app)
+        conflict = analysis_run.analysis_block_conflict([name for _, name in blocks])
+        if conflict:
+            return _error(ErrorCode.INVALID_PARAMETER, conflict,
+                          blocks=[{"blockId": b, "name": n} for b, n in blocks])
+        optimizers = [b for b, n in blocks if n == "Optimizer"]
+        if not optimizers:
+            return _error(ErrorCode.BLOCK_NOT_FOUND, "No Optimizer block found in the model; nothing was run.",
+                          suggestion="Add an Optimizer block from the Analysis library.")
+        op_id = optimizers[0]
 
         # Start background dialog auto-dismisser for COM error dialogs. Covers the blocking
         # Execute() below, not the caller's `timeout` (see _start_dialog_auto_dismisser). The
         # watcher must be stopped no matter how this function leaves - including an exception
-        # from any of the calls AFTER Execute() (wait_until_idle, _enumerate_blocks_by_name,
-        # optimizer_get_results) - or it keeps polling and dismissing boxes, including the
-        # user's own, for up to _DISMISSER_SAFETY_CAP_SEC (bug found in review: the old code only
-        # stopped it on paths it wrote out by hand, missing exactly this one).
+        # from any of the calls AFTER Execute() (wait_until_idle, optimizer_get_results) - or it
+        # keeps polling and dismissing boxes, including the user's own, for up to
+        # _DISMISSER_SAFETY_CAP_SEC.
         watcher = _start_dialog_auto_dismisser(duration_sec=_DISMISSER_SAFETY_CAP_SEC, poll_sec=3.0)
         try:
             app.Execute("ExecuteMenuCommand(6002)")
 
             # Without wait_for_completion the outcome is not checked. ExtendSim has run the
             # optimization by the time ExecuteMenuCommand returns (measured), so the dismisser is
-            # no longer needed.
+            # no longer needed. _dismisser_texts waits for its last pass, so a box closed just
+            # before the call returned is in the texts.
             if not wait_for_completion:
+                dialogs = _dismisser_texts(watcher)
+                problem = analysis_run.unconfirmed_run_message(dialogs, "optimization")
+                if problem:
+                    return _error(ErrorCode.OPTIMIZER_FAILED, problem, blockId=op_id, dialogs=dialogs)
                 return {
                     "success": True,
                     "status": "started",
-                    "dialogs": _dismisser_texts(watcher),
+                    "dialogs": dialogs,
                     "message": "Optimizer run. The outcome was not checked: use optimizer_get_results, or "
                                "waitForCompletion=true to have it checked."
                 }
 
             # Blocking mode. ExecuteMenuCommand(6002) returns with the run already finished
-            # (measured 2026-10-05), so the outcome comes from the Optimizer's own counters, not
-            # from watching phases.
-            import analysis_run
+            # (measured 2026-10-05), so the outcome comes from the Optimizer's own counters and the
+            # boxes ExtendSim showed, not from watching phases.
             start_time = time.time()
             if not analysis_run.wait_until_idle(lambda: _simulation_phase(app), time.sleep, time.time,
                                                 timeout, poll=2):
                 return _error(ErrorCode.OPTIMIZER_TIMEOUT, f"Optimization timed out after {timeout}s",
-                              elapsedSeconds=round(time.time() - start_time, 1))
-            optimizers = _enumerate_blocks_by_name(app, {"Optimizer"})
-            if not optimizers:
-                return _error(ErrorCode.BLOCK_NOT_FOUND, "No Optimizer block found in the model.")
-            readings = optimizer_get_results(optimizers[0][0]).get("results") or {}
-            outcome = analysis_run.optimizer_outcome(readings)
+                              elapsedSeconds=round(time.time() - start_time, 1),
+                              dialogs=_dismisser_texts(watcher))
+            # Read the texts only now, after the dismisser's last pass has finished.
+            dialogs = _dismisser_texts(watcher)
+            readings = optimizer_get_results(op_id).get("results") or {}
+            outcome = analysis_run.optimizer_outcome(readings, dialogs)
             elapsed = round(time.time() - start_time, 1)
             if not outcome["ok"]:
                 return _error(ErrorCode.OPTIMIZER_FAILED, outcome["message"], elapsedSeconds=elapsed,
-                              blockId=optimizers[0][0], results=readings, dialogs=_dismisser_texts(watcher))
+                              blockId=op_id, results=readings, dialogs=dialogs)
             return {
                 "success": True,
                 "status": "completed",
                 "elapsedSeconds": elapsed,
-                "blockId": optimizers[0][0],
+                "blockId": op_id,
                 "generations": outcome["generations"],
                 "best": outcome["best"],
                 "convergence": outcome["convergence"],
                 "results": readings,
-                "dialogs": _dismisser_texts(watcher),
+                "dialogs": dialogs,
             }
         finally:
             watcher.stop.set()
@@ -7843,8 +7988,8 @@ def _collect_sm_results(app, sm_id: int, total_scenarios: int):
       Col 1: Scenario Name
       Col 2+: Factor and Response columns (dynamic)
 
-    Uses GetDialogVariable directly since Scenarios_tbl has _tbl suffix
-    which doesn't route correctly through _get_var.
+    Reads through _ScenariosTable.get_cell (GetDialogVariable; Scenarios_tbl has a _tbl suffix
+    that does not route correctly through _get_var), with its sentinel, bounded by the real columns.
 
     Returns list of scenario result dicts.
     """
@@ -7857,21 +8002,30 @@ def _collect_sm_results(app, sm_id: int, total_scenarios: int):
     # We read these from the SM block to calculate total columns.
     n_inputs, n_responses = _sm_layout(app, sm_id) or (0, 0)
     num_cols = 2 + n_inputs + n_responses  # [Select][Name][Factor1..N][DB factors][Response1..M]
+    # Never read past the table's own column count (an out-of-range read pops a modal box), and
+    # never guess it: an unreadable count fails the call (fail closed, 2026-10-16).
+    table = _ScenariosTable(app, sm_id)
+    try:
+        real_cols = table.table_cols()
+    except Exception as e:
+        raise RuntimeError(f"the Scenarios table's column count could not be read: {e}") from e
+    if real_cols < 0:
+        raise RuntimeError("the Scenarios table's column count could not be read")
+    if real_cols < 2:
+        raise RuntimeError(f"the Scenarios table has {real_cols} column(s), so it holds no scenario "
+                           "names or values to read")
+    num_cols = min(num_cols, real_cols)
 
-    # Read all scenario data (skip col 0 = checkbox)
+    # Read all scenario data (skip col 0 = checkbox). Every cell goes through get_cell, whose
+    # sentinel turns a read that failed silently into an error instead of the previous value.
     scenarios = []
     for row in range(total_scenarios):
         scenario = {}
         try:
-            # Col 1: Scenario Name
-            app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "Scenarios_tbl", {row}, 1);')
-            scenario["name"] = _read_str0(app) or ""
-
-            # Remaining columns: factors and responses
+            name = table.get_cell(row, 1)       # Col 1: Scenario Name
             values = []
-            for c in range(2, num_cols):
-                app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "Scenarios_tbl", {row}, {c});')
-                val = _read_str0(app) or ""
+            for c in range(2, num_cols):        # factors and responses
+                val = table.get_cell(row, c)
                 # Try to parse as number (handle Swedish decimal separator)
                 if val:
                     try:
@@ -7883,9 +8037,9 @@ def _collect_sm_results(app, sm_id: int, total_scenarios: int):
             # Trim trailing None values (SM allocates extra columns beyond actual data)
             while values and values[-1] is None:
                 values.pop()
-            scenario["values"] = values
-        except Exception:
-            scenario["error"] = "Failed to read scenario data"
+            scenario["name"], scenario["values"] = name, values
+        except Exception as e:
+            scenario["error"] = f"Failed to read scenario data: {e}"
         scenarios.append(scenario)
 
     return scenarios
@@ -7972,7 +8126,7 @@ def _start_dialog_auto_dismisser(duration_sec: int = 600, poll_sec: float = 2.0)
 def _dismisser_texts(watcher, join_timeout=_DISMISSER_PASS_TIMEOUT_SEC + 5):
     """Stops the dismisser and waits for its current pass to finish before reading its texts.
 
-    Race found in review: a box that was just dismissed - which is exactly what let the blocking
+    Race: a box that was just dismissed - which is exactly what let the blocking
     Execute() return - can have its text appended to watcher.texts by the dismiss loop's CURRENT
     iteration (one dialog_watcher.py subprocess call, at most _DISMISSER_PASS_TIMEOUT_SEC)
     slightly AFTER this read would otherwise copy the list, because setting `stop` only tells the
@@ -8102,23 +8256,41 @@ def _read_sm_config(app, auto_select_all: bool = True):
         table_rows = int(parse_float(app.Request("System", "global0+:0:0:0")))
     except Exception:
         pass
+    # A Scenario Manager without scenarios can report one row with every cell blank: that is not a
+    # scenario (selecting and running it would run nothing real).
+    # Only cells inside the table's own column count are read: measured on ExtendSim 2024
+    # (2026-10-16), a Scenario Manager with a factor and a response but no scenarios has a 2-column
+    # table, fewer than its layout, and an out-of-range read pops a modal box that blocks COM.
+    table = _ScenariosTable(app, sm_id)
+    if table_rows == 1:
+        import analysis_run
+        n_inputs, n_responses = _sm_layout(app, sm_id) or (None, None)
+        try:
+            n_cols = table.table_cols()
+        except Exception:
+            n_cols = None
+        if n_cols is not None and n_cols < 0:
+            n_cols = None
+        if analysis_run.is_placeholder_table(1, table.get_cell, n_inputs, n_responses, n_cols):
+            table_rows = 0
+            config["placeholderRow"] = True
     config["totalScenarios"] = table_rows if table_rows >= 0 else None
 
-    # Read scenario selection state from Scenarios_tbl column 0 (Select checkbox)
-    # Must use GetDialogVariable directly — _get_var routes _tbl suffix wrong
+    # Read scenario selection state from Scenarios_tbl column 0 (Select checkbox); a cell that
+    # cannot be read makes the whole selection unknown (-1, no indices).
     SCENARIO_SELECTCOL = 0
     total = config.get("totalScenarios") or 0
     selected_count = 0
     selected_scenarios = []
     try:
         for i in range(total):
-            app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "Scenarios_tbl", {i}, {SCENARIO_SELECTCOL});')
-            val = _read_str0(app) or ""
+            val = table.get_cell(i, SCENARIO_SELECTCOL)
             if val != "" and val != "0":
                 selected_count += 1
                 selected_scenarios.append(i)
     except Exception:
         selected_count = -1  # Could not read selection state
+        selected_scenarios = []
 
     config["selectedScenarios"] = selected_count
     config["selectedIndices"] = selected_scenarios
@@ -8137,6 +8309,41 @@ def _read_sm_config(app, auto_select_all: bool = True):
     return config
 
 
+# Put in globalStr0 before each Scenarios_tbl cell read: a GetDialogVariable that fails silently
+# leaves globalStr0 alone, and the previous value (often "") would pass for a blank cell.
+_UNREAD_CELL = "~unread cell~"
+
+
+class _ScenariosTable:
+    """A Scenario Manager's Scenarios_tbl as analysis_run reads and writes it."""
+
+    def __init__(self, app, sm_id: int):
+        self.app, self.sm_id = app, sm_id
+
+    def _info(self, what: int) -> int:
+        self.app.Execute("global0 = -1;")
+        self.app.Execute(f'global0 = GetDialogItemInfo({self.sm_id}, "Scenarios_tbl", {what});')
+        return int(parse_float(self.app.Request("System", "global0+:0:0:0")))
+
+    def table_rows(self) -> int:
+        return self._info(5)
+
+    def table_cols(self) -> int:
+        return self._info(6)
+
+    def set_cell(self, row: int, col: int, text: str) -> None:
+        self.app.Execute(f'SetDialogVariable({self.sm_id}, "Scenarios_tbl", "{text}", {row}, {col});')
+
+    def get_cell(self, row: int, col: int) -> str:
+        """The cell's text; raises when the read left the sentinel in place (fail closed)."""
+        self.app.Execute(f'globalStr0 = "{_UNREAD_CELL}";')
+        self.app.Execute(f'globalStr0 = GetDialogVariable({self.sm_id}, "Scenarios_tbl", {row}, {col});')
+        value = _read_str0(self.app) or ""
+        if value == _UNREAD_CELL:
+            raise RuntimeError(f"Scenarios_tbl cell ({row}, {col}) could not be read")
+        return value
+
+
 def scenario_manager_run(model_id: Optional[str] = None,
                          timeout: int = 600,
                          wait_for_completion: bool = False) -> dict:
@@ -8146,18 +8353,27 @@ def scenario_manager_run(model_id: Optional[str] = None,
     ExtendSim determines whether to run Optimizer or Scenario Manager
     based on which Analysis block is present in the model.
 
-    Reads SM configuration before launching and reports it in the response.
+    Reads SM configuration before launching and reports it in the response. Refused before
+    anything is read or written when the model also holds an Optimizer (6002 could run that one).
 
     Args:
-        timeout: Max seconds to wait (default 600 = 10 minutes)
-        wait_for_completion: If False (default), returns immediately after starting.
-            Use scenario_manager_status to poll progress and
-            scenario_manager_get_results to collect results.
-            If True, blocks until SM completes (legacy behavior).
+        timeout: Max seconds to wait for ExtendSim to report idle AFTER the run has returned
+            (wait_for_completion=True only). It does not limit the run itself: ExtendSim runs all
+            scenarios before ExecuteMenuCommand(6002) returns, also without wait_for_completion.
+        wait_for_completion: If False (default), the outcome is not checked (only an abort box
+            fails the call). Use scenario_manager_get_results to collect results.
+            If True, previous results are cleared first and the results and box texts decide.
     """
     import time
+    import analysis_run
     try:
         app = get_extendsim_app()
+
+        blocks = _analysis_blocks(app)
+        conflict = analysis_run.analysis_block_conflict([name for _, name in blocks])
+        if conflict:
+            return _error(ErrorCode.INVALID_PARAMETER, conflict,
+                          blocks=[{"blockId": b, "name": n} for b, n in blocks])
 
         # Read SM configuration before launching
         sm_config = _read_sm_config(app)
@@ -8199,40 +8415,15 @@ def scenario_manager_run(model_id: Optional[str] = None,
         # empty the selected scenarios' response cells first and read them back (measured 2026-10-05:
         # an aborted rerun left the previous run's results in place, and they were reported as a
         # completed run). Without wait_for_completion nothing is checked, so nothing is changed.
-        import analysis_run
         sm_id = sm_config["smBlockId"]
         selected_rows = sm_config.get("selectedIndices") or []
         layout = None
         if wait_for_completion:
             layout = _sm_layout(app, sm_id)
-            if layout is None:
-                return _error(ErrorCode.OPTIMIZER_FAILED,
-                              "Could not read the Scenario Manager's factor and response counts, so the "
-                              "run's results could not be checked; nothing was run.", smConfig=sm_config,
-                              suggestion="Run with waitForCompletion=false to run without the check.")
-            if layout[1] == 0:
-                return _error(ErrorCode.OPTIMIZER_FAILED,
-                              "The Scenario Manager has no block responses, so whether the scenarios ran "
-                              "could not be checked; nothing was run.", smConfig=sm_config,
-                              suggestion="Add a block response, or run with waitForCompletion=false to "
-                                         "run without the check.")
-            app.Execute("global0 = -1;")
-            app.Execute(f'global0 = GetDialogItemInfo({sm_id}, "Scenarios_tbl", 5);')
-            table_rows = int(parse_float(app.Request("System", "global0+:0:0:0")))
-            if any(r < 0 or r >= table_rows for r in selected_rows):
-                return _error(ErrorCode.OPTIMIZER_FAILED,
-                              "The selected scenarios do not match the Scenarios table "
-                              f"({table_rows} rows), so the results could not be checked; nothing was run.",
-                              smConfig=sm_config)
-            cells = analysis_run.response_cells(selected_rows, layout[0], layout[1])
-            for row, col in cells:
-                app.Execute(f'SetDialogVariable({sm_id}, "Scenarios_tbl", "", {row}, {col});')
-            for row, col in cells:
-                app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "Scenarios_tbl", {row}, {col});')
-                if (_read_str0(app) or "").strip():
-                    return _error(ErrorCode.SET_VALUE_FAILED,
-                                  "Could not clear the previous results before the run; nothing was run.",
-                                  smConfig=sm_config, row=row, column=col)
+            refusal = analysis_run.clear_previous_results(_ScenariosTable(app, sm_id), selected_rows, layout)
+            if refusal:
+                extra = {k: v for k, v in refusal.items() if k not in ("code", "message")}
+                return _error(refusal["code"], refusal["message"], smConfig=sm_config, **extra)
 
         # Start background dialog auto-dismisser to handle COM error dialogs
         # (sCode: 80004003) that appear during SM scenario transitions on large models.
@@ -8241,9 +8432,8 @@ def scenario_manager_run(model_id: Optional[str] = None,
         # _start_dialog_auto_dismisser). Must be stopped no matter how this leaves - including an
         # exception from any of the calls AFTER Execute() (wait_until_idle, the
         # CurrentScenarioNumber_txt read, _collect_sm_results) - or it keeps polling and
-        # dismissing boxes, including the user's own, for up to _DISMISSER_SAFETY_CAP_SEC (bug
-        # found in review: the old code only stopped it on paths it wrote out by hand, missing
-        # exactly this one).
+        # dismissing boxes, including the user's own, for up to _DISMISSER_SAFETY_CAP_SEC (the
+        # old code only stopped it on paths it wrote out by hand, missing exactly this one).
         watcher = _start_dialog_auto_dismisser(duration_sec=_DISMISSER_SAFETY_CAP_SEC, poll_sec=3.0)
         try:
             app.Execute("ExecuteMenuCommand(6002)")
@@ -8252,11 +8442,15 @@ def scenario_manager_run(model_id: Optional[str] = None,
             # scenarios by the time ExecuteMenuCommand returns (measured), so the dismisser is no
             # longer needed.
             if not wait_for_completion:
+                dialogs = _dismisser_texts(watcher)
+                problem = analysis_run.unconfirmed_run_message(dialogs, "scenario run")
+                if problem:
+                    return _error(ErrorCode.OPTIMIZER_FAILED, problem, smConfig=sm_config, dialogs=dialogs)
                 return {
                     "success": True,
                     "status": "started",
                     "smConfig": sm_config,
-                    "dialogs": _dismisser_texts(watcher),
+                    "dialogs": dialogs,
                     "message": "Scenario Manager run. The outcome was not checked: use "
                                "scenario_manager_get_results to collect the results, or waitForCompletion=true "
                                "to have every selected scenario's results checked."
@@ -8264,27 +8458,33 @@ def scenario_manager_run(model_id: Optional[str] = None,
 
             # Blocking mode. ExecuteMenuCommand(6002) returns with the run already finished
             # (measured 2026-10-05), and the scenario counter cannot tell an aborted last scenario
-            # from a finished one - so the outcome comes from the results: every selected scenario
-            # needs every response.
+            # from a finished one - so the outcome comes from the results (every selected scenario
+            # needs every response) and from the boxes ExtendSim showed (none may say "aborted").
             start_time = time.time()
             if not analysis_run.wait_until_idle(lambda: _simulation_phase(app), time.sleep, time.time,
                                                 timeout, poll=3):
                 return _error(ErrorCode.OPTIMIZER_TIMEOUT, f"Scenario run timed out after {timeout}s",
-                              elapsedSeconds=round(time.time() - start_time, 1), smConfig=sm_config)
+                              elapsedSeconds=round(time.time() - start_time, 1), smConfig=sm_config,
+                              dialogs=_dismisser_texts(watcher))
+            # Read the texts only now, after the dismisser's last pass has finished.
+            dialogs = _dismisser_texts(watcher)
             app.Execute(f'globalStr0 = GetDialogVariable({sm_id}, "CurrentScenarioNumber_txt", 0, 0);')
             last_scenario = _read_str0(app) or ""
-            results = _collect_sm_results(app, sm_id, sm_config.get("totalScenarios") or 0)
-            selected = selected_rows or list(range(len(results)))
-            missing = analysis_run.scenarios_without_results(results, selected, layout[0], layout[1])
+            try:
+                results = _collect_sm_results(app, sm_id, sm_config.get("totalScenarios") or 0)
+            except Exception as exc:  # the run has finished - keep the box texts that may explain it
+                return _error(ErrorCode.OPTIMIZER_FAILED, f"The scenario results could not be read: {exc}",
+                              lastScenario=last_scenario, elapsedSeconds=round(time.time() - start_time, 1),
+                              smConfig=sm_config, dialogs=dialogs)
+            # clear_previous_results refused an empty selection, so these are the rows it cleared.
+            outcome = analysis_run.scenario_outcome(results, selected_rows, layout[0], layout[1], dialogs,
+                                                    last_scenario)
             elapsed = round(time.time() - start_time, 1)
-            if missing:
-                return _error(ErrorCode.OPTIMIZER_FAILED,
-                              f"{len(missing)} of {len(selected)} scenarios have no results - ExtendSim stopped "
-                              f"the run (scenario counter {last_scenario or 'unknown'}); ExtendSim's own "
-                              "messages are in dialogs",
-                              scenariosWithoutResults=missing, lastScenario=last_scenario,
-                              elapsedSeconds=elapsed, smConfig=sm_config, results=results,
-                              dialogs=_dismisser_texts(watcher))
+            if not outcome["ok"]:
+                return _error(ErrorCode.OPTIMIZER_FAILED, outcome["message"],
+                              scenariosWithoutResults=outcome["scenariosWithoutResults"],
+                              lastScenario=last_scenario, elapsedSeconds=elapsed, smConfig=sm_config,
+                              results=results, dialogs=dialogs)
             return {
                 "success": True,
                 "status": "completed",
@@ -8292,7 +8492,7 @@ def scenario_manager_run(model_id: Optional[str] = None,
                 "lastScenario": last_scenario,
                 "smConfig": sm_config,
                 "results": results,
-                "dialogs": _dismisser_texts(watcher),
+                "dialogs": dialogs,
             }
         finally:
             watcher.stop.set()

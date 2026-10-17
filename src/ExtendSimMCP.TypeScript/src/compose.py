@@ -2,8 +2,7 @@
 """Compose molecule instances into a whole flow (M4).
 
 build_flow orchestrates an injected EsOps interface (reuses the M3 engine);
-validate_flow is pure (role + declared attribute-contract checks). See spec
-2026-06-27-m4-compose-flow-design.md.
+validate_flow is pure (role + declared attribute-contract checks).
 """
 import collections
 from typing import Any, Dict

@@ -1,6 +1,5 @@
 /**
- * Pure rules for the watchdog that looks at ExtendSim while a command runs (spec
- * 2026-09-24-extendsim-stuck-recovery-design.md, S4-S7). No I/O: backend.ts owns the
+ * Pure rules for the watchdog that looks at ExtendSim while a command runs (stuck recovery). No I/O: backend.ts owns the
  * timers, probe-client.ts talks to the probe process.
  */
 export interface ProbeDialog { title: string; texts: string[]; buttons: string[] }
